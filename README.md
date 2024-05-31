@@ -98,7 +98,7 @@ prollytree/
 Clone the repository:
 
 ```sh
-git clone https://github.com/yourusername/prollytree.git
+git clone https://github.com/zhangfengcdt/prollytree.git
 cd prollytree
 ```
 
@@ -106,6 +106,10 @@ Build the project:
 
 ```sh
 cargo build
+
+cargo fmt
+
+cargo clippy
 ```
 
 Run the tests:
