@@ -14,10 +14,44 @@ limitations under the License.
 
 use sha2::{Digest, Sha256};
 
+/// Represents a cryptographic hash of a value in a prolly tree.
+///
+/// `ValueDigest` is used to store a fixed-size cryptographic hash of a value associated with a key
+/// in the prolly tree. This ensures data integrity and allows for quick comparisons without
+/// storing the full value. The hash function used (e.g., SHA-256) ensures that even small changes
+/// in the input value produce significantly different hashes.
+///
+/// Each `ValueDigest` contains the following component:
+///
+/// - An array of bytes: The fixed-size array that stores the cryptographic hash of the value. The
+///   size of this array is specified by the constant parameter `N`, which typically corresponds to
+///   the output size of the hash function used (e.g., 32 bytes for SHA-256).
+///
+/// The `ValueDigest` struct provides methods for creating a new digest from a value, as well as
+/// accessing the raw bytes of the hash:
+///
+/// - `new(data: &[u8]) -> Self`: Creates a new `ValueDigest` from the given data by computing its
+///   cryptographic hash.
+/// - `as_bytes(&self) -> &[u8]`: Returns a reference to the underlying byte array of the hash.
+///
+/// `ValueDigest` is an essential component of the prolly tree, enabling secure and efficient
+/// handling of key-value pairs.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ValueDigest<const N: usize>([u8; N]);
 
 impl<const N: usize> ValueDigest<N> {
+    /// Creates a new `ValueDigest` from the given data.
+    ///
+    /// This method computes the cryptographic hash of the input data and stores it in a fixed-size
+    /// array. The size of the array is determined by the constant parameter `N`.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - A slice of bytes representing the input data to be hashed.
+    ///
+    /// # Returns
+    ///
+    /// A `ValueDigest` instance containing the computed hash.
     pub fn new(data: &[u8]) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -28,7 +62,67 @@ impl<const N: usize> ValueDigest<N> {
         ValueDigest(hash)
     }
 
+    /// Returns a reference to the underlying byte array of the hash.
+    ///
+    /// This method allows access to the raw bytes of the cryptographic hash, which can be useful
+    /// for comparison or serialization purposes.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the byte array containing the hash.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn test_value_digest_new() {
+        let data = b"test data";
+        let expected_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(data);
+            let result = hasher.finalize();
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&result[..32]);
+            hash
+        };
+
+        let value_digest = ValueDigest::<32>::new(data);
+        assert_eq!(value_digest.as_bytes(), &expected_hash);
+    }
+
+    #[test]
+    fn test_value_digest_as_bytes() {
+        let data = b"test data";
+        let value_digest = ValueDigest::<32>::new(data);
+
+        let hash_bytes = value_digest.as_bytes();
+        assert_eq!(hash_bytes.len(), 32);
+    }
+
+    #[test]
+    fn test_value_digest_equality() {
+        let data1 = b"test data 1";
+        let data2 = b"test data 2";
+        let digest1 = ValueDigest::<32>::new(data1);
+        let digest2 = ValueDigest::<32>::new(data1);
+        let digest3 = ValueDigest::<32>::new(data2);
+
+        assert_eq!(digest1, digest2);
+        assert_ne!(digest1, digest3);
+    }
+
+    #[test]
+    fn test_value_digest_clone() {
+        let data = b"test data";
+        let value_digest = ValueDigest::<32>::new(data);
+        let value_digest_clone = value_digest.clone();
+
+        assert_eq!(value_digest, value_digest_clone);
     }
 }
