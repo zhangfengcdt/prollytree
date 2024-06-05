@@ -12,8 +12,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use crate::value_digest::ValueDigest;
 use crate::node::Node;
+use crate::value_digest::ValueDigest;
 
 /// Represents a page in a prolly tree.
 ///
@@ -39,8 +39,8 @@ use crate::node::Node;
 /// in balancing operations, ensuring that the tree remains efficiently searchable.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Page<const N: usize, K> {
-    pub nodes: Vec<Node<N, K>>,  // A vector of nodes contained in this page
-    pub level: usize,  // The level of the page within the tree
+    pub nodes: Vec<Node<N, K>>, // A vector of nodes contained in this page
+    pub level: usize,           // The level of the page within the tree
 }
 
 impl<const N: usize, K: Ord + Clone> Page<N, K> {
@@ -54,7 +54,7 @@ impl<const N: usize, K: Ord + Clone> Page<N, K> {
     pub fn insert(&mut self, key: K, value_hash: ValueDigest<N>) {
         let new_node = Node::new(key, value_hash, self.level + 1);
         self.nodes.push(new_node);
-        self.nodes.sort_by(|a, b| a.key().cmp(&b.key()));
+        self.nodes.sort_by(|a, b| a.key().cmp(b.key()));
         self.balance();
     }
 
@@ -74,14 +74,24 @@ impl<const N: usize, K: Ord + Clone> Page<N, K> {
             // Split the page into two
             let mid = self.nodes.len() / 2;
             let right_nodes = self.nodes.split_off(mid);
-            let right_page = Page { nodes: right_nodes, level: self.level };
+            let right_page = Page {
+                nodes: right_nodes,
+                level: self.level,
+            };
 
             // Insert the middle key into the parent page
             let mid_node = self.nodes.pop().unwrap();
-            let mut new_node = Node::new(mid_node.key().clone(), mid_node.value_hash().clone(), *mid_node.level() + 1);
+            let mut new_node = Node::new(
+                mid_node.key().clone(),
+                mid_node.value_hash().clone(),
+                *mid_node.level() + 1,
+            );
             new_node.set_lt_pointer(Some(Box::new(right_page)));
 
-            let left_page = Page { nodes: self.nodes.clone(), level: self.level };
+            let left_page = Page {
+                nodes: self.nodes.clone(),
+                level: self.level,
+            };
 
             if let Some(ref mut last_node) = self.nodes.last_mut() {
                 last_node.set_lt_pointer(Some(Box::new(left_page)));

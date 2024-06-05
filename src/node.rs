@@ -12,8 +12,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use crate::value_digest::ValueDigest;
 use crate::page::Page;
+use crate::value_digest::ValueDigest;
 use rand::Rng;
 
 /// Represents a node in a prolly tree.
@@ -34,7 +34,7 @@ use rand::Rng;
 /// balancing, which maintain the probabilistic properties of the tree.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Node<const N: usize, K> {
-    key: K, // The key of the node
+    key: K,                     // The key of the node
     value_hash: ValueDigest<N>, // The hash of the value associated with the key
 
     /// A pointer to a page with a strictly lower tree level, and containing
@@ -108,12 +108,10 @@ impl<const N: usize, K: Ord + Clone> Node<N, K> {
         } else if key == &self.key {
             // For simplicity, we are not handling the deletion of the root node here.
             false
+        } else if let Some(ref mut lt_pointer) = self.lt_pointer {
+            lt_pointer.delete(key)
         } else {
-            if let Some(ref mut lt_pointer) = self.lt_pointer {
-                lt_pointer.delete(key)
-            } else {
-                false
-            }
+            false
         }
     }
 
@@ -124,7 +122,7 @@ impl<const N: usize, K: Ord + Clone> Node<N, K> {
             if rng.gen_bool(0.5) {
                 // Randomly decide to balance
                 // Placeholder for actual balancing logic
-                lt_pointer.nodes.sort_by(|a, b| a.key().cmp(&b.key()));
+                lt_pointer.nodes.sort_by(|a, b| a.key().cmp(b.key()));
             }
         }
     }
@@ -163,7 +161,10 @@ mod tests {
 
         assert!(node.lt_pointer().is_some());
         if let Some(ref lt_pointer) = node.lt_pointer() {
-            assert_eq!(lt_pointer.find(&new_key.to_string()).unwrap().key(), &new_key.to_string());
+            assert_eq!(
+                lt_pointer.find(&new_key.to_string()).unwrap().key(),
+                &new_key.to_string()
+            );
         }
     }
 

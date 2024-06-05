@@ -12,7 +12,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ValueDigest<const N: usize>([u8; N]);
@@ -32,4 +32,3 @@ impl<const N: usize> ValueDigest<N> {
         &self.0
     }
 }
-
