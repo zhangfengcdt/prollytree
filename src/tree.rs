@@ -7,6 +7,7 @@ use crate::page::Page;
 use crate::value_digest::ValueDigest;
 
 /// Represents the default hash function used in the ProllyTree.
+/// The default hash function is SHA-256.
 #[derive(Default)]
 pub struct DefaultHasher;
 
@@ -24,12 +25,25 @@ impl DefaultHasher {
 }
 
 /// Represents a prolly tree with probabilistic balancing.
+/// The tree is designed to be efficient and support operations like insertion,
+/// deletion, and balancing, which maintain the probabilistic properties of the tree.
 #[derive(Debug, Clone)]
 pub struct ProllyTree<const N: usize, K, V, H = DefaultHasher> {
     root: Page<N, K>,
     root_hash: Option<Vec<u8>>,
     _value_type: PhantomData<V>,
     hasher: H,
+}
+
+impl<const N: usize, K, V, H> Default for ProllyTree<N, K, V, H>
+where
+    K: Ord + Clone,
+    V: Clone + AsRef<[u8]>,
+    H: Default,
+{
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize, K, V, H> ProllyTree<N, K, V, H>
