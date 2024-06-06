@@ -12,6 +12,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#![allow(dead_code)]
+
 use crate::page::Page;
 use crate::value_digest::ValueDigest;
 use rand::Rng;
@@ -29,6 +31,7 @@ use rand::Rng;
 ///   the key of this node. This allows the tree to maintain a hierarchical structure.
 /// - `level`: The level of the node within the tree, indicating its depth. The root node has the highest level,
 ///   and the level decreases as you move down the tree.
+///
 ///
 /// Nodes in the prolly tree are designed to be efficient and support operations like insertion, deletion, and
 /// balancing, which maintain the probabilistic properties of the tree.

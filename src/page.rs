@@ -11,6 +11,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#![allow(dead_code)]
 
 use crate::node::Node;
 use crate::value_digest::ValueDigest;
@@ -106,6 +107,11 @@ impl<const N: usize, K: Ord + Clone> Page<N, K> {
 
     pub fn find(&self, key: &K) -> Option<&Node<N, K>> {
         self.nodes.iter().find(|node| node.key() == key)
+    }
+
+    pub fn calculate_hash(&self) -> Vec<u8> {
+        // Implement hash calculation for the page
+        vec![] // Placeholder
     }
 }
 

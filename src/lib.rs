@@ -16,4 +16,5 @@ limitations under the License.
 mod tracing;
 pub mod node;
 pub mod page;
+pub mod tree;
 pub mod value_digest;
