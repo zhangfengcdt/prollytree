@@ -64,6 +64,20 @@ impl<const N: usize> ValueDigest<N> {
         ValueDigest(hash)
     }
 
+    /// Creates a new `ValueDigest` from the raw hash bytes.
+    /// This method is useful for creating a `ValueDigest` from a known hash value.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - A slice of bytes representing the raw hash value.
+    ///
+    /// # Returns
+    ///
+    /// A `ValueDigest` instance containing the provided hash value.
+    pub fn raw_hash(data: &[u8]) -> Self {
+        ValueDigest(<[u8; N]>::try_from(data).unwrap())
+    }
+
     /// Returns a reference to the underlying byte array of the hash.
     ///
     /// This method allows access to the raw bytes of the cryptographic hash, which can be useful
@@ -151,5 +165,14 @@ mod tests {
         let value_digest_clone = value_digest.clone();
 
         assert_eq!(value_digest, value_digest_clone);
+    }
+
+    #[test]
+    fn test_value_digest_raw_hash() {
+        let data = b"test data";
+        let value_digest1 = ValueDigest::<32>::new(data);
+        let value_digest2 = ValueDigest::<32>::raw_hash(value_digest1.as_bytes());
+
+        assert_eq!(value_digest1, value_digest2);
     }
 }
