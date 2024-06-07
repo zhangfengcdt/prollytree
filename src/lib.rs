@@ -18,3 +18,4 @@ pub mod digest;
 pub mod node;
 pub mod page;
 pub mod tree;
+pub mod visitor;

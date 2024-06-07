@@ -16,6 +16,7 @@ mod digest;
 mod node;
 mod page;
 mod tree;
+mod visitor;
 
 use tree::ProllyTree;
 

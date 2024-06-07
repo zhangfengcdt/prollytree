@@ -15,6 +15,7 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use crate::node::Node;
+use crate::visitor::Visitor;
 use sha2::digest::FixedOutputReset;
 use sha2::Digest;
 
@@ -74,6 +75,7 @@ impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Page<N, K> {
     pub fn update(&mut self, key: K, value_hash: ValueDigest<N>) {
         if let Some(node) = self.nodes.iter_mut().find(|node| *node.key() == key) {
             node.set_value_hash(value_hash);
+            // do not need to balance after update because the key is not changed
         }
     }
 
@@ -115,6 +117,32 @@ impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Page<N, K> {
 
     pub fn find(&self, key: &K) -> Option<&Node<N, K>> {
         self.nodes.iter().find(|node| node.key() == key)
+    }
+
+    /// Traverse the page in an in-order fashion, calling the visitor for each node.
+    /// If `visit_lt` is true, the visitor is called for the LT pointer of each node.
+    /// Returns true if the traversal was successful, or false if the visitor returned false.
+    /// The traversal stops if the visitor returns false.
+    /// The visitor is called in the following order:
+    /// - LT pointer (if `visit_lt` is true)
+    /// - Node
+    /// The traversal is depth-first, visiting the LT pointer first, then the node.
+    /// The traversal is recursive, visiting the LT pointer first, then the node.
+    pub fn in_order_traversal<'a, T>(&'a self, visitor: &mut T, visit_lt: bool) -> bool
+    where
+        T: Visitor<'a, N, K>,
+    {
+        for node in &self.nodes {
+            if let Some(lt_pointer) = node.lt_pointer() {
+                if !lt_pointer.in_order_traversal(visitor, visit_lt) {
+                    return false;
+                }
+            }
+            if visit_lt && !visitor.visit_node(node) {
+                    return false;
+            }
+        }
+        true
     }
 
     pub fn calculate_hash<D: Digest + FixedOutputReset>(&self, hasher: &mut D) -> Vec<u8> {
