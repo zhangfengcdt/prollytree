@@ -71,6 +71,12 @@ impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Page<N, K> {
         }
     }
 
+    pub fn update(&mut self, key: K, value_hash: ValueDigest<N>) {
+        if let Some(node) = self.nodes.iter_mut().find(|node| *node.key() == key) {
+            node.set_value_hash(value_hash);
+        }
+    }
+
     pub fn balance(&mut self) {
         const MAX_NODES: usize = 5; // Maximum number of nodes in a page before balancing
         if self.nodes.len() > MAX_NODES {

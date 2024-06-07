@@ -68,6 +68,11 @@ impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Node<N, K> {
         &self.value_hash
     }
 
+    // Setter for value_hash
+    pub fn set_value_hash(&mut self, value_hash: ValueDigest<N>) {
+        self.value_hash = value_hash;
+    }
+
     // Getter for lt_pointer
     pub fn lt_pointer(&self) -> &Option<Box<Page<N, K>>> {
         &self.lt_pointer

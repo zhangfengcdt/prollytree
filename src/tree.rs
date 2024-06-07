@@ -88,6 +88,21 @@ where
     /// * `hasher` - A custom hash function implementing the `Digest` trait.
     /// # Returns
     /// A new `ProllyTree` instance.
+    pub fn new_with_hasher(hasher: H) -> Self {
+        ProllyTree {
+            root: Page::new(0),
+            root_hash: None,
+            _value_type: PhantomData,
+            hasher,
+        }
+    }
+
+    /// Creates a new `ProllyTree` instance with a custom hash function.
+    /// The tree is initialized with an empty root page and no root hash.
+    /// # Arguments
+    /// * `hasher` - A custom hash function implementing the `Digest` trait.
+    /// # Returns
+    /// A new `ProllyTree` instance.
     /// # Example
     /// ```
     /// use sha2::Sha256;
@@ -103,6 +118,28 @@ where
     pub fn insert(&mut self, key: K, value: V) {
         let value_hash = ValueDigest::new(value.as_ref());
         self.root.insert(key, value_hash);
+        self.root_hash = None; // Invalidate the cached root hash
+    }
+
+    /// Updates the value associated with a key in the tree.
+    /// # Arguments
+    /// * `key` - The key to update.
+    /// * `value` - The new value to associate with the key.
+    /// # Example
+    /// ```
+    /// use prollytree::tree::ProllyTree;
+    /// let mut tree = ProllyTree::<32, String, String>::new();
+    /// tree.insert("key".to_string(), "value".to_string());
+    /// tree.update("key".to_string(), "new value".to_string());
+    /// ```
+    /// This example inserts a key-value pair into the tree and then updates the value associated with the key.
+    /// The `insert` method is used to insert the key-value pair into the tree.
+    /// The `update` method is then called to update the value associated with the key.
+    /// The `update` method replaces the existing value with the new value.
+    /// The key remains the same.
+    pub fn update(&mut self, key: K, value: V) {
+        let value_hash = ValueDigest::new(value.as_ref());
+        self.root.update(key, value_hash);
         self.root_hash = None; // Invalidate the cached root hash
     }
 
