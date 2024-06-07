@@ -13,36 +13,18 @@ limitations under the License.
 */
 
 #![allow(dead_code)]
-use sha2::Digest;
+use sha2::digest::{FixedOutputReset, HashMarker};
 use sha2::Sha256;
 use std::marker::PhantomData;
 
+use crate::digest::ValueDigest;
 use crate::page::Page;
-use crate::value_digest::ValueDigest;
-
-/// Represents the default hash function used in the ProllyTree.
-/// The default hash function is SHA-256.
-#[derive(Default)]
-pub struct DefaultHasher;
-
-impl DefaultHasher {
-    /// Hash a given value and return the resulting digest.
-    pub fn hash<T: AsRef<[u8]>>(&self, value: T) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-        hasher.update(value.as_ref());
-        let result = hasher.finalize();
-
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&result[..32]);
-        hash
-    }
-}
 
 /// Represents a prolly tree with probabilistic balancing.
 /// The tree is designed to be efficient and support operations like insertion,
 /// deletion, and balancing, which maintain the probabilistic properties of the tree.
 #[derive(Debug, Clone)]
-pub struct ProllyTree<const N: usize, K, V, H = DefaultHasher> {
+pub struct ProllyTree<const N: usize, K: AsRef<[u8]>, V, H = Sha256> {
     root: Page<N, K>,
     root_hash: Option<Vec<u8>>,
     _value_type: PhantomData<V>,
@@ -51,9 +33,9 @@ pub struct ProllyTree<const N: usize, K, V, H = DefaultHasher> {
 
 impl<const N: usize, K, V, H> Default for ProllyTree<N, K, V, H>
 where
-    K: Ord + Clone,
+    K: Ord + Clone + AsRef<[u8]>,
     V: Clone + AsRef<[u8]>,
-    H: Default,
+    H: Default + FixedOutputReset + HashMarker,
 {
     fn default() -> Self {
         Self::new()
@@ -62,9 +44,9 @@ where
 
 impl<const N: usize, K, V, H> ProllyTree<N, K, V, H>
 where
-    K: Ord + Clone,
+    K: Ord + Clone + AsRef<[u8]>,
     V: Clone + AsRef<[u8]>,
-    H: Default,
+    H: Default + FixedOutputReset + HashMarker,
 {
     pub fn new() -> Self {
         ProllyTree {
@@ -91,7 +73,7 @@ where
 
     pub fn root_hash(&mut self) -> &Option<Vec<u8>> {
         if self.root_hash.is_none() {
-            self.root_hash = Some(self.root.calculate_hash());
+            self.root_hash = Some(self.root.calculate_hash(&mut self.hasher));
         }
         &self.root_hash
     }

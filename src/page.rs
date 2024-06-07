@@ -13,8 +13,10 @@ limitations under the License.
 */
 #![allow(dead_code)]
 
+use crate::digest::ValueDigest;
 use crate::node::Node;
-use crate::value_digest::ValueDigest;
+use sha2::digest::FixedOutputReset;
+use sha2::Digest;
 
 /// Represents a page in a prolly tree.
 ///
@@ -39,12 +41,12 @@ use crate::value_digest::ValueDigest;
 /// The level of the page is used to manage the depth of the tree, and it plays a crucial role
 /// in balancing operations, ensuring that the tree remains efficiently searchable.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Page<const N: usize, K> {
+pub struct Page<const N: usize, K: AsRef<[u8]>> {
     pub nodes: Vec<Node<N, K>>, // A vector of nodes contained in this page
     pub level: usize,           // The level of the page within the tree
 }
 
-impl<const N: usize, K: Ord + Clone> Page<N, K> {
+impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Page<N, K> {
     pub fn new(level: usize) -> Self {
         Page {
             nodes: Vec::new(),
@@ -109,16 +111,20 @@ impl<const N: usize, K: Ord + Clone> Page<N, K> {
         self.nodes.iter().find(|node| node.key() == key)
     }
 
-    pub fn calculate_hash(&self) -> Vec<u8> {
-        // Implement hash calculation for the page
-        vec![] // Placeholder
+    pub fn calculate_hash<D: Digest + FixedOutputReset>(&self, hasher: &mut D) -> Vec<u8> {
+        for node in &self.nodes {
+            Digest::update(hasher, node.key().as_ref());
+            Digest::update(hasher, node.value_hash().as_bytes());
+        }
+        let result = hasher.finalize_reset();
+        result.to_vec()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value_digest::ValueDigest;
+    use crate::digest::ValueDigest;
 
     #[test]
     fn test_page_new() {

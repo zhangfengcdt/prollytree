@@ -14,7 +14,7 @@ limitations under the License.
 
 #[macro_use]
 mod tracing;
+pub mod digest;
 pub mod node;
 pub mod page;
 pub mod tree;
-pub mod value_digest;

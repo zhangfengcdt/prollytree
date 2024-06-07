@@ -14,6 +14,7 @@ limitations under the License.
 #![allow(dead_code)]
 
 use sha2::{Digest, Sha256};
+use std::marker::PhantomData;
 
 /// Represents a cryptographic hash of a value in a prolly tree.
 ///
@@ -73,6 +74,31 @@ impl<const N: usize> ValueDigest<N> {
     /// A reference to the byte array containing the hash.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct ValueDigest2<H: Digest, const N: usize> {
+    hash: [u8; N],
+    _marker: PhantomData<H>,
+}
+
+impl<H: Digest, const N: usize> ValueDigest2<H, N> {
+    pub fn new(data: &[u8]) -> Self {
+        let mut hasher = H::new();
+        hasher.update(data);
+        let result = hasher.finalize();
+
+        let mut hash = [0u8; N];
+        hash.copy_from_slice(&result[..N]);
+        ValueDigest2 {
+            hash,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.hash
     }
 }
 

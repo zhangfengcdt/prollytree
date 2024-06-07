@@ -14,8 +14,8 @@ limitations under the License.
 
 #![allow(dead_code)]
 
+use crate::digest::ValueDigest;
 use crate::page::Page;
-use crate::value_digest::ValueDigest;
 use rand::Rng;
 
 /// Represents a node in a prolly tree.
@@ -36,7 +36,7 @@ use rand::Rng;
 /// Nodes in the prolly tree are designed to be efficient and support operations like insertion, deletion, and
 /// balancing, which maintain the probabilistic properties of the tree.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Node<const N: usize, K> {
+pub struct Node<const N: usize, K: AsRef<[u8]>> {
     key: K,                     // The key of the node
     value_hash: ValueDigest<N>, // The hash of the value associated with the key
 
@@ -48,7 +48,7 @@ pub struct Node<const N: usize, K> {
     level: usize,
 }
 
-impl<const N: usize, K: Ord + Clone> Node<N, K> {
+impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Node<N, K> {
     pub fn new(key: K, value_hash: ValueDigest<N>, level: usize) -> Self {
         Self {
             key,
@@ -134,7 +134,7 @@ impl<const N: usize, K: Ord + Clone> Node<N, K> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value_digest::ValueDigest;
+    use crate::digest::ValueDigest;
 
     #[test]
     fn test_node_new() {
