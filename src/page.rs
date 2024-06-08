@@ -139,7 +139,7 @@ impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Page<N, K> {
                 }
             }
             if visit_lt && !visitor.visit_node(node) {
-                    return false;
+                return false;
             }
         }
         true
@@ -152,6 +152,14 @@ impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Page<N, K> {
         }
         let result = hasher.finalize_reset();
         result.to_vec()
+    }
+
+    pub fn min_subtree_key(&self) -> &K {
+        self.nodes.first().map(|node| node.key()).unwrap()
+    }
+
+    pub fn max_subtree_key(&self) -> &K {
+        self.nodes.last().map(|node| node.key()).unwrap()
     }
 }
 
