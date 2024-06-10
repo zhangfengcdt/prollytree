@@ -59,18 +59,17 @@ impl<'a, const N: usize, K: Ord + Clone + AsRef<[u8]>, H: Default + Clone> From<
     }
 }
 
-impl<'a, K: AsRef<[u8]>, H: Default + Digest + AsRef<[u8]> + Clone + FixedOutputReset>
-    PageRange<'a, K, H>
+impl<'a, K, H> PageRange<'a, K, H>
+where
+    K: AsRef<[u8]> + PartialOrd,
+    H: Default + Clone + FixedOutputReset + HashMarker,
 {
     /// Construct a [`PageRange`] for the given key interval and [`PageDigest`].
     ///
     /// # Panics
     ///
     /// If `start` is greater than `end`, this method panics.
-    pub fn new(start: &'a K, end: &'a K) -> Self
-    where
-        K: PartialOrd,
-    {
+    pub fn new(start: &'a K, end: &'a K) -> Self {
         assert!(start <= end);
         Self {
             start,
@@ -91,10 +90,7 @@ impl<'a, K: AsRef<[u8]>, H: Default + Digest + AsRef<[u8]> + Clone + FixedOutput
 
     /// Returns true if `self` is a superset of `other` (not a strict superset -
     /// equal ranges are treated as supersets of each other).
-    pub(crate) fn is_superset_of(&self, other: &Self) -> bool
-    where
-        K: PartialOrd,
-    {
+    pub(crate) fn is_superset_of(&self, other: &Self) -> bool {
         self.start <= other.start && other.end <= self.end
     }
 
@@ -104,5 +100,50 @@ impl<'a, K: AsRef<[u8]>, H: Default + Digest + AsRef<[u8]> + Clone + FixedOutput
         Digest::update(&mut hasher, self.end.as_ref());
         let result = hasher.finalize_reset();
         result.to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::Sha256;
+
+    #[test]
+    fn test_page_range_new() {
+        let start = "a";
+        let end = "z";
+        let range: PageRange<&str, Sha256> = PageRange::new(&start, &end);
+        assert_eq!(range.start(), &start);
+        assert_eq!(range.end(), &end);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_page_range_new_invalid() {
+        let start = "z";
+        let end = "a";
+        let _range: PageRange<&str, Sha256> = PageRange::new(&start, &end);
+    }
+
+    #[test]
+    fn test_page_range_is_superset_of() {
+        let range1: PageRange<&str, Sha256> = PageRange::new(&"a", &"z");
+        let range2: PageRange<&str, Sha256> = PageRange::new(&"b", &"y");
+        assert!(range1.is_superset_of(&range2));
+    }
+
+    #[test]
+    fn test_page_range_calculate_hash() {
+        let range: PageRange<&str, Sha256> = PageRange::new(&"a", &"z");
+        let hash1: Vec<u8> = range.calculate_hash();
+        let hash2: Vec<u8> = range.calculate_hash();
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_page_range_clone() {
+        let range1: PageRange<&str, Sha256> = PageRange::new(&"a", &"z");
+        let range2: PageRange<&str, Sha256> = range1.clone();
+        assert_eq!(range1.calculate_hash(), range2.calculate_hash());
     }
 }
