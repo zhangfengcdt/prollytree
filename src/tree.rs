@@ -191,3 +191,32 @@ where
         self.root.find(key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::Sha256;
+
+    #[test]
+    fn test_insert_and_find() {
+        let mut tree = ProllyTree::<32, String, String, Sha256>::new();
+        tree.insert("key".to_string(), "value".to_string());
+        let node = tree.find(&"key".to_string());
+        let new_hash = ValueDigest::<32>::new(b"value");
+
+        assert!(node.is_some());
+        assert_eq!(node.unwrap().value_hash().as_bytes(), new_hash.as_bytes());
+    }
+
+    #[test]
+    fn test_update() {
+        let mut tree = ProllyTree::<32, String, String, Sha256>::new();
+        tree.insert("key".to_string(), "value".to_string());
+        tree.update("key".to_string(), "new value".to_string());
+        let node = tree.find(&"key".to_string());
+        let new_hash = ValueDigest::<32>::new(b"new value");
+
+        assert!(node.is_some());
+        assert_eq!(node.unwrap().value_hash().as_bytes(), new_hash.as_bytes());
+    }
+}
