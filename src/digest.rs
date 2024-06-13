@@ -98,6 +98,12 @@ impl<const N: usize> Default for ValueDigest<N> {
     }
 }
 
+impl<const N: usize> AsRef<[u8]> for ValueDigest<N> {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl<const N: usize> Serialize for ValueDigest<N> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

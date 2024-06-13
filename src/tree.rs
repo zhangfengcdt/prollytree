@@ -14,6 +14,7 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use crate::node::Node;
+use serde::{Deserialize, Serialize};
 
 pub struct ProllyTree<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> {
     root: Node<N, K>,
@@ -62,6 +63,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
     pub fn insert<V>(&mut self, key: K, value: V)
     where
         V: AsRef<[u8]>,
+        K: PartialEq + Clone + From<Vec<u8>> + AsRef<[u8]> + Serialize + for<'a> Deserialize<'a>,
     {
         let value_hash = ValueDigest::new(value.as_ref());
         self.root.insert(key, value_hash);
@@ -77,6 +79,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
     pub fn update<V>(&mut self, key: K, value: V)
     where
         V: AsRef<[u8]>,
+        K: PartialEq + Clone + From<Vec<u8>> + AsRef<[u8]> + Serialize + for<'a> Deserialize<'a>,
     {
         let value_hash = ValueDigest::new(value.as_ref());
         self.root.update(key, value_hash);
@@ -92,7 +95,10 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
     /// # Returns
     ///
     /// `true` if the key was found and deleted, `false` otherwise.
-    pub fn delete(&mut self, key: &K) {
+    pub fn delete(&mut self, key: &K)
+    where
+        K: PartialEq + Clone + From<Vec<u8>> + AsRef<[u8]> + Serialize + for<'a> Deserialize<'a>,
+    {
         self.root.delete(key)
     }
 
@@ -102,9 +108,6 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
     ///
     /// A reference to the cached root hash, calculating it if necessary.
     pub fn root_hash(&mut self) -> &Option<ValueDigest<N>> {
-        if self.root_hash.is_none() {
-            self.root_hash = Some(self.root.calculate_hash());
-        }
         &self.root_hash
     }
 
@@ -117,7 +120,10 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
     /// # Returns
     ///
     /// An `Option` containing the node if found, or `None` if not found.
-    pub fn find(&self, key: &K) -> Option<Node<N, K>> {
+    pub fn find(&self, key: &K) -> Option<Node<N, K>>
+    where
+        K: PartialEq + Clone + From<Vec<u8>> + AsRef<[u8]> + Serialize + for<'a> Deserialize<'a>,
+    {
         self.root.search(key)
     }
 }
@@ -174,5 +180,46 @@ mod tests {
             tree.find(&new_key).is_none(),
             "Key should not be present after delete"
         );
+    }
+
+    // This test is used as an example in the README.
+    #[test]
+    fn test_example() {
+        // Step 1: Create and Wrap the Storage Backend
+        let storage_backend = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
+
+        // Step 2: Initialize the Root Node
+        let root_node = Node::new(
+            "root_key".as_bytes().to_vec(),
+            "root_value".as_bytes().to_vec(),
+            true,
+            storage_backend,
+        );
+
+        // Step 3: Initialize the ProllyTree
+        let mut tree = ProllyTree::new(root_node);
+
+        // Step 4: Insert a New Key-Value Pair
+        tree.insert(
+            "new_key".as_bytes().to_vec(),
+            "new_value".as_bytes().to_vec(),
+        );
+
+        // Step 5: Update the Value for an Existing Key
+        tree.update(
+            "new_key".as_bytes().to_vec(),
+            "updated_value".as_bytes().to_vec(),
+        );
+
+        // Step 6: Find or Search for a Key
+        let search_key = "new_key".as_bytes().to_vec();
+        if let Some(_node) = tree.find(&search_key) {
+            println!("Found node with key: {:?}", search_key);
+        } else {
+            println!("Node with key {:?} not found", search_key);
+        }
+
+        // Step 7: Delete a Key-Value Pair
+        tree.delete(&search_key);
     }
 }

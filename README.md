@@ -98,19 +98,42 @@ Here is a simple example to get you started:
 use prollytree::ProllyTree;
 
 fn main() {
-    let mut tree = ProllyTree::<32, String, String>::new();
+    // Step 1: Create and Wrap the Storage Backend
+    let storage_backend = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
 
-    let key1 = "key1".to_string();
-    let value1 = "value1".to_string();
-    tree.insert(key1.clone(), value1);
+    // Step 2: Initialize the Root Node
+    let root_node = Node::new(
+        "root_key".as_bytes().to_vec(),
+        "root_value".as_bytes().to_vec(),
+        true,
+        storage_backend,
+    );
 
-    let key2 = "key2".to_string();
-    let value2 = "value2".to_string();
-    tree.insert(key2.clone(), value2);
+    // Step 3: Initialize the ProllyTree
+    let mut tree = ProllyTree::new(root_node);
 
-    let root_hash = tree.root_hash();
-    println!("Root Hash: {:?}", root_hash);
-}
+    // Step 4: Insert a New Key-Value Pair
+    tree.insert(
+        "new_key".as_bytes().to_vec(),
+        "new_value".as_bytes().to_vec()
+    );
+
+    // Step 5: Update the Value for an Existing Key
+    tree.update(
+        "new_key".as_bytes().to_vec(),
+        "updated_value".as_bytes().to_vec()
+    );
+
+    // Step 6: Find or Search for a Key
+    let search_key = "new_key".as_bytes().to_vec();
+    if let Some(_node) = tree.find(&search_key) {
+        println!("Found node with key: {:?}", search_key);
+    } else {
+        println!("Node with key {:?} not found", search_key);
+    }
+
+    // Step 7: Delete a Key-Value Pair
+    tree.delete(&search_key);
 ```
 
 ## Documentation

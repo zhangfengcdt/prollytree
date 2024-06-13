@@ -14,6 +14,8 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use crate::storage::NodeStorage;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -73,7 +75,12 @@ impl<const N: usize, K: AsRef<[u8]> + fmt::Debug> fmt::Debug for Node<N, K> {
     }
 }
 
-impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N, K> {
+impl<
+        const N: usize,
+        K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>> + Serialize + for<'de> Deserialize<'de>,
+    > Node<N, K>
+{
+    // impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N, K> {
     /// Creates a new `NodeAlt` instance.
     ///
     /// # Arguments
@@ -493,6 +500,60 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N,
     pub fn delete_node(&self, hash: &ValueDigest<N>) {
         let mut storage = self.storage.lock().unwrap();
         storage.delete_node(hash);
+    }
+}
+
+// Manual implementation of Serialize
+impl<const N: usize, K: AsRef<[u8]> + Serialize> Serialize for Node<N, K> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Node", 8)?;
+        state.serialize_field("key", &self.key)?;
+        state.serialize_field("value_hash", &self.value_hash)?;
+        state.serialize_field("children_hash", &self.children_hash)?;
+        state.serialize_field("parent_hash", &self.parent_hash)?;
+        state.serialize_field("level", &self.level)?;
+        state.serialize_field("is_leaf", &self.is_leaf)?;
+        state.serialize_field("subtree_counts", &self.subtree_counts)?;
+        state.end()
+    }
+}
+
+// Manual implementation of Deserialize
+impl<
+        'de,
+        const N: usize,
+        K: AsRef<[u8]> + Deserialize<'de> + Clone + From<Vec<u8>> + PartialEq + 'static,
+    > Deserialize<'de> for Node<N, K>
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct NodeData<const N: usize, K> {
+            key: K,
+            value_hash: ValueDigest<N>,
+            children_hash: Option<Vec<ValueDigest<N>>>,
+            parent_hash: Option<ValueDigest<N>>,
+            level: usize,
+            is_leaf: bool,
+            subtree_counts: Option<Vec<usize>>,
+        }
+
+        let data = NodeData::deserialize(deserializer)?;
+        Ok(Node {
+            key: data.key,
+            value_hash: data.value_hash,
+            children_hash: data.children_hash,
+            parent_hash: data.parent_hash,
+            level: data.level,
+            is_leaf: data.is_leaf,
+            subtree_counts: data.subtree_counts,
+            storage: Arc::new(Mutex::new(crate::storage::HashMapNodeStorage::new())), // Placeholder for actual storage
+        })
     }
 }
 
