@@ -12,10 +12,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use std::fmt;
-use std::sync::{Arc, Mutex};
 use crate::digest::ValueDigest;
 use crate::storage::NodeStorage;
+use std::fmt;
+use std::sync::{Arc, Mutex};
 
 /// Represents a node in a prolly tree.
 ///
@@ -55,7 +55,7 @@ pub struct NodeAlt<const N: usize, K: AsRef<[u8]>> {
 
     /// The storage instance used to retrieve nodes by their cryptographic hashes.
     /// This is a shared reference to a mutex-protected storage instance.
-    pub(crate)storage: Arc<Mutex<dyn NodeStorage<N, K>>>,
+    pub(crate) storage: Arc<Mutex<dyn NodeStorage<N, K>>>,
 }
 
 // Manually implement Debug for NodeAlt
@@ -115,9 +115,14 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 self.children_hash = Some(vec![]);
             }
 
-            let mut new_node = NodeAlt::new(key.clone(), value_hash.clone(), true, self.storage.clone());
+            let mut new_node =
+                NodeAlt::new(key.clone(), value_hash.clone(), true, self.storage.clone());
             new_node.parent_hash = Some(self.calculate_hash());
             let new_node_hash = new_node.calculate_hash();
+
+            // Insert the new node into the storage
+            self.insert_node(new_node);
+
             self.children_hash.as_mut().unwrap().push(new_node_hash);
 
             let mut child_hashes_with_keys: Vec<(ValueDigest<N>, K)> = self
@@ -183,15 +188,22 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
         if self.is_leaf {
             if self.key == key {
                 self.value_hash = value_hash;
+                self.insert_node(self.clone());
             }
         } else {
-            if let Some(children_hash) = &self.children_hash {
+            if let Some(children_hash) = self.children_hash.take() {
                 let mut updated_child_hashes = vec![];
 
-                for child_hash in children_hash {
+                for child_hash in children_hash.iter() {
                     let mut child_node = self.get_node_by_hash(child_hash);
-                    child_node.update(key.clone(), value_hash.clone());
-                    updated_child_hashes.push(child_node.calculate_hash());
+                    if child_node.key == key {
+                        child_node.update(key.clone(), value_hash.clone());
+                        let updated_child_hash = child_node.calculate_hash();
+                        self.insert_node(child_node);
+                        updated_child_hashes.push(updated_child_hash);
+                    } else {
+                        updated_child_hashes.push(child_hash.clone());
+                    }
                 }
 
                 self.children_hash = Some(updated_child_hashes);
@@ -212,7 +224,13 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 self.value_hash = ValueDigest::<N>::default();
             }
             if let Some(mut children_hash) = self.children_hash.take() {
-                children_hash.retain(|child_hash| &self.get_key_from_hash(child_hash) != key);
+                children_hash.retain(|child_hash| {
+                    let retain = &self.get_key_from_hash(child_hash) != key;
+                    if !retain {
+                        self.delete_node(child_hash);
+                    }
+                    retain
+                });
                 self.children_hash = Some(children_hash);
             }
         } else {
@@ -221,7 +239,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
 
                 for child_hash in children_hash.iter() {
                     if &self.get_key_from_hash(child_hash) == key {
-                        updated_child_hashes.retain(|c| &self.get_key_from_hash(c) != key);
+                        self.delete_node(child_hash);
                     } else {
                         let mut child_node = self.get_node_by_hash(child_hash);
                         child_node.delete(key);
@@ -292,7 +310,12 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 let mut parent_node = self.get_node_by_hash(parent_hash);
                 parent_node.insert_internal(new_node);
             } else {
-                let mut new_root = NodeAlt::new(promoted_key, promoted_value_hash, false, self.storage.clone());
+                let mut new_root = NodeAlt::new(
+                    promoted_key,
+                    promoted_value_hash,
+                    false,
+                    self.storage.clone(),
+                );
                 new_root.children_hash =
                     Some(vec![self.calculate_hash(), new_node.calculate_hash()]);
                 new_root.level = self.level + 1;
@@ -388,8 +411,8 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::HashMapNodeStorage;
     use super::*;
+    use crate::storage::HashMapNodeStorage;
     type KeyType = Vec<u8>;
 
     #[test]

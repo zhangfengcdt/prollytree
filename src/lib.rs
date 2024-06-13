@@ -19,7 +19,7 @@ pub mod node;
 pub mod node2;
 pub mod page;
 mod page_range;
+pub mod storage;
 pub mod tree;
 pub mod visitor;
 mod visitors;
-pub mod storage;

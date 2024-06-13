@@ -1,10 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use serde::{Serialize, Deserialize};
 
 use crate::digest::ValueDigest;
 use crate::node2::NodeAlt;
-
 
 // Define the NodeStorage trait
 pub trait NodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> {
@@ -27,7 +26,9 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> HashMap
     }
 }
 
-impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>> + 'static> NodeStorage<N, K> for HashMapNodeStorage<N, K> {
+impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>> + 'static> NodeStorage<N, K>
+    for HashMapNodeStorage<N, K>
+{
     fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> NodeAlt<N, K> {
         self.map.get(hash).cloned().unwrap_or_else(|| {
             // Create a default node if the hash is not found
