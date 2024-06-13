@@ -85,18 +85,16 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
             if self.children.as_ref().unwrap().len() > MAX_CHILDREN {
                 self.split();
             }
-        } else {
-            if let Some(children) = &mut self.children {
-                for child in children.iter_mut() {
-                    if key.as_ref() < child.borrow().key.as_ref() {
-                        child.borrow_mut().insert(key, value_hash);
-                        return;
-                    }
+        } else if let Some(children) = &mut self.children {
+            for child in children.iter_mut() {
+                if key.as_ref() < child.borrow().key.as_ref() {
+                    child.borrow_mut().insert(key, value_hash);
+                    return;
                 }
+            }
 
-                if let Some(last_child) = children.last_mut() {
-                    last_child.borrow_mut().insert(key, value_hash);
-                }
+            if let Some(last_child) = children.last_mut() {
+                last_child.borrow_mut().insert(key, value_hash);
             }
         }
     }
@@ -106,11 +104,9 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
             if self.key == key {
                 self.value_hash = value_hash;
             }
-        } else {
-            if let Some(children) = &mut self.children {
-                for child in children.iter_mut() {
-                    child.borrow_mut().update(key.clone(), value_hash.clone());
-                }
+        } else if let Some(children) = &mut self.children {
+            for child in children.iter_mut() {
+                child.borrow_mut().update(key.clone(), value_hash.clone());
             }
         }
     }
@@ -125,15 +121,13 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
             if let Some(children) = &mut self.children {
                 children.retain(|child| &child.borrow().key != key);
             }
-        } else {
-            if let Some(children) = &mut self.children {
-                for child in children.iter_mut() {
-                    if &child.borrow().key == key {
-                        children.retain(|c| &c.borrow().key != key);
-                        return;
-                    }
-                    child.borrow_mut().delete(key);
+        } else if let Some(children) = &mut self.children {
+            for child in children.iter_mut() {
+                if &child.borrow().key == key {
+                    children.retain(|c| &c.borrow().key != key);
+                    return;
                 }
+                child.borrow_mut().delete(key);
             }
         }
     }
