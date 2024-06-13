@@ -18,7 +18,9 @@ pub struct HashMapNodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq
     map: HashMap<ValueDigest<N>, NodeAlt<N, K>>,
 }
 
-impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Default for HashMapNodeStorage<N, K> {
+impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Default
+    for HashMapNodeStorage<N, K>
+{
     fn default() -> Self {
         Self::new()
     }

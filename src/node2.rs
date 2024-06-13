@@ -363,7 +363,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
     /// # Returns
     ///
     /// The cryptographic hash of the node's content.
-    fn calculate_hash(&self) -> ValueDigest<N> {
+    pub(crate) fn calculate_hash(&self) -> ValueDigest<N> {
         let mut combined_data = Vec::new();
 
         // Append the key
