@@ -13,8 +13,6 @@ limitations under the License.
 */
 
 use crate::digest::ValueDigest;
-use std::cell::RefCell;
-use std::rc::{Rc, Weak};
 
 /// Represents a node in a prolly tree.
 ///
@@ -34,12 +32,13 @@ pub struct NodeAlt<const N: usize, K: AsRef<[u8]>> {
     /// A cryptographic hash of the value associated with this node.
     value_hash: ValueDigest<N>,
 
-    /// A vector of child nodes. If the node is a leaf, this will be `None`.
-    children: Option<Vec<Rc<RefCell<NodeAlt<N, K>>>>>,
+    /// An optional vector of cryptographic hashes representing the children nodes' contents.
+    /// If the node is a leaf, this will be `None`.
+    children_hash: Option<Vec<ValueDigest<N>>>,
 
-    /// A weak reference to the parent node. This allows for traversal back up the tree without creating
-    /// reference cycles. If the node is the root, this will be `None`.
-    parent: Option<Weak<RefCell<NodeAlt<N, K>>>>,
+    /// An optional cryptographic hash of the parent node's content.
+    /// If the node is the root, this will be `None`.
+    parent_hash: Option<ValueDigest<N>>,
 
     /// The level of the node in the tree. The root node starts at level 1.
     level: usize,
@@ -53,64 +52,130 @@ pub struct NodeAlt<const N: usize, K: AsRef<[u8]>> {
 }
 
 impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt<N, K> {
-    pub fn new(key: K, value_hash: ValueDigest<N>, is_leaf: bool) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(NodeAlt {
+    /// Creates a new `NodeAlt` instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key associated with the node.
+    /// * `value_hash` - The cryptographic hash of the value associated with the node.
+    /// * `is_leaf` - A flag indicating whether the node is a leaf.
+    ///
+    /// # Returns
+    ///
+    /// A new `NodeAlt` instance.
+    pub fn new(key: K, value_hash: ValueDigest<N>, is_leaf: bool) -> Self {
+        NodeAlt {
             key,
             value_hash,
-            children: if is_leaf { None } else { Some(vec![]) },
-            parent: None,
+            children_hash: if is_leaf { None } else { Some(vec![]) },
+            parent_hash: None,
             level: 1,
             is_leaf,
             subtree_counts: if is_leaf { None } else { Some(vec![]) },
-        }))
+        }
     }
 
+    /// Inserts a new key-value pair into the tree, updating the necessary content addresses.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to insert.
+    /// * `value_hash` - The cryptographic hash of the value to insert.
     pub fn insert(&mut self, key: K, value_hash: ValueDigest<N>) {
         if self.is_leaf {
-            if self.children.is_none() {
-                self.children = Some(vec![]);
+            if self.children_hash.is_none() {
+                self.children_hash = Some(vec![]);
             }
 
-            let new_node = NodeAlt::new(key, value_hash, true);
-            let parent = Rc::downgrade(&Rc::new(RefCell::new(self.clone())));
-            new_node.borrow_mut().parent = Some(parent);
-            self.children.as_mut().unwrap().push(new_node);
+            let mut new_node = NodeAlt::new(key.clone(), value_hash.clone(), true);
+            new_node.parent_hash = Some(self.calculate_hash());
+            let new_node_hash = new_node.calculate_hash();
+            self.children_hash.as_mut().unwrap().push(new_node_hash);
 
-            self.children
-                .as_mut()
+            let mut child_hashes_with_keys: Vec<(ValueDigest<N>, K)> = self
+                .children_hash
+                .as_ref()
                 .unwrap()
-                .sort_by(|a, b| a.borrow().key.as_ref().cmp(b.borrow().key.as_ref()));
+                .iter()
+                .map(|child_hash| {
+                    let child_node = self.get_node_by_hash(child_hash);
+                    (child_hash.clone(), child_node.key.clone())
+                })
+                .collect();
+
+            child_hashes_with_keys.sort_by(|a, b| a.1.as_ref().cmp(b.1.as_ref()));
+
+            let sorted_child_hashes: Vec<ValueDigest<N>> = child_hashes_with_keys
+                .into_iter()
+                .map(|(child_hash, _)| child_hash)
+                .collect();
+            self.children_hash = Some(sorted_child_hashes);
 
             const MAX_CHILDREN: usize = 3;
-            if self.children.as_ref().unwrap().len() > MAX_CHILDREN {
+            if self.children_hash.as_ref().unwrap().len() > MAX_CHILDREN {
                 self.split();
             }
-        } else if let Some(children) = &mut self.children {
-            for child in children.iter_mut() {
-                if key.as_ref() < child.borrow().key.as_ref() {
-                    child.borrow_mut().insert(key, value_hash);
-                    return;
-                }
-            }
+        } else {
+            let mut updated_child_hashes = vec![];
 
-            if let Some(last_child) = children.last_mut() {
-                last_child.borrow_mut().insert(key, value_hash);
+            if let Some(children_hash) = self.children_hash.take() {
+                for child_hash in children_hash {
+                    let child_key = self.get_key_from_hash(&child_hash);
+                    if key.as_ref() < child_key.as_ref() {
+                        let mut child_node = self.get_node_by_hash(&child_hash);
+                        child_node.insert(key.clone(), value_hash.clone());
+                        updated_child_hashes.push(child_node.calculate_hash());
+                        updated_child_hashes
+                            .extend_from_slice(&self.children_hash.take().unwrap_or_default());
+                        self.children_hash = Some(updated_child_hashes);
+                        return;
+                    } else {
+                        updated_child_hashes.push(child_hash);
+                    }
+                }
+
+                if let Some(last_child_hash) = updated_child_hashes.last_mut() {
+                    let mut last_child_node = self.get_node_by_hash(last_child_hash);
+                    last_child_node.insert(key.clone(), value_hash.clone());
+                    *last_child_hash = last_child_node.calculate_hash();
+                }
+
+                self.children_hash = Some(updated_child_hashes);
             }
         }
     }
 
+    /// Updates the value associated with a key in the tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to update.
+    /// * `value_hash` - The new cryptographic hash of the value to update.
     pub fn update(&mut self, key: K, value_hash: ValueDigest<N>) {
         if self.is_leaf {
             if self.key == key {
                 self.value_hash = value_hash;
             }
-        } else if let Some(children) = &mut self.children {
-            for child in children.iter_mut() {
-                child.borrow_mut().update(key.clone(), value_hash.clone());
+        } else {
+            if let Some(children_hash) = &self.children_hash {
+                let mut updated_child_hashes = vec![];
+
+                for child_hash in children_hash {
+                    let mut child_node = self.get_node_by_hash(child_hash);
+                    child_node.update(key.clone(), value_hash.clone());
+                    updated_child_hashes.push(child_node.calculate_hash());
+                }
+
+                self.children_hash = Some(updated_child_hashes);
             }
         }
     }
 
+    /// Deletes a key-value pair from the tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to delete.
     pub fn delete(&mut self, key: &K) {
         if self.is_leaf {
             if self.key == *key {
@@ -118,27 +183,46 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 self.key = "".as_bytes().to_vec().into();
                 self.value_hash = ValueDigest::<N>::default();
             }
-            if let Some(children) = &mut self.children {
-                children.retain(|child| &child.borrow().key != key);
+            if let Some(mut children_hash) = self.children_hash.take() {
+                children_hash.retain(|child_hash| &self.get_key_from_hash(child_hash) != key);
+                self.children_hash = Some(children_hash);
             }
-        } else if let Some(children) = &mut self.children {
-            for child in children.iter_mut() {
-                if &child.borrow().key == key {
-                    children.retain(|c| &c.borrow().key != key);
-                    return;
+        } else {
+            if let Some(children_hash) = self.children_hash.take() {
+                let mut updated_child_hashes = vec![];
+
+                for child_hash in children_hash.iter() {
+                    if &self.get_key_from_hash(child_hash) == key {
+                        updated_child_hashes.retain(|c| &self.get_key_from_hash(c) != key);
+                    } else {
+                        let mut child_node = self.get_node_by_hash(child_hash);
+                        child_node.delete(key);
+                        updated_child_hashes.push(child_node.calculate_hash());
+                    }
                 }
-                child.borrow_mut().delete(key);
+
+                self.children_hash = Some(updated_child_hashes);
             }
         }
     }
 
-    pub fn search(&self, key: &K) -> Option<Rc<RefCell<NodeAlt<N, K>>>> {
+    /// Searches for a key in the tree and returns the corresponding node if found.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to search for.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the node if found, or `None` if not found.
+    pub fn search(&self, key: &K) -> Option<NodeAlt<N, K>> {
         if self.key == *key {
-            return Some(Rc::new(RefCell::new(self.clone())));
+            return Some(self.clone());
         }
-        if let Some(children) = &self.children {
-            for child in children {
-                if let Some(result) = child.borrow().search(key) {
+        if let Some(children_hash) = &self.children_hash {
+            for child_hash in children_hash {
+                let child_node = self.get_node_by_hash(child_hash);
+                if let Some(result) = child_node.search(key) {
                     return Some(result);
                 }
             }
@@ -146,114 +230,183 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
         None
     }
 
+    /// Splits the node if it has too many children.
     fn split(&mut self) {
-        if let Some(children) = &mut self.children {
-            let mid = children.len() / 2;
-            let right_children = children.split_off(mid);
+        if let Some(mut children_hash) = self.children_hash.take() {
+            let mid = children_hash.len() / 2;
+            let right_children_hash = children_hash.split_off(mid);
 
-            let promoted_key = right_children[0].borrow().key.clone();
-            let promoted_value_hash = right_children[0].borrow().value_hash.clone();
+            let promoted_key = self.get_key_from_hash(&right_children_hash[0]);
+            let promoted_value_hash = self
+                .get_node_by_hash(&right_children_hash[0])
+                .value_hash
+                .clone();
 
-            let new_node = Rc::new(RefCell::new(NodeAlt {
+            let new_node = NodeAlt {
                 key: promoted_key.clone(),
                 value_hash: promoted_value_hash.clone(),
-                children: Some(right_children),
-                parent: None,
+                children_hash: Some(right_children_hash.clone()),
+                parent_hash: None,
                 level: self.level,
                 is_leaf: self.is_leaf,
                 subtree_counts: self.subtree_counts.clone(),
-            }));
+            };
 
-            for child in new_node.borrow().children.as_ref().unwrap().iter() {
-                child.borrow_mut().parent = Some(Rc::downgrade(&new_node));
+            for child_hash in right_children_hash.iter() {
+                let mut child_node = self.get_node_by_hash(child_hash);
+                child_node.parent_hash = Some(new_node.calculate_hash());
             }
 
-            self.children = Some(children.clone());
+            self.children_hash = Some(children_hash.clone());
 
-            if let Some(parent) = self.get_parent() {
-                parent.borrow_mut().insert_internal(new_node);
+            if let Some(parent_hash) = &self.parent_hash {
+                let mut parent_node = self.get_node_by_hash(parent_hash);
+                parent_node.insert_internal(new_node);
             } else {
-                let new_root = NodeAlt::new(promoted_key, promoted_value_hash, false);
-                new_root.borrow_mut().children =
-                    Some(vec![Rc::new(RefCell::new(self.clone())), new_node.clone()]);
-                new_root.borrow_mut().level = self.level + 1;
-                self.parent = Some(Rc::downgrade(&new_root));
+                let mut new_root = NodeAlt::new(promoted_key, promoted_value_hash, false);
+                new_root.children_hash =
+                    Some(vec![self.calculate_hash(), new_node.calculate_hash()]);
+                new_root.level = self.level + 1;
+                self.parent_hash = Some(new_root.calculate_hash());
             }
         }
     }
 
-    fn get_parent(&self) -> Option<Rc<RefCell<NodeAlt<N, K>>>> {
-        self.parent.as_ref()?.upgrade()
+    /// Retrieves the parent node if it exists.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the parent node if it exists, or `None` if it does not.
+    fn get_parent(&self) -> Option<NodeAlt<N, K>> {
+        self.parent_hash
+            .as_ref()
+            .map(|hash| self.get_node_by_hash(hash))
     }
 
-    fn insert_internal(&mut self, new_node: Rc<RefCell<NodeAlt<N, K>>>) {
-        if let Some(children) = &mut self.children {
-            children.push(new_node);
-            children.sort_by(|a, b| a.borrow().key.as_ref().cmp(b.borrow().key.as_ref()));
+    /// Inserts an internal node into the current node.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_node` - The new node to insert.
+    fn insert_internal(&mut self, new_node: NodeAlt<N, K>) {
+        if let Some(mut children_hash) = self.children_hash.take() {
+            children_hash.push(new_node.calculate_hash());
+
+            let mut child_hashes_with_keys: Vec<(ValueDigest<N>, K)> = children_hash
+                .iter()
+                .map(|child_hash| {
+                    let child_node = self.get_node_by_hash(child_hash);
+                    (child_hash.clone(), child_node.key.clone())
+                })
+                .collect();
+
+            child_hashes_with_keys.sort_by(|a, b| a.1.as_ref().cmp(b.1.as_ref()));
+
+            let sorted_child_hashes: Vec<ValueDigest<N>> = child_hashes_with_keys
+                .into_iter()
+                .map(|(child_hash, _)| child_hash)
+                .collect();
+            self.children_hash = Some(sorted_child_hashes);
         }
+    }
+
+    /// A placeholder for the method that calculates the hash of the node.
+    ///
+    /// # Returns
+    ///
+    /// The cryptographic hash of the node's content.
+    fn calculate_hash(&self) -> ValueDigest<N> {
+        // Calculate and return the hash of the node's content
+        unimplemented!()
+    }
+
+    /// A placeholder for the method that retrieves a node by its hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The cryptographic hash of the node to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// The node corresponding to the given hash.
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> NodeAlt<N, K> {
+        // Retrieve and return the node corresponding to the given hash
+        unimplemented!()
+    }
+
+    /// A placeholder for the method that retrieves the key from a hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The cryptographic hash of the node.
+    ///
+    /// # Returns
+    ///
+    /// The key corresponding to the given hash.
+    fn get_key_from_hash(&self, hash: &ValueDigest<N>) -> K {
+        // Retrieve and return the key corresponding to the given hash
+        unimplemented!()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::digest::ValueDigest;
+    type KeyType = Vec<u8>;
 
     #[test]
     fn test_insert() {
-        let key = "example_key".as_bytes().to_vec();
+        let key: KeyType = "example_key".as_bytes().to_vec().into();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let root = NodeAlt::new(key.clone(), value_hash.clone(), true);
+        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true);
 
-        let new_key = "new_key".as_bytes().to_vec();
+        let new_key: KeyType = "new_key".as_bytes().to_vec().into();
         let new_value = b"test data 2";
         let new_value_hash = ValueDigest::<32>::new(new_value);
-        root.borrow_mut()
-            .insert(new_key.clone(), new_value_hash.clone());
+        root.insert(new_key.clone(), new_value_hash.clone());
 
-        assert!(root.borrow().search(&new_key).is_some());
+        assert!(root.search(&new_key).is_some());
     }
 
     #[test]
     fn test_update() {
-        let key = "example_key".as_bytes().to_vec();
+        let key: KeyType = "example_key".as_bytes().to_vec().into();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let root = NodeAlt::new(key.clone(), value_hash.clone(), true);
+        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true);
 
         let new_value = b"updated data";
         let new_value_hash = ValueDigest::<32>::new(new_value);
-        root.borrow_mut()
-            .update(key.clone(), new_value_hash.clone());
+        root.update(key.clone(), new_value_hash.clone());
 
-        let result = root.borrow().search(&key);
+        let result = root.search(&key);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().borrow().value_hash, new_value_hash);
+        assert_eq!(result.unwrap().value_hash, new_value_hash);
     }
 
     #[test]
     fn test_delete() {
-        let key = "example_key".as_bytes().to_vec();
+        let key: KeyType = "example_key".as_bytes().to_vec().into();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let root = NodeAlt::new(key.clone(), value_hash.clone(), true);
+        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true);
 
-        root.borrow_mut().delete(&key);
+        root.delete(&key);
 
-        assert!(root.borrow().search(&key).is_none());
+        assert!(root.search(&key).is_none());
     }
 
     #[test]
     fn test_search() {
-        let key = "example_key".as_bytes().to_vec();
+        let key: KeyType = "example_key".as_bytes().to_vec().into();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
         let root = NodeAlt::new(key.clone(), value_hash.clone(), true);
 
-        let result = root.borrow().search(&key);
+        let result = root.search(&key);
 
         assert!(result.is_some());
-        assert_eq!(result.unwrap().borrow().key, key);
+        assert_eq!(result.unwrap().key, key);
     }
 }
