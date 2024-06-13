@@ -12,12 +12,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
 
 use crate::digest::ValueDigest;
 use crate::node::Node;
 use crate::visitor::Visitor;
 use sha2::digest::FixedOutputReset;
 use sha2::Digest;
+use std::collections::VecDeque;
 
 /// Represents a page in a prolly tree.
 ///
@@ -41,6 +44,10 @@ use sha2::Digest;
 ///
 /// The level of the page is used to manage the depth of the tree, and it plays a crucial role
 /// in balancing operations, ensuring that the tree remains efficiently searchable.
+
+#[cfg(feature = "prolly_balance_max_nodes")]
+const MAX_NODES: usize = 100;
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Page<const N: usize, K: AsRef<[u8]>> {
     pub nodes: Vec<Node<N, K>>, // A vector of nodes contained in this page
@@ -79,8 +86,8 @@ impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Page<N, K> {
         }
     }
 
+    #[cfg(feature = "prolly_balance_max_nodes")]
     pub fn balance(&mut self) {
-        const MAX_NODES: usize = 5; // Maximum number of nodes in a page before balancing
         if self.nodes.len() > MAX_NODES {
             // Split the page into two
             let mid = self.nodes.len() / 2;
@@ -113,6 +120,94 @@ impl<const N: usize, K: Ord + Clone + AsRef<[u8]>> Page<N, K> {
             }
             self.nodes.push(new_node);
         }
+    }
+
+    #[cfg(feature = "prolly_balance_rolling_hash")]
+    fn rolling_hash_splitter(&self) -> VecDeque<usize> {
+        let mut split_indices = VecDeque::new();
+        let mut rolling_hash: u64 = 0;
+        let mut chunk_size = 0;
+
+        for (i, node) in self.nodes.iter().enumerate() {
+            // Update the rolling hash with the current node's key and value hash
+            for byte in node
+                .key()
+                .as_ref()
+                .iter()
+                .chain(node.value_hash().as_bytes().iter())
+            {
+                rolling_hash = (rolling_hash << 1).wrapping_add(*byte as u64);
+            }
+
+            // Increment the chunk size
+            chunk_size += 1;
+
+            // Decide whether to split the chunk
+            // This means that as the chunk size grows, the target pattern shifts to make it easier to match.
+            // For example,
+            //   - If the chunk size is 4, the target pattern is 1 << 2, which equals 4 (binary 100).
+            //   - If the chunk size is 8, the target pattern is 1 << 4, which equals 16 (binary 10000).
+            let target_pattern = 1u64 << (chunk_size / 2);
+            if rolling_hash & target_pattern == 0 {
+                split_indices.push_back(i + 1);
+                chunk_size = 0;
+            }
+        }
+
+        split_indices
+    }
+
+    #[cfg(feature = "prolly_balance_rolling_hash")]
+    pub fn balance(&mut self) {
+        let mut split_indices = self.rolling_hash_splitter();
+        let mut new_nodes = Vec::new();
+        let mut current_page_nodes = Vec::new();
+
+        for (i, node) in self.nodes.drain(..).enumerate() {
+            current_page_nodes.push(node);
+
+            if let Some(&split_index) = split_indices.front() {
+                if i + 1 == split_index {
+                    split_indices.pop_front();
+
+                    let new_page = Page {
+                        nodes: current_page_nodes.clone(),
+                        level: self.level,
+                    };
+
+                    let mid_node = current_page_nodes.pop().unwrap();
+                    let mut new_node = Node::new(
+                        mid_node.key().clone(),
+                        mid_node.value_hash().clone(),
+                        *mid_node.level() + 1,
+                    );
+                    new_node.set_lt_pointer(Some(Box::new(new_page)));
+
+                    new_nodes.push(new_node);
+                    current_page_nodes.clear();
+                }
+            }
+        }
+
+        if !current_page_nodes.is_empty() {
+            let new_page = Page {
+                nodes: current_page_nodes,
+                level: self.level,
+            };
+
+            let last_node = new_nodes.last_mut();
+            if let Some(node) = last_node {
+                node.set_lt_pointer(Some(Box::new(new_page)));
+            } else {
+                new_nodes.push(Node::new(
+                    self.nodes.pop().unwrap().key().clone(),
+                    self.nodes.pop().unwrap().value_hash().clone(),
+                    self.level + 1,
+                ));
+            }
+        }
+
+        self.nodes = new_nodes;
     }
 
     pub fn find(&self, key: &K) -> Option<&Node<N, K>> {
@@ -218,6 +313,7 @@ mod tests {
         assert_eq!(found_node.unwrap().key(), &key);
     }
 
+    #[cfg(feature = "prolly_balance_max_nodes")]
     #[test]
     fn test_page_balance() {
         let mut page = Page::<32, String>::new(0);
@@ -233,5 +329,87 @@ mod tests {
 
         let nodes = &page.nodes;
         assert!(nodes.windows(2).all(|w| w[0].key() <= w[1].key()));
+    }
+
+    #[cfg(feature = "prolly_balance_rolling_hash")]
+    #[test]
+    fn test_page_balance() {
+        let mut page = Page::<32, String>::new(0);
+
+        for i in 1..20 {
+            let key = format!("key{}", i);
+            let value = format!("value{}", i);
+            let hash = ValueDigest::<32>::new(value.as_bytes());
+            page.insert(key.clone(), hash);
+        }
+
+        page.balance();
+
+        let nodes = &page.nodes;
+        assert!(nodes.windows(2).all(|w| w[0].key() <= w[1].key()));
+
+        // Check if the nodes are reasonably balanced
+        let mut chunk_sizes = Vec::new();
+        let mut current_chunk_size = 0;
+        for node in nodes {
+            current_chunk_size += 1;
+            if let Some(ref lt_pointer) = node.lt_pointer() {
+                chunk_sizes.push(current_chunk_size);
+                current_chunk_size = 0;
+            }
+        }
+        if current_chunk_size > 0 {
+            chunk_sizes.push(current_chunk_size);
+        }
+
+        // Check if chunk sizes are within a reasonable range
+        let mean_chunk_size = chunk_sizes.iter().sum::<usize>() as f64 / chunk_sizes.len() as f64;
+        let max_chunk_size = chunk_sizes.iter().max().unwrap_or(&0);
+        let min_chunk_size = chunk_sizes.iter().min().unwrap_or(&0);
+
+        assert!(mean_chunk_size > 1.0);
+        assert!(*max_chunk_size <= 10);
+        assert!(*min_chunk_size >= 1);
+    }
+
+    #[cfg(feature = "prolly_balance_rolling_hash")]
+    #[test]
+    fn test_page_balance_large_inserts() {
+        let mut page = Page::<32, String>::new(0);
+
+        for i in 1..=200 {
+            let key = format!("key{}", i);
+            let value = format!("value{}", i);
+            let hash = ValueDigest::<32>::new(value.as_bytes());
+            page.insert(key.clone(), hash);
+        }
+
+        page.balance();
+
+        let nodes = &page.nodes;
+        assert!(nodes.windows(2).all(|w| w[0].key() <= w[1].key()));
+
+        // Check if the nodes are reasonably balanced
+        let mut chunk_sizes = Vec::new();
+        let mut current_chunk_size = 0;
+        for node in nodes {
+            current_chunk_size += 1;
+            if let Some(ref lt_pointer) = node.lt_pointer() {
+                chunk_sizes.push(current_chunk_size);
+                current_chunk_size = 0;
+            }
+        }
+        if current_chunk_size > 0 {
+            chunk_sizes.push(current_chunk_size);
+        }
+
+        // Check if chunk sizes are within a reasonable range
+        let mean_chunk_size = chunk_sizes.iter().sum::<usize>() as f64 / chunk_sizes.len() as f64;
+        let max_chunk_size = chunk_sizes.iter().max().unwrap_or(&0);
+        let min_chunk_size = chunk_sizes.iter().min().unwrap_or(&0);
+
+        assert!(mean_chunk_size > 1.0);
+        assert!(*max_chunk_size <= 20);
+        assert!(*min_chunk_size >= 1);
     }
 }

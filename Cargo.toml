@@ -27,6 +27,8 @@ tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [features]
+default = ["digest_base64", "prolly_balance_max_nodes"]
 tracing = ["dep:tracing"]
-default = ["digest_base64"]
 digest_base64 = ["dep:base64"]
+prolly_balance_max_nodes = []
+prolly_balance_rolling_hash = []
