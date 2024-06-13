@@ -14,6 +14,7 @@ limitations under the License.
 #![allow(dead_code)]
 
 use sha2::{Digest, Sha256};
+use serde::{Serialize, Deserialize};
 
 /// Represents a cryptographic hash of a value in a prolly tree.
 ///
@@ -37,8 +38,8 @@ use sha2::{Digest, Sha256};
 ///
 /// `ValueDigest` is an essential component of the prolly tree, enabling secure and efficient
 /// handling of key-value pairs.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct ValueDigest<const N: usize>([u8; N]);
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct ValueDigest<const N: usize>(pub [u8; N]);
 
 impl<const N: usize> ValueDigest<N> {
     /// Creates a new `ValueDigest` from the given data.
@@ -94,6 +95,26 @@ impl<const N: usize> ValueDigest<N> {
 impl<const N: usize> Default for ValueDigest<N> {
     fn default() -> Self {
         ValueDigest([0u8; N])
+    }
+}
+
+impl<const N: usize> Serialize for ValueDigest<N> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+    {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de, const N: usize> Deserialize<'de> for ValueDigest<N> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+    {
+        let bytes: &[u8] = serde::de::Deserialize::deserialize(deserializer)?;
+        let array = <[u8; N]>::try_from(bytes).map_err(|_| serde::de::Error::invalid_length(bytes.len(), &stringify!(N)))?;
+        Ok(ValueDigest(array))
     }
 }
 

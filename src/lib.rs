@@ -22,3 +22,4 @@ mod page_range;
 pub mod tree;
 pub mod visitor;
 mod visitors;
+pub mod storage;

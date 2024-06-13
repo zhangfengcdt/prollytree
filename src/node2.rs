@@ -12,7 +12,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use std::fmt;
+use std::sync::{Arc, Mutex};
 use crate::digest::ValueDigest;
+use crate::storage::NodeStorage;
 
 /// Represents a node in a prolly tree.
 ///
@@ -24,31 +27,50 @@ use crate::digest::ValueDigest;
 /// * `N` - A constant parameter that determines the size of the `value_hash` array.
 /// * `K` - The type of the key stored in the node. It must implement the `AsRef<[u8]>` trait.
 ///
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NodeAlt<const N: usize, K: AsRef<[u8]>> {
     /// The key associated with this node.
-    key: K,
+    pub(crate) key: K,
 
     /// A cryptographic hash of the value associated with this node.
-    value_hash: ValueDigest<N>,
+    pub(crate) value_hash: ValueDigest<N>,
 
     /// An optional vector of cryptographic hashes representing the children nodes' contents.
     /// If the node is a leaf, this will be `None`.
-    children_hash: Option<Vec<ValueDigest<N>>>,
+    pub(crate) children_hash: Option<Vec<ValueDigest<N>>>,
 
     /// An optional cryptographic hash of the parent node's content.
     /// If the node is the root, this will be `None`.
-    parent_hash: Option<ValueDigest<N>>,
+    pub(crate) parent_hash: Option<ValueDigest<N>>,
 
     /// The level of the node in the tree. The root node starts at level 1.
-    level: usize,
+    pub(crate) level: usize,
 
     /// A flag indicating whether the node is a leaf. Leaf nodes do not have children.
-    is_leaf: bool,
+    pub(crate) is_leaf: bool,
 
     /// A vector of subtree counts. Each element represents the number of nodes in a corresponding
     /// subtree. If the node is a leaf, this will be `None`.
-    subtree_counts: Option<Vec<usize>>,
+    pub(crate) subtree_counts: Option<Vec<usize>>,
+
+    /// The storage instance used to retrieve nodes by their cryptographic hashes.
+    /// This is a shared reference to a mutex-protected storage instance.
+    pub(crate)storage: Arc<Mutex<dyn NodeStorage<N, K>>>,
+}
+
+// Manually implement Debug for NodeAlt
+impl<const N: usize, K: AsRef<[u8]> + fmt::Debug> fmt::Debug for NodeAlt<N, K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NodeAlt")
+            .field("key", &self.key)
+            .field("value_hash", &self.value_hash)
+            .field("children_hash", &self.children_hash)
+            .field("parent_hash", &self.parent_hash)
+            .field("level", &self.level)
+            .field("is_leaf", &self.is_leaf)
+            .field("subtree_counts", &self.subtree_counts)
+            .finish()
+    }
 }
 
 impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt<N, K> {
@@ -63,7 +85,12 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
     /// # Returns
     ///
     /// A new `NodeAlt` instance.
-    pub fn new(key: K, value_hash: ValueDigest<N>, is_leaf: bool) -> Self {
+    pub fn new(
+        key: K,
+        value_hash: ValueDigest<N>,
+        is_leaf: bool,
+        storage: Arc<Mutex<dyn NodeStorage<N, K>>>,
+    ) -> Self {
         NodeAlt {
             key,
             value_hash,
@@ -72,6 +99,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
             level: 1,
             is_leaf,
             subtree_counts: if is_leaf { None } else { Some(vec![]) },
+            storage,
         }
     }
 
@@ -87,7 +115,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 self.children_hash = Some(vec![]);
             }
 
-            let mut new_node = NodeAlt::new(key.clone(), value_hash.clone(), true);
+            let mut new_node = NodeAlt::new(key.clone(), value_hash.clone(), true, self.storage.clone());
             new_node.parent_hash = Some(self.calculate_hash());
             let new_node_hash = new_node.calculate_hash();
             self.children_hash.as_mut().unwrap().push(new_node_hash);
@@ -250,6 +278,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 level: self.level,
                 is_leaf: self.is_leaf,
                 subtree_counts: self.subtree_counts.clone(),
+                storage: self.storage.clone(),
             };
 
             for child_hash in right_children_hash.iter() {
@@ -263,7 +292,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 let mut parent_node = self.get_node_by_hash(parent_hash);
                 parent_node.insert_internal(new_node);
             } else {
-                let mut new_root = NodeAlt::new(promoted_key, promoted_value_hash, false);
+                let mut new_root = NodeAlt::new(promoted_key, promoted_value_hash, false, self.storage.clone());
                 new_root.children_hash =
                     Some(vec![self.calculate_hash(), new_node.calculate_hash()]);
                 new_root.level = self.level + 1;
@@ -277,11 +306,11 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
     /// # Returns
     ///
     /// An `Option` containing the parent node if it exists, or `None` if it does not.
-    fn get_parent(&self) -> Option<NodeAlt<N, K>> {
-        self.parent_hash
-            .as_ref()
-            .map(|hash| self.get_node_by_hash(hash))
-    }
+    // fn get_parent(&self) -> Option<NodeAlt<N, K>> {
+    //     self.parent_hash
+    //         .as_ref()
+    //         .map(|hash| self.get_node_by_hash(hash))
+    // }
 
     /// Inserts an internal node into the current node.
     ///
@@ -316,50 +345,60 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
     ///
     /// The cryptographic hash of the node's content.
     fn calculate_hash(&self) -> ValueDigest<N> {
-        // Calculate and return the hash of the node's content
-        unimplemented!()
+        let mut combined_data = Vec::new();
+
+        // Append the key
+        combined_data.extend_from_slice(self.key.as_ref());
+
+        // Append the value hash
+        combined_data.extend_from_slice(self.value_hash.as_bytes());
+
+        // Append the children's hashes if they exist
+        if let Some(children_hash) = &self.children_hash {
+            for child_hash in children_hash {
+                combined_data.extend_from_slice(child_hash.as_bytes());
+            }
+        }
+
+        // Create a ValueDigest from the combined data
+        ValueDigest::new(&combined_data)
     }
 
-    /// A placeholder for the method that retrieves a node by its hash.
-    ///
-    /// # Arguments
-    ///
-    /// * `hash` - The cryptographic hash of the node to retrieve.
-    ///
-    /// # Returns
-    ///
-    /// The node corresponding to the given hash.
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> NodeAlt<N, K> {
-        // Retrieve and return the node corresponding to the given hash
-        unimplemented!()
+    pub fn get_key_from_hash(&self, hash: &ValueDigest<N>) -> K {
+        let node = self.get_node_by_hash(hash);
+        node.key.clone()
     }
 
-    /// A placeholder for the method that retrieves the key from a hash.
-    ///
-    /// # Arguments
-    ///
-    /// * `hash` - The cryptographic hash of the node.
-    ///
-    /// # Returns
-    ///
-    /// The key corresponding to the given hash.
-    fn get_key_from_hash(&self, hash: &ValueDigest<N>) -> K {
-        // Retrieve and return the key corresponding to the given hash
-        unimplemented!()
+    pub fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> NodeAlt<N, K> {
+        let storage = self.storage.lock().unwrap();
+        storage.get_node_by_hash(hash)
+    }
+
+    pub fn insert_node(&self, node: NodeAlt<N, K>) {
+        let hash = node.calculate_hash();
+        let mut storage = self.storage.lock().unwrap();
+        storage.insert_node(hash, node);
+    }
+
+    pub fn delete_node(&self, hash: &ValueDigest<N>) {
+        let mut storage = self.storage.lock().unwrap();
+        storage.delete_node(hash);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::storage::HashMapNodeStorage;
     use super::*;
     type KeyType = Vec<u8>;
 
     #[test]
     fn test_insert() {
+        let storage = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
         let key: KeyType = "example_key".as_bytes().to_vec().into();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true);
+        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true, storage.clone());
 
         let new_key: KeyType = "new_key".as_bytes().to_vec().into();
         let new_value = b"test data 2";
@@ -371,10 +410,11 @@ mod tests {
 
     #[test]
     fn test_update() {
+        let storage = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
         let key: KeyType = "example_key".as_bytes().to_vec().into();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true);
+        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true, storage.clone());
 
         let new_value = b"updated data";
         let new_value_hash = ValueDigest::<32>::new(new_value);
@@ -387,10 +427,11 @@ mod tests {
 
     #[test]
     fn test_delete() {
+        let storage = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
         let key: KeyType = "example_key".as_bytes().to_vec().into();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true);
+        let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true, storage.clone());
 
         root.delete(&key);
 
@@ -399,10 +440,11 @@ mod tests {
 
     #[test]
     fn test_search() {
+        let storage = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
         let key: KeyType = "example_key".as_bytes().to_vec().into();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let root = NodeAlt::new(key.clone(), value_hash.clone(), true);
+        let root = NodeAlt::new(key.clone(), value_hash.clone(), true, storage.clone());
 
         let result = root.search(&key);
 
