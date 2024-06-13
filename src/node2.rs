@@ -190,24 +190,22 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 self.value_hash = value_hash;
                 self.insert_node(self.clone());
             }
-        } else {
-            if let Some(children_hash) = self.children_hash.take() {
-                let mut updated_child_hashes = vec![];
+        } else if let Some(children_hash) = self.children_hash.take() {
+            let mut updated_child_hashes = vec![];
 
-                for child_hash in children_hash.iter() {
-                    let mut child_node = self.get_node_by_hash(child_hash);
-                    if child_node.key == key {
-                        child_node.update(key.clone(), value_hash.clone());
-                        let updated_child_hash = child_node.calculate_hash();
-                        self.insert_node(child_node);
-                        updated_child_hashes.push(updated_child_hash);
-                    } else {
-                        updated_child_hashes.push(child_hash.clone());
-                    }
+            for child_hash in children_hash.iter() {
+                let mut child_node = self.get_node_by_hash(child_hash);
+                if child_node.key == key {
+                    child_node.update(key.clone(), value_hash.clone());
+                    let updated_child_hash = child_node.calculate_hash();
+                    self.insert_node(child_node);
+                    updated_child_hashes.push(updated_child_hash);
+                } else {
+                    updated_child_hashes.push(child_hash.clone());
                 }
-
-                self.children_hash = Some(updated_child_hashes);
             }
+
+            self.children_hash = Some(updated_child_hashes);
         }
     }
 
@@ -233,22 +231,20 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> NodeAlt
                 });
                 self.children_hash = Some(children_hash);
             }
-        } else {
-            if let Some(children_hash) = self.children_hash.take() {
-                let mut updated_child_hashes = vec![];
+        } else if let Some(children_hash) = self.children_hash.take() {
+            let mut updated_child_hashes = vec![];
 
-                for child_hash in children_hash.iter() {
-                    if &self.get_key_from_hash(child_hash) == key {
-                        self.delete_node(child_hash);
-                    } else {
-                        let mut child_node = self.get_node_by_hash(child_hash);
-                        child_node.delete(key);
-                        updated_child_hashes.push(child_node.calculate_hash());
-                    }
+            for child_hash in children_hash.iter() {
+                if &self.get_key_from_hash(child_hash) == key {
+                    self.delete_node(child_hash);
+                } else {
+                    let mut child_node = self.get_node_by_hash(child_hash);
+                    child_node.delete(key);
+                    updated_child_hashes.push(child_node.calculate_hash());
                 }
-
-                self.children_hash = Some(updated_child_hashes);
             }
+
+            self.children_hash = Some(updated_child_hashes);
         }
     }
 
@@ -418,12 +414,12 @@ mod tests {
     #[test]
     fn test_insert() {
         let storage = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
-        let key: KeyType = "example_key".as_bytes().to_vec().into();
+        let key: KeyType = "example_key".as_bytes().to_vec();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
         let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true, storage.clone());
 
-        let new_key: KeyType = "new_key".as_bytes().to_vec().into();
+        let new_key: KeyType = "new_key".as_bytes().to_vec();
         let new_value = b"test data 2";
         let new_value_hash = ValueDigest::<32>::new(new_value);
         root.insert(new_key.clone(), new_value_hash.clone());
@@ -434,7 +430,7 @@ mod tests {
     #[test]
     fn test_update() {
         let storage = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
-        let key: KeyType = "example_key".as_bytes().to_vec().into();
+        let key: KeyType = "example_key".as_bytes().to_vec();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
         let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true, storage.clone());
@@ -451,7 +447,7 @@ mod tests {
     #[test]
     fn test_delete() {
         let storage = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
-        let key: KeyType = "example_key".as_bytes().to_vec().into();
+        let key: KeyType = "example_key".as_bytes().to_vec();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
         let mut root = NodeAlt::new(key.clone(), value_hash.clone(), true, storage.clone());
@@ -464,7 +460,7 @@ mod tests {
     #[test]
     fn test_search() {
         let storage = Arc::new(Mutex::new(HashMapNodeStorage::<32, Vec<u8>>::new()));
-        let key: KeyType = "example_key".as_bytes().to_vec().into();
+        let key: KeyType = "example_key".as_bytes().to_vec();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
         let root = NodeAlt::new(key.clone(), value_hash.clone(), true, storage.clone());
