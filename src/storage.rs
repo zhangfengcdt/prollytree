@@ -3,19 +3,19 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::digest::ValueDigest;
-use crate::node2::NodeAlt;
+use crate::node::Node;
 
 // Define the NodeStorage trait
 pub trait NodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> NodeAlt<N, K>;
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: NodeAlt<N, K>);
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N, K>;
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N, K>);
     fn delete_node(&mut self, hash: &ValueDigest<N>);
 }
 
 // Implement the trait for HashMap storage
 #[derive(Debug, Clone)]
 pub struct HashMapNodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> {
-    map: HashMap<ValueDigest<N>, NodeAlt<N, K>>,
+    map: HashMap<ValueDigest<N>, Node<N, K>>,
 }
 
 impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Default
@@ -37,10 +37,10 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> HashMap
 impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>> + 'static> NodeStorage<N, K>
     for HashMapNodeStorage<N, K>
 {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> NodeAlt<N, K> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N, K> {
         self.map.get(hash).cloned().unwrap_or_else(|| {
             // Create a default node if the hash is not found
-            NodeAlt {
+            Node {
                 key: Vec::new().into(),
                 value_hash: ValueDigest::<N>([0; N]),
                 children_hash: None,
@@ -53,7 +53,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>> + 'stati
         })
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: NodeAlt<N, K>) {
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N, K>) {
         self.map.insert(hash, node);
     }
 

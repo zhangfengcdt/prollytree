@@ -13,10 +13,10 @@ limitations under the License.
 */
 
 use crate::digest::ValueDigest;
-use crate::node2::NodeAlt;
+use crate::node::Node;
 
 pub struct ProllyTree<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> {
-    root: NodeAlt<N, K>,
+    root: Node<N, K>,
     root_hash: Option<ValueDigest<N>>,
 }
 
@@ -30,7 +30,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
     /// # Returns
     ///
     /// A new `ProllyTree` instance.
-    pub fn new(root: NodeAlt<N, K>) -> Self {
+    pub fn new(root: Node<N, K>) -> Self {
         ProllyTree {
             root,
             root_hash: None,
@@ -46,7 +46,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
     /// # Returns
     ///
     /// A new `ProllyTree` instance with the specified hasher.
-    pub fn new_with_hasher(root: NodeAlt<N, K>) -> Self {
+    pub fn new_with_hasher(root: Node<N, K>) -> Self {
         ProllyTree {
             root,
             root_hash: None,
@@ -117,7 +117,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
     /// # Returns
     ///
     /// An `Option` containing the node if found, or `None` if not found.
-    pub fn find(&self, key: &K) -> Option<NodeAlt<N, K>> {
+    pub fn find(&self, key: &K) -> Option<Node<N, K>> {
         self.root.search(key)
     }
 }
@@ -126,7 +126,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
 mod tests {
     use super::*;
     use crate::digest::ValueDigest;
-    use crate::node2::NodeAlt;
+    use crate::node::Node;
     use crate::storage::HashMapNodeStorage;
     use std::sync::{Arc, Mutex};
 
@@ -136,7 +136,7 @@ mod tests {
         let key = "root_key".as_bytes().to_vec();
         let value = b"root_value";
         let value_hash = ValueDigest::<32>::new(value);
-        let root = NodeAlt::new(
+        let root = Node::new(
             key.clone(),
             value_hash.clone(),
             true,
