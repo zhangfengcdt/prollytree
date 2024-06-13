@@ -85,12 +85,46 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N,
     /// # Returns
     ///
     /// A new `NodeAlt` instance.
-    pub fn new(
+    pub fn new_with_hash(
         key: K,
         value_hash: ValueDigest<N>,
         is_leaf: bool,
         storage: Arc<Mutex<dyn NodeStorage<N, K>>>,
     ) -> Self {
+        Node {
+            key,
+            value_hash,
+            children_hash: if is_leaf { None } else { Some(vec![]) },
+            parent_hash: None,
+            level: 1,
+            is_leaf,
+            subtree_counts: if is_leaf { None } else { Some(vec![]) },
+            storage,
+        }
+    }
+
+    /// Creates a new `NodeAlt` instance with a value.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key associated with the node.
+    /// * `value` - The value associated with the node.
+    /// * `is_leaf` - A flag indicating whether the node is a leaf.
+    /// * `storage` - The storage backend for the node.
+    ///
+    /// # Returns
+    ///
+    /// A new `NodeAlt` instance.
+    pub fn new<V>(
+        key: K,
+        value: V,
+        is_leaf: bool,
+        storage: Arc<Mutex<dyn NodeStorage<N, K>>>,
+    ) -> Self
+    where
+        V: AsRef<[u8]>,
+    {
+        let value_hash = ValueDigest::new(value.as_ref());
         Node {
             key,
             value_hash,
@@ -116,7 +150,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N,
             }
 
             let mut new_node =
-                Node::new(key.clone(), value_hash.clone(), true, self.storage.clone());
+                Node::new_with_hash(key.clone(), value_hash.clone(), true, self.storage.clone());
             new_node.parent_hash = Some(self.calculate_hash());
             let new_node_hash = new_node.calculate_hash();
 
@@ -178,6 +212,20 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N,
         }
     }
 
+    /// Inserts a new key-value pair into the tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to insert.
+    /// * `value` - The value to insert.
+    pub fn insert_with_value<V>(&mut self, key: K, value: V)
+    where
+        V: AsRef<[u8]>,
+    {
+        let value_hash = ValueDigest::new(value.as_ref());
+        self.insert(key, value_hash);
+    }
+
     /// Updates the value associated with a key in the tree.
     ///
     /// # Arguments
@@ -207,6 +255,20 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N,
 
             self.children_hash = Some(updated_child_hashes);
         }
+    }
+
+    /// Updates the value associated with a key in the tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to update.
+    /// * `value` - The new value to update.
+    pub fn update_with_value<V>(&mut self, key: K, value: V)
+    where
+        V: AsRef<[u8]>,
+    {
+        let value_hash = ValueDigest::new(value.as_ref());
+        self.update(key, value_hash);
     }
 
     /// Deletes a key-value pair from the tree.
@@ -272,6 +334,35 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N,
         None
     }
 
+    /// Searches for a key in the tree and returns the corresponding node if found.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to search for.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the node if found, or `None` if not found.
+    pub fn find(&self, key: &K) -> Option<Node<N, K>> {
+        self.search(key)
+    }
+
+    /// Searches for a key in the tree and returns the corresponding node if found.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to search for.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the node if found, or `None` if not found.
+    pub fn find_with_value<V>(&self, key: &K) -> Option<Node<N, K>>
+    where
+        V: AsRef<[u8]>,
+    {
+        self.find(key)
+    }
+
     /// Splits the node if it has too many children.
     fn split(&mut self) {
         if let Some(mut children_hash) = self.children_hash.take() {
@@ -306,7 +397,7 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N,
                 let mut parent_node = self.get_node_by_hash(parent_hash);
                 parent_node.insert_internal(new_node);
             } else {
-                let mut new_root = Node::new(
+                let mut new_root = Node::new_with_hash(
                     promoted_key,
                     promoted_value_hash,
                     false,
@@ -417,7 +508,7 @@ mod tests {
         let key: KeyType = "example_key".as_bytes().to_vec();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let mut root = Node::new(key.clone(), value_hash.clone(), true, storage.clone());
+        let mut root = Node::new_with_hash(key.clone(), value_hash.clone(), true, storage.clone());
 
         let new_key: KeyType = "new_key".as_bytes().to_vec();
         let new_value = b"test data 2";
@@ -433,7 +524,7 @@ mod tests {
         let key: KeyType = "example_key".as_bytes().to_vec();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let mut root = Node::new(key.clone(), value_hash.clone(), true, storage.clone());
+        let mut root = Node::new_with_hash(key.clone(), value_hash.clone(), true, storage.clone());
 
         let new_value = b"updated data";
         let new_value_hash = ValueDigest::<32>::new(new_value);
@@ -450,7 +541,7 @@ mod tests {
         let key: KeyType = "example_key".as_bytes().to_vec();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let mut root = Node::new(key.clone(), value_hash.clone(), true, storage.clone());
+        let mut root = Node::new_with_hash(key.clone(), value_hash.clone(), true, storage.clone());
 
         root.delete(&key);
 
@@ -463,7 +554,7 @@ mod tests {
         let key: KeyType = "example_key".as_bytes().to_vec();
         let value = b"test data 1";
         let value_hash = ValueDigest::<32>::new(value);
-        let root = Node::new(key.clone(), value_hash.clone(), true, storage.clone());
+        let root = Node::new_with_hash(key.clone(), value_hash.clone(), true, storage.clone());
 
         let result = root.search(&key);
 

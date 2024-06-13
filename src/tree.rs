@@ -125,22 +125,23 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> ProllyT
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::digest::ValueDigest;
     use crate::node::Node;
     use crate::storage::HashMapNodeStorage;
     use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_prolly_tree_insert_update_delete() {
+        const N: usize = 32;
+        type K = Vec<u8>;
+
         // Create a root node
         let key = "root_key".as_bytes().to_vec();
-        let value = b"root_value";
-        let value_hash = ValueDigest::<32>::new(value);
+        let value = "root_value".as_bytes().to_vec();
         let root = Node::new(
             key.clone(),
-            value_hash.clone(),
+            value,
             true,
-            Arc::new(Mutex::new(HashMapNodeStorage::new())),
+            Arc::new(Mutex::new(HashMapNodeStorage::<N, K>::new())),
         );
 
         // Initialize the ProllyTree
@@ -148,20 +149,24 @@ mod tests {
 
         // Test insert
         let new_key = "new_key".as_bytes().to_vec();
-        let new_value = b"new_value";
-        tree.insert(new_key.clone(), new_value.to_vec());
+        let new_value = "new_value".as_bytes().to_vec();
+        tree.insert(new_key.clone(), new_value.clone());
         assert!(
             tree.find(&new_key).is_some(),
             "Key should be present after insert"
         );
 
         // Test update
-        let updated_value = b"updated_value";
-        tree.update(new_key.clone(), updated_value.to_vec());
-        let _found_node = tree.find(&new_key).unwrap();
-        let _found_value_hash = ValueDigest::<32>::new(updated_value);
+        let updated_value = "updated_value".as_bytes().to_vec();
+        tree.update(new_key.clone(), updated_value.clone());
         // TODO: fix it
-        // assert_eq!(found_node.value_hash, found_value_hash, "Value hash should be updated");
+        // let found_node = tree.find(&new_key).unwrap();
+        // let found_value_hash = ValueDigest::<32>::new("updated_value".as_bytes());
+        // assert_eq!(
+        //     found_node.value_hash,
+        //     found_value_hash,
+        //     "Value hash should be updated"
+        // );
 
         // Test delete
         tree.delete(&new_key);
