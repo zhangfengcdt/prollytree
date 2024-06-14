@@ -80,7 +80,6 @@ impl<
         K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>> + Serialize + for<'de> Deserialize<'de>,
     > Node<N, K>
 {
-    // impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Node<N, K> {
     /// Creates a new `NodeAlt` instance.
     ///
     /// # Arguments

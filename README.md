@@ -143,7 +143,7 @@ For detailed documentation and examples, please visit [docs.rs/prollytree](https
 ## Roadmap
 
 The following features are for prollytree library:
-- [ ] Implement basic Prolly Tree structure
+- [X] Implement basic Prolly Tree structure
 - [ ] Implement insertion and deletion operations
 - [ ] Implement hashing and verification
 - [ ] Add support for variable probabilistic balancing
