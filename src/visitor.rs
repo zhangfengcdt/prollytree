@@ -15,7 +15,7 @@ limitations under the License.
 
 use crate::node::Node;
 
-/// An observer of [`Page`] and the [`Node`] instances within them during tree
+/// An observer of the [`Node`] instances within them during tree
 /// traversal.
 pub trait Visitor<'a, const N: usize, K: AsRef<[u8]>> {
     /// Called before a a call to [`Visitor::visit_node()`] with the same
