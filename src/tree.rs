@@ -194,7 +194,7 @@ mod tests {
         // Step 2: Initialize the Root Node
         let root_node = Node::new(
             "root_key".as_bytes().to_vec(),
-            "root_value".as_bytes().to_vec(),
+            "root_value".as_bytes(),
             true,
             storage_backend,
         );
@@ -205,13 +205,13 @@ mod tests {
         // Step 4: Insert a New Key-Value Pair
         tree.insert(
             "new_key".as_bytes().to_vec(),
-            "new_value".as_bytes().to_vec(),
+            "new_value".as_bytes(),
         );
 
         // Step 5: Update the Value for an Existing Key
         tree.update(
             "new_key".as_bytes().to_vec(),
-            "updated_value".as_bytes().to_vec(),
+            "updated_value".as_bytes(),
         );
 
         // Step 6: Find or Search for a Key
@@ -234,7 +234,7 @@ mod tests {
         // Step 2: Initialize the Root Node
         let root_node = Node::new(
             1_u32.to_le_bytes().to_vec(),
-            "abc".as_bytes().to_vec(),
+            "abc".as_bytes(),
             true,
             storage_backend,
         );
@@ -242,7 +242,7 @@ mod tests {
         let mut tree = ProllyTree::new(root_node);
 
         // Step 4: Insert a New Key-Value Pair
-        tree.insert(2_u32.to_le_bytes().to_vec(), "xyz".as_bytes().to_vec());
+        tree.insert(2_u32.to_le_bytes().to_vec(), "xyz".as_bytes());
     }
 
     #[test]

@@ -132,6 +132,12 @@ pub struct HashMapNodeStorage2<const N: usize> {
     map: HashMap<ValueDigest<N>, Node2<N>>,
 }
 
+impl<const N: usize> Default for HashMapNodeStorage2<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> HashMapNodeStorage2<N> {
     /// Creates a new instance of `HashMapNodeStorage2`.
     pub fn new() -> Self {
