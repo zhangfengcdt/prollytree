@@ -17,12 +17,10 @@ use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 
 use crate::digest::ValueDigest;
 use crate::node::Node;
 
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// A trait for storage of nodes in the ProllyTree.
@@ -35,9 +33,7 @@ use std::path::PathBuf;
 /// # Type Parameters
 ///
 /// - `N`: The size of the value digest.
-/// - `K`: The type of the key used in the nodes, which must implement
-///        `AsRef<[u8]>`, `Clone`, `PartialEq`, and `From<Vec<u8>>`.
-pub trait NodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> {
+pub trait NodeStorage<const N: usize>: Send + Sync {
     /// Retrieves a node from storage by its hash.
     ///
     /// # Arguments
@@ -47,7 +43,7 @@ pub trait NodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<
     /// # Returns
     ///
     /// The node associated with the given hash.
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N, K>;
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N>;
 
     /// Inserts a node into storage.
     ///
@@ -55,7 +51,7 @@ pub trait NodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<
     ///
     /// * `hash` - The `ValueDigest` representing the hash of the node to insert.
     /// * `node` - The node to insert into storage.
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N, K>);
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N>);
 
     /// Deletes a node from storage by its hash.
     ///
@@ -65,98 +61,24 @@ pub trait NodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<
     fn delete_node(&mut self, hash: &ValueDigest<N>);
 }
 
-/// A storage backend for ProllyTree nodes using an in-memory HashMap.
-///
-/// This struct provides an in-memory implementation of the `NodeStorage` trait
-/// using a `HashMap` to store nodes. Each node is indexed by its hash, allowing
-/// efficient retrieval, insertion, and deletion of nodes.
+/// An implementation of `NodeStorage2` that stores nodes in a filesystem.
 ///
 /// # Type Parameters
 ///
-/// - `N`: The size of the value digest (e.g., 32 for a 256-bit hash).
-/// - `K`: The type of the key used in the nodes, which must implement
-///        `AsRef<[u8]>`, `Clone`, `PartialEq`, and `From<Vec<u8>>`.
-#[derive(Debug, Clone)]
-pub struct HashMapNodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> {
-    /// The underlying HashMap storing the nodes.
-    ///
-    /// The key is a `ValueDigest` representing the hash of the node,
-    /// and the value is the node itself.
-    map: HashMap<ValueDigest<N>, Node<N, K>>,
-}
-
-impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> Default
-    for HashMapNodeStorage<N, K>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>> HashMapNodeStorage<N, K> {
-    pub fn new() -> Self {
-        HashMapNodeStorage {
-            map: HashMap::new(),
-        }
-    }
-}
-
-impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>> + 'static> NodeStorage<N, K>
-    for HashMapNodeStorage<N, K>
-{
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N, K> {
-        self.map.get(hash).cloned().unwrap_or_else(|| {
-            // Create a default node if the hash is not found
-            Node {
-                key: Vec::new().into(),
-                value_hash: ValueDigest::<N>([0; N]),
-                children_hash: None,
-                parent_hash: None,
-                level: 0,
-                is_leaf: true,
-                subtree_counts: None,
-                storage: Arc::new(Mutex::new(self.clone())),
-            }
-        })
-    }
-
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N, K>) {
-        self.map.insert(hash, node);
-    }
-
-    fn delete_node(&mut self, hash: &ValueDigest<N>) {
-        self.map.remove(hash);
-    }
-}
-
-/// A storage backend for ProllyTree nodes using the file system.
-///
-/// This struct provides a file system-based implementation of the `NodeStorage` trait.
-/// Each node is stored in a separate file, identified by its hash, allowing
-/// efficient retrieval, insertion, and deletion of nodes.
-///
-/// # Type Parameters
-///
-/// - `N`: The size of the value digest (e.g., 32 for a 256-bit hash).
-/// - `K`: The type of the key used in the nodes, which must implement
-///        `AsRef<[u8]>`, `Clone`, `PartialEq`, and `From<Vec<u8>>`.
-#[derive(Debug)]
-pub struct FileSystemNodeStorage<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>>
-{
+/// - `N`: The size of the value digest.
+pub struct FileSystemNodeStorage<const N: usize> {
     dir_path: PathBuf,
-    _marker: PhantomData<K>,
+    _marker: PhantomData<ValueDigest<N>>,
 }
 
-impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>>
-    FileSystemNodeStorage<N, K>
-{
-    /// Creates a new instance of `FileSystemNodeStorage`.
+impl<const N: usize> FileSystemNodeStorage<N> {
+    /// Creates a new instance of `FileSystemNodeStorage2`.
     ///
     /// # Arguments
     ///
     /// * `path` - The path to the directory where node files will be stored.
     pub fn new(path: PathBuf) -> Self {
-        fs::create_dir_all(&path).expect("Failed to create directory for FileSystemNodeStorage");
+        fs::create_dir_all(&path).expect("Failed to create directory for FileSystemNodeStorage2");
         FileSystemNodeStorage {
             dir_path: path,
             _marker: PhantomData,
@@ -178,19 +100,8 @@ impl<const N: usize, K: AsRef<[u8]> + Clone + PartialEq + From<Vec<u8>>>
     }
 }
 
-impl<
-        const N: usize,
-        K: AsRef<[u8]>
-            + Clone
-            + PartialEq
-            + From<Vec<u8>>
-            + Default
-            + Serialize
-            + for<'de> Deserialize<'de>
-            + 'static,
-    > NodeStorage<N, K> for FileSystemNodeStorage<N, K>
-{
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N, K> {
+impl<const N: usize> NodeStorage<N> for FileSystemNodeStorage<N> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N> {
         let file_path = self.get_file_path(hash);
         let mut file = File::open(file_path).expect("Node file not found");
         let mut buffer = Vec::new();
@@ -199,7 +110,7 @@ impl<
         bincode::deserialize(&buffer).expect("Failed to deserialize node")
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N, K>) {
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N>) {
         let file_path = self.get_file_path(&hash);
         let mut file = File::create(file_path).expect("Failed to create node file");
         let buffer = bincode::serialize(&node).expect("Failed to serialize node");
@@ -209,5 +120,43 @@ impl<
     fn delete_node(&mut self, hash: &ValueDigest<N>) {
         let file_path = self.get_file_path(hash);
         fs::remove_file(file_path).expect("Failed to delete node file");
+    }
+}
+
+/// An implementation of `NodeStorage2` that stores nodes in a HashMap.
+///
+/// # Type Parameters
+///
+/// - `N`: The size of the value digest.
+pub struct HashMapNodeStorage<const N: usize> {
+    map: HashMap<ValueDigest<N>, Node<N>>,
+}
+
+impl<const N: usize> Default for HashMapNodeStorage<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> HashMapNodeStorage<N> {
+    /// Creates a new instance of `HashMapNodeStorage2`.
+    pub fn new() -> Self {
+        HashMapNodeStorage {
+            map: HashMap::new(),
+        }
+    }
+}
+
+impl<const N: usize> NodeStorage<N> for HashMapNodeStorage<N> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N> {
+        self.map.get(hash).cloned().expect("Node not found")
+    }
+
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N>) {
+        self.map.insert(hash, node);
+    }
+
+    fn delete_node(&mut self, hash: &ValueDigest<N>) {
+        self.map.remove(hash);
     }
 }

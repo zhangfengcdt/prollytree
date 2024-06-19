@@ -47,8 +47,6 @@ mod tracing;
 pub mod digest;
 pub mod errors;
 pub mod node;
-pub mod node2;
 pub mod storage;
-pub mod storage2;
 pub mod tree;
 pub mod visitor;
