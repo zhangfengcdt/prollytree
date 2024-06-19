@@ -17,26 +17,30 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use crate::node::Node;
+use crate::storage::NodeStorage;
 
-pub struct ProllyTree<const N: usize> {
+pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
     root: Node<N>,
     root_hash: Option<ValueDigest<N>>,
+    storage: S,
 }
 
-impl<const N: usize> ProllyTree<N> {
+impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// Creates a new `ProllyTree` instance with a default hasher.
     ///
     /// # Arguments
     ///
     /// * `root` - The root node of the tree.
+    /// * `storage` - The storage for the tree nodes.
     ///
     /// # Returns
     ///
     /// A new `ProllyTree` instance.
-    pub fn new(root: Node<N>) -> Self {
+    pub fn new(root: Node<N>, storage: S) -> Self {
         ProllyTree {
             root,
             root_hash: None,
+            storage,
         }
     }
 
@@ -45,14 +49,16 @@ impl<const N: usize> ProllyTree<N> {
     /// # Arguments
     ///
     /// * `root` - The root node of the tree.
+    /// * `storage` - The storage for the tree nodes.
     ///
     /// # Returns
     ///
     /// A new `ProllyTree` instance with the specified hasher.
-    pub fn new_with_hasher(root: Node<N>) -> Self {
+    pub fn new_with_hasher(root: Node<N>, storage: S) -> Self {
         ProllyTree {
             root,
             root_hash: None,
+            storage,
         }
     }
 
@@ -62,11 +68,8 @@ impl<const N: usize> ProllyTree<N> {
     ///
     /// * `key` - The key to insert.
     /// * `value` - The value to insert.
-    pub fn insert<V>(&mut self, key: Vec<u8>, value: Vec<u8>)
-    where
-        V: AsRef<[u8]>,
-    {
-        self.root.insert(key, value);
+    pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        self.root.insert(key, value, &mut self.storage);
         self.root_hash = None; // Invalidate the cached root hash
     }
 
@@ -76,10 +79,7 @@ impl<const N: usize> ProllyTree<N> {
     ///
     /// * `key` - The key to update.
     /// * `value` - The new value to update.
-    pub fn update<V>(&mut self, key: Vec<u8>, value: Vec<u8>)
-    where
-        V: AsRef<[u8]>,
-    {
+    pub fn update(&mut self, key: Vec<u8>, value: Vec<u8>) {
         self.root.update(key, value);
         self.root_hash = None; // Invalidate the cached root hash
     }
@@ -93,7 +93,7 @@ impl<const N: usize> ProllyTree<N> {
     /// # Returns
     ///
     /// `true` if the key was found and deleted, `false` otherwise.
-    pub fn delete(&mut self, key: &Vec<u8>) -> bool {
+    pub fn delete(&mut self, key: &[u8]) -> bool {
         self.root.delete(key)
     }
 
@@ -115,7 +115,7 @@ impl<const N: usize> ProllyTree<N> {
     /// # Returns
     ///
     /// An `Option` containing the node if found, or `None` if not found.
-    pub fn find(&self, key: &Vec<u8>) -> Option<&Node<N>> {
+    pub fn find(&self, key: &[u8]) -> Option<&Node<N>> {
         self.root.search(key)
     }
 }
