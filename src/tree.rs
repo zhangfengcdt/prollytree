@@ -16,11 +16,13 @@ limitations under the License.
 #![allow(dead_code)]
 
 use crate::digest::ValueDigest;
-use crate::node::Node;
+use crate::node::{Node, ProllyNode};
 use crate::storage::NodeStorage;
 
+// TODO: extract to ProllyTree trait
+
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
-    root: Node<N>,
+    root: ProllyNode<N>,
     root_hash: Option<ValueDigest<N>>,
     storage: S,
 }
@@ -36,7 +38,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// # Returns
     ///
     /// A new `ProllyTree` instance.
-    pub fn new(root: Node<N>, storage: S) -> Self {
+    pub fn new(root: ProllyNode<N>, storage: S) -> Self {
         ProllyTree {
             root,
             root_hash: None,
@@ -54,7 +56,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// # Returns
     ///
     /// A new `ProllyTree` instance with the specified hasher.
-    pub fn new_with_hasher(root: Node<N>, storage: S) -> Self {
+    pub fn new_with_hasher(root: ProllyNode<N>, storage: S) -> Self {
         ProllyTree {
             root,
             root_hash: None,
@@ -80,7 +82,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// * `key` - The key to update.
     /// * `value` - The new value to update.
     pub fn update(&mut self, key: Vec<u8>, value: Vec<u8>) {
-        self.root.update(key, value);
+        self.root.update(key, value, &mut self.storage);
         self.root_hash = None; // Invalidate the cached root hash
     }
 
@@ -94,7 +96,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     ///
     /// `true` if the key was found and deleted, `false` otherwise.
     pub fn delete(&mut self, key: &[u8]) -> bool {
-        self.root.delete(key)
+        self.root.delete(key, &mut self.storage)
     }
 
     /// Calculates and returns the root hash of the tree.
@@ -115,7 +117,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// # Returns
     ///
     /// An `Option` containing the node if found, or `None` if not found.
-    pub fn find(&self, key: &[u8]) -> Option<&Node<N>> {
-        self.root.search(key)
+    pub fn find(&self, key: &[u8]) -> Option<&ProllyNode<N>> {
+        self.root.find(key, &self.storage)
     }
 }

@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 use std::marker::PhantomData;
 
 use crate::digest::ValueDigest;
-use crate::node::Node;
+use crate::node::ProllyNode;
 
 use std::path::PathBuf;
 
@@ -43,7 +43,7 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
     /// # Returns
     ///
     /// The node associated with the given hash.
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N>;
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> ProllyNode<N>;
 
     /// Inserts a node into storage.
     ///
@@ -51,7 +51,7 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
     ///
     /// * `hash` - The `ValueDigest` representing the hash of the node to insert.
     /// * `node` - The node to insert into storage.
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N>);
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>);
 
     /// Deletes a node from storage by its hash.
     ///
@@ -101,7 +101,7 @@ impl<const N: usize> FileSystemNodeStorage<N> {
 }
 
 impl<const N: usize> NodeStorage<N> for FileSystemNodeStorage<N> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> ProllyNode<N> {
         let file_path = self.get_file_path(hash);
         let mut file = File::open(file_path).expect("Node file not found");
         let mut buffer = Vec::new();
@@ -110,7 +110,7 @@ impl<const N: usize> NodeStorage<N> for FileSystemNodeStorage<N> {
         bincode::deserialize(&buffer).expect("Failed to deserialize node")
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N>) {
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) {
         let file_path = self.get_file_path(&hash);
         let mut file = File::create(file_path).expect("Failed to create node file");
         let buffer = bincode::serialize(&node).expect("Failed to serialize node");
@@ -129,7 +129,7 @@ impl<const N: usize> NodeStorage<N> for FileSystemNodeStorage<N> {
 ///
 /// - `N`: The size of the value digest.
 pub struct HashMapNodeStorage<const N: usize> {
-    map: HashMap<ValueDigest<N>, Node<N>>,
+    map: HashMap<ValueDigest<N>, ProllyNode<N>>,
 }
 
 impl<const N: usize> Default for HashMapNodeStorage<N> {
@@ -148,11 +148,11 @@ impl<const N: usize> HashMapNodeStorage<N> {
 }
 
 impl<const N: usize> NodeStorage<N> for HashMapNodeStorage<N> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Node<N> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> ProllyNode<N> {
         self.map.get(hash).cloned().expect("Node not found")
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: Node<N>) {
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) {
         self.map.insert(hash, node);
     }
 

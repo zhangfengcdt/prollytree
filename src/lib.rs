@@ -43,10 +43,10 @@ limitations under the License.
 //!
 
 #[macro_use]
-mod tracing;
 pub mod digest;
 pub mod errors;
 pub mod node;
 pub mod storage;
+mod tracing;
 pub mod tree;
 pub mod visitor;
