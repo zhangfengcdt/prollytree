@@ -192,6 +192,75 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
     }
 }
 
+impl<const N: usize> ProllyNode<N> {
+    pub fn children(&self, storage: &impl NodeStorage<N>) -> Vec<ProllyNode<N>> {
+        // Create an empty vector to store the child nodes
+        let mut children = Vec::new();
+
+        // Iterate over the values vector, which stores the hashes of the child nodes
+        if !self.is_leaf {
+            for child_hash in &self.values {
+                // Retrieve the child node from the storage using the hash
+                if let Some(child_node) =
+                    storage.get_node_by_hash(&ValueDigest::raw_hash(child_hash))
+                {
+                    // Add the child node to the result vector
+                    children.push(child_node);
+                } else {
+                    // Handle the case when the child node is not found
+                    // For example, you can log an error message or return an error
+                    println!("Child node not found")
+                }
+            }
+        }
+
+        // Return the vector of child nodes
+        children
+    }
+
+    /// Traverse the tree in a breadth-first manner and return a string representation of the nodes.
+    /// This method is useful for debugging and visualization purposes.
+    /// The output string contains the level of each node, its keys, and whether it is a leaf node.
+    /// The format of the output string is as follows:
+    /// "L<level>:[<key1>, <key2>, ...]"
+    /// where:
+    /// - <level> is the level of the node.
+    /// - <key1>, <key2>, ... are the keys of the node.
+    /// # Arguments
+    /// * `storage` - The storage implementation to retrieve child nodes.
+    /// # Returns
+    /// A string representation of the tree nodes in a breadth-first order.
+    pub fn breadth_first_traverse(&self, storage: &impl NodeStorage<N>) -> String {
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(self.clone());
+
+        let mut output = String::new();
+
+        while let Some(node) = queue.pop_front() {
+            if node.is_leaf {
+                output += &node.format_node();
+            }
+            for child in node.children(storage) {
+                queue.push_back(child.clone());
+            }
+        }
+
+        output
+    }
+
+    /// Format the node as a string representation.
+    /// The format of the output string is as follows:
+    /// "L<level>:[<key1>, <key2>, ...]"
+    /// where:
+    /// - <level> is the level of the node.
+    /// - <key1>, <key2>, ... are the keys of the node.
+    /// # Returns
+    /// A string representation of the node.
+    fn format_node(&self) -> String {
+        format!("[L{:?}:{:?}]", self.level, self.keys)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,50 +337,10 @@ mod tests {
         assert_eq!(child2.clone().unwrap().keys.len(), 1);
         assert_eq!(child2.clone().unwrap().values.len(), 1);
         assert_eq!(child2.clone().unwrap().is_leaf, true);
-    }
 
-    #[test]
-    fn test_insert_in_order_2() {
-        let mut storage = HashMapNodeStorage::<32>::new();
-
-        // Initialize a new root node with the first key-value pair
-        let mut node: ProllyNode<32> = ProllyNode::init_root(vec![1], vec![1]);
-
-        // Insert multiple key-value pairs and assert their properties
-        let test_cases = vec![(vec![2], vec![2]), (vec![3], vec![3]), (vec![4], vec![4])];
-
-        for (i, (key, value)) in test_cases.iter().enumerate() {
-            node.insert(key.clone(), value.clone(), &mut storage);
-            if i < 3 {
-                assert_eq!(node.keys.len(), i + 2);
-                assert_eq!(node.values.len(), i + 2);
-                assert_eq!(node.is_leaf, true);
-            }
-        }
-
-        // Assert values are sorted by keys
-        assert_eq!(node.keys, vec![vec![1], vec![2], vec![3], vec![4]]);
-
-        // Insert the 5th key-value pair and expect the node to be split
-        node.insert(vec![5], vec![5], &mut storage);
-
-        // New root node should have 2 children nodes
-        assert_eq!(node.keys.len(), 2);
-        assert_eq!(node.values.len(), 2);
-        assert_eq!(node.is_leaf, false);
-
-        // The 1st child node should have 2 key-value pairs
-        let child1_hash = &node.values[0];
-        let child1 = storage.get_node_by_hash(&ValueDigest::raw_hash(child1_hash));
-        assert_eq!(child1.clone().unwrap().keys.len(), 4);
-        assert_eq!(child1.clone().unwrap().values.len(), 4);
-        assert_eq!(child1.clone().unwrap().is_leaf, true);
-
-        // The 2nd child node should have 3 key-value pairs
-        let child2_hash = &node.values[1];
-        let child2 = storage.get_node_by_hash(&ValueDigest::raw_hash(child2_hash));
-        assert_eq!(child2.clone().unwrap().keys.len(), 1);
-        assert_eq!(child2.clone().unwrap().values.len(), 1);
-        assert_eq!(child2.clone().unwrap().is_leaf, true);
+        assert_eq!(
+            node.breadth_first_traverse(&storage),
+            "[L0:[[1], [2], [3], [4]]][L0:[[5]]]"
+        );
     }
 }

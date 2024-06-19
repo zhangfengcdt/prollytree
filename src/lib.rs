@@ -49,4 +49,3 @@ pub mod node;
 pub mod storage;
 mod tracing;
 pub mod tree;
-pub mod visitor;
