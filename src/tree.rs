@@ -96,7 +96,11 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     ///
     /// `true` if the key was found and deleted, `false` otherwise.
     pub fn delete(&mut self, key: &[u8]) -> bool {
-        self.root.delete(key, &mut self.storage)
+        let deleted = self.root.delete(key, &mut self.storage);
+        if deleted {
+            self.root_hash = None; // Invalidate the cached root hash
+        }
+        deleted
     }
 
     /// Calculates and returns the root hash of the tree.

@@ -13,15 +13,9 @@ limitations under the License.
 */
 
 use std::collections::HashMap;
-use std::fs;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::marker::PhantomData;
 
 use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
-
-use std::path::PathBuf;
 
 /// A trait for storage of nodes in the ProllyTree.
 ///
@@ -43,7 +37,7 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
     /// # Returns
     ///
     /// The node associated with the given hash.
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> ProllyNode<N>;
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>>;
 
     /// Inserts a node into storage.
     ///
@@ -51,76 +45,14 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
     ///
     /// * `hash` - The `ValueDigest` representing the hash of the node to insert.
     /// * `node` - The node to insert into storage.
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>);
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()>;
 
     /// Deletes a node from storage by its hash.
     ///
     /// # Arguments
     ///
     /// * `hash` - A reference to the `ValueDigest` representing the hash of the node to delete.
-    fn delete_node(&mut self, hash: &ValueDigest<N>);
-}
-
-/// An implementation of `NodeStorage2` that stores nodes in a filesystem.
-///
-/// # Type Parameters
-///
-/// - `N`: The size of the value digest.
-pub struct FileSystemNodeStorage<const N: usize> {
-    dir_path: PathBuf,
-    _marker: PhantomData<ValueDigest<N>>,
-}
-
-impl<const N: usize> FileSystemNodeStorage<N> {
-    /// Creates a new instance of `FileSystemNodeStorage2`.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - The path to the directory where node files will be stored.
-    pub fn new(path: PathBuf) -> Self {
-        fs::create_dir_all(&path).expect("Failed to create directory for FileSystemNodeStorage2");
-        FileSystemNodeStorage {
-            dir_path: path,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Gets the file path for a given node hash.
-    ///
-    /// # Arguments
-    ///
-    /// * `hash` - The hash of the node.
-    ///
-    /// # Returns
-    ///
-    /// The file path where the node is stored.
-    fn get_file_path(&self, hash: &ValueDigest<N>) -> PathBuf {
-        let hash_str = hex::encode(hash.as_ref());
-        self.dir_path.join(hash_str)
-    }
-}
-
-impl<const N: usize> NodeStorage<N> for FileSystemNodeStorage<N> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> ProllyNode<N> {
-        let file_path = self.get_file_path(hash);
-        let mut file = File::open(file_path).expect("Node file not found");
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .expect("Failed to read node file");
-        bincode::deserialize(&buffer).expect("Failed to deserialize node")
-    }
-
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) {
-        let file_path = self.get_file_path(&hash);
-        let mut file = File::create(file_path).expect("Failed to create node file");
-        let buffer = bincode::serialize(&node).expect("Failed to serialize node");
-        file.write_all(&buffer).expect("Failed to write node file");
-    }
-
-    fn delete_node(&mut self, hash: &ValueDigest<N>) {
-        let file_path = self.get_file_path(hash);
-        fs::remove_file(file_path).expect("Failed to delete node file");
-    }
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()>;
 }
 
 /// An implementation of `NodeStorage2` that stores nodes in a HashMap.
@@ -148,15 +80,17 @@ impl<const N: usize> HashMapNodeStorage<N> {
 }
 
 impl<const N: usize> NodeStorage<N> for HashMapNodeStorage<N> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> ProllyNode<N> {
-        self.map.get(hash).cloned().expect("Node not found")
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
+        self.map.get(hash).cloned()
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) {
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
         self.map.insert(hash, node);
+        Some(())
     }
 
-    fn delete_node(&mut self, hash: &ValueDigest<N>) {
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
         self.map.remove(hash);
+        Some(())
     }
 }
