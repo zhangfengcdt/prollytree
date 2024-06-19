@@ -203,16 +203,10 @@ mod tests {
         let mut tree = ProllyTree::new(root_node);
 
         // Step 4: Insert a New Key-Value Pair
-        tree.insert(
-            "new_key".as_bytes().to_vec(),
-            "new_value".as_bytes(),
-        );
+        tree.insert("new_key".as_bytes().to_vec(), "new_value".as_bytes());
 
         // Step 5: Update the Value for an Existing Key
-        tree.update(
-            "new_key".as_bytes().to_vec(),
-            "updated_value".as_bytes(),
-        );
+        tree.update("new_key".as_bytes().to_vec(), "updated_value".as_bytes());
 
         // Step 6: Find or Search for a Key
         let search_key = "new_key".as_bytes().to_vec();
