@@ -3,7 +3,6 @@
 
 use crate::digest::ValueDigest;
 use crate::storage::NodeStorage;
-use crate::visitor::Visitor;
 use serde::{Deserialize, Serialize};
 
 const MAX_KEYS: usize = 4; // Maximum number of keys in a node before it splits
@@ -190,27 +189,6 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
     fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<&Self> {
         // TODO to be implemented
         Some(self)
-    }
-}
-
-impl<const N: usize> ProllyNode<N> {
-    fn traverse<'a, V, S>(&'a self, visitor: &mut V, storage: &S)
-    where
-        V: Visitor<'a, N, S>,
-        S: NodeStorage<N>,
-    {
-        if visitor.pre_visit_node(self, storage) {
-            if visitor.visit_node(self, storage) && !self.is_leaf {
-                for value in &self.values {
-                    let child_hash = ValueDigest::raw_hash(value);
-                    let child_node = storage.get_node_by_hash(&child_hash);
-                    // FIXME: This is a recursive call
-                    // error[E0597]: `child_node` does not live long enough
-                    //child_node.traverse(visitor, storage);
-                }
-            }
-            visitor.post_visit_node(self, storage);
-        }
     }
 }
 

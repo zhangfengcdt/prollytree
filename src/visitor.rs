@@ -14,33 +14,30 @@ limitations under the License.
 #![allow(dead_code)]
 
 use crate::node::ProllyNode;
-use crate::storage::NodeStorage;
 
-pub trait Visitor<'a, const N: usize, S: NodeStorage<N>> {
+pub trait Visitor<'a, const N: usize> {
     /// Called before a call to [`Visitor::visit_node()`] with the same [`ProllyNode`].
     /// By default this is a no-op unless implemented.
-    fn pre_visit_node(&mut self, node: &'a ProllyNode<N>, storage: &S) -> bool {
+    fn pre_visit_node(&mut self, node: &'a ProllyNode<N>) -> bool {
         let _ = node;
-        let _ = storage;
         true
     }
 
     /// Visit the given [`ProllyNode`].
-    fn visit_node(&mut self, node: &'a ProllyNode<N>, storage: &S) -> bool;
+    fn visit_node(&mut self, node: &'a ProllyNode<N>) -> bool;
 
     /// Called after [`Visitor::visit_node()`] with the same [`ProllyNode`].
     /// By default this is a no-op unless implemented.
-    fn post_visit_node(&mut self, node: &'a ProllyNode<N>, storage: &S) -> bool {
+    fn post_visit_node(&mut self, node: &'a ProllyNode<N>) -> bool {
         let _ = node;
-        let _ = storage;
         true
     }
 }
 
 struct BasicVisitor;
 
-impl<'a, const N: usize, S: NodeStorage<N>> Visitor<'a, N, S> for BasicVisitor {
-    fn visit_node(&mut self, node: &'a ProllyNode<N>, _storage: &S) -> bool {
+impl<'a, const N: usize> Visitor<'a, N> for BasicVisitor {
+    fn visit_node(&mut self, node: &'a ProllyNode<N>) -> bool {
         println!("Visiting node with keys: {:?}", node.keys);
         true
     }
