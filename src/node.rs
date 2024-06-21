@@ -12,7 +12,7 @@ pub trait Node<const N: usize> {
     fn insert<S: NodeStorage<N>>(&mut self, key: Vec<u8>, value: Vec<u8>, storage: &mut S);
     fn update<S: NodeStorage<N>>(&mut self, key: Vec<u8>, value: Vec<u8>, storage: &mut S);
     fn delete<S: NodeStorage<N>>(&mut self, key: &[u8], storage: &mut S) -> bool;
-    fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<&Self>;
+    fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<ProllyNode<N>>;
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -163,9 +163,29 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         false
     }
 
-    fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<&Self> {
-        // TODO to be implemented
-        Some(self)
+    fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<ProllyNode<N>> {
+        if self.is_leaf {
+            // If the node is a leaf, check if the key exists in this node
+            if self.keys.iter().any(|k| k == key) {
+                Some(self.clone())
+            } else {
+                None
+            }
+        } else {
+            // The node is an internal (non-leaf) node, so find the child node to search the key
+            let i = self.keys.iter().rposition(|k| key >= &k[..]).unwrap_or(0);
+
+            // Retrieve the child node using the stored hash
+            let child_hash = self.values[i].clone();
+
+            if let Some(child_node) = storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
+            {
+                child_node.find(key, storage)
+            } else {
+                // Handle the case when the child node is not found
+                None
+            }
+        }
     }
 }
 
@@ -343,5 +363,46 @@ mod tests {
         //     node.breadth_first_traverse(&storage),
         //     "[L0:[[5], [6], [8], [10]]][L0:[[5], [6], [8], [10]]][L0:[[12]]]"
         // );
+    }
+
+    #[test]
+    fn test_find() {
+        let mut storage = HashMapNodeStorage::<32>::new();
+
+        let value_for_all = vec![100];
+
+        // initialize a new root node with the first key-value pair
+        let mut node: ProllyNode<32> = ProllyNode::init_root(vec![1], value_for_all.clone());
+
+        // insert key-value pairs
+        node.insert(vec![2], value_for_all.clone(), &mut storage);
+        node.insert(vec![3], value_for_all.clone(), &mut storage);
+        node.insert(vec![4], value_for_all.clone(), &mut storage);
+        node.insert(vec![5], value_for_all.clone(), &mut storage);
+
+        // Test finding existing keys
+        assert!(node.find(&[1], &storage).is_some());
+        assert!(node.find(&[2], &storage).is_some());
+        assert!(node.find(&[3], &storage).is_some());
+        assert!(node.find(&[4], &storage).is_some());
+        assert!(node.find(&[5], &storage).is_some());
+
+        // Test finding a non-existing key
+        assert!(node.find(&[6], &storage).is_none());
+
+        // insert more key-value pairs
+        node.insert(vec![6], value_for_all.clone(), &mut storage);
+        node.insert(vec![7], value_for_all.clone(), &mut storage);
+        node.insert(vec![8], value_for_all.clone(), &mut storage);
+        node.insert(vec![9], value_for_all.clone(), &mut storage);
+
+        // Test finding existing keys again after more insertions
+        assert!(node.find(&[6], &storage).is_some());
+        assert!(node.find(&[7], &storage).is_some());
+        assert!(node.find(&[8], &storage).is_some());
+        assert!(node.find(&[9], &storage).is_some());
+
+        // Test finding a non-existing key
+        assert!(node.find(&[10], &storage).is_none());
     }
 }

@@ -121,7 +121,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// # Returns
     ///
     /// An `Option` containing the node if found, or `None` if not found.
-    pub fn find(&self, key: &[u8]) -> Option<&ProllyNode<N>> {
+    pub fn find(&self, key: &[u8]) -> Option<ProllyNode<N>> {
         self.root.find(key, &self.storage)
     }
 }
