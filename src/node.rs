@@ -159,8 +159,52 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
     }
 
     fn delete<S: NodeStorage<N>>(&mut self, key: &[u8], storage: &mut S) -> bool {
-        // TODO to be implemented
-        false
+        if self.is_leaf {
+            // If the node is a leaf, try to find and remove the key
+            if let Some(pos) = self.keys.iter().position(|k| k == key) {
+                self.keys.remove(pos);
+                self.values.remove(pos);
+
+                // Persist the current node after deletion
+                let current_node_hash = self.get_hash();
+                storage.insert_node(current_node_hash.clone(), self.clone());
+
+                true
+            } else {
+                false
+            }
+        } else {
+            // The node is an internal (non-leaf) node, so find the child node to delete the key
+            let i = self.keys.iter().rposition(|k| key >= &k[..]).unwrap_or(0);
+
+            // Retrieve the child node using the stored hash
+            let child_hash = self.values[i].clone();
+
+            if let Some(mut child_node) =
+                storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
+            {
+                if child_node.delete(key, storage) {
+                    // If the deletion was successful, update the current node's child hash
+                    let new_child_hash = child_node.get_hash();
+                    self.values[i] = new_child_hash.as_bytes().to_vec();
+
+                    // Persist the current node after updating the child hash
+                    let current_node_hash = self.get_hash();
+                    storage.insert_node(current_node_hash.clone(), self.clone());
+
+                    // Check if the child node needs rebalancing
+                    // TODO: Implement rebalancing (merging) logic
+
+                    true
+                } else {
+                    false
+                }
+            } else {
+                // Handle the case when the child node is not found
+                println!("Child node not found: {:?}", child_hash);
+                false
+            }
+        }
     }
 
     fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<ProllyNode<N>> {
@@ -404,5 +448,54 @@ mod tests {
 
         // Test finding a non-existing key
         assert!(node.find(&[10], &storage).is_none());
+    }
+
+    #[test]
+    fn test_delete() {
+        let mut storage = HashMapNodeStorage::<32>::new();
+
+        let value_for_all = vec![100];
+
+        // initialize a new root node with the first key-value pair
+        let mut node: ProllyNode<32> = ProllyNode::init_root(vec![1], value_for_all.clone());
+
+        // insert key-value pairs
+        node.insert(vec![2], value_for_all.clone(), &mut storage);
+        node.insert(vec![3], value_for_all.clone(), &mut storage);
+        node.insert(vec![4], value_for_all.clone(), &mut storage);
+        node.insert(vec![5], value_for_all.clone(), &mut storage);
+
+        // Test deleting existing keys
+        assert!(node.delete(&[1], &mut storage));
+        assert!(node.find(&[1], &storage).is_none());
+
+        assert!(node.delete(&[2], &mut storage));
+        assert!(node.find(&[2], &storage).is_none());
+
+        assert!(node.delete(&[3], &mut storage));
+        assert!(node.find(&[3], &storage).is_none());
+
+        assert!(node.delete(&[4], &mut storage));
+        assert!(node.find(&[4], &storage).is_none());
+
+        assert!(node.delete(&[5], &mut storage));
+        assert!(node.find(&[5], &storage).is_none());
+
+        // Test deleting a non-existing key
+        assert!(!node.delete(&[6], &mut storage));
+
+        // Insert more key-value pairs and delete them to verify tree consistency
+        node.insert(vec![7], value_for_all.clone(), &mut storage);
+        node.insert(vec![8], value_for_all.clone(), &mut storage);
+        node.insert(vec![9], value_for_all.clone(), &mut storage);
+
+        assert!(node.delete(&[7], &mut storage));
+        assert!(node.find(&[7], &storage).is_none());
+
+        assert!(node.delete(&[8], &mut storage));
+        assert!(node.find(&[8], &storage).is_none());
+
+        assert!(node.delete(&[9], &mut storage));
+        assert!(node.find(&[9], &storage).is_none());
     }
 }
