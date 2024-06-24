@@ -342,19 +342,19 @@ mod tests {
         node.insert(vec![2], value_for_all.clone(), &mut storage);
         assert_eq!(node.keys.len(), 2);
         assert_eq!(node.values.len(), 2);
-        assert_eq!(node.is_leaf, true);
+        assert!(node.is_leaf);
 
         // insert the 3rd key-value pair
         node.insert(vec![3], value_for_all.clone(), &mut storage);
         assert_eq!(node.keys.len(), 3);
         assert_eq!(node.values.len(), 3);
-        assert_eq!(node.is_leaf, true);
+        assert!(node.is_leaf);
 
         // insert the 4th key-value pair
         node.insert(vec![4], value_for_all.clone(), &mut storage);
         assert_eq!(node.keys.len(), 4);
         assert_eq!(node.values.len(), 4);
-        assert_eq!(node.is_leaf, true);
+        assert!(node.is_leaf);
 
         // assert values are sorted by keys
         assert_eq!(node.keys, vec![vec![1], vec![2], vec![3], vec![4]]);
@@ -366,21 +366,21 @@ mod tests {
         // new root node should have 2 children nodes
         assert_eq!(node.keys.len(), 2);
         assert_eq!(node.values.len(), 2);
-        assert_eq!(node.is_leaf, false);
+        assert!(!node.is_leaf);
 
         // the 1st child node should have 2 key-value pairs
         let child1_hash = &node.values[0];
         let child1 = storage.get_node_by_hash(&ValueDigest::raw_hash(child1_hash));
         assert_eq!(child1.clone().unwrap().keys.len(), 4);
         assert_eq!(child1.clone().unwrap().values.len(), 4);
-        assert_eq!(child1.clone().unwrap().is_leaf, true);
+        assert!(child1.clone().unwrap().is_leaf);
 
         // the 2nd child node should have 3 key-value pairs
         let child2_hash = &node.values[1];
         let child2 = storage.get_node_by_hash(&ValueDigest::raw_hash(child2_hash));
         assert_eq!(child2.clone().unwrap().keys.len(), 1);
         assert_eq!(child2.clone().unwrap().values.len(), 1);
-        assert_eq!(child2.clone().unwrap().is_leaf, true);
+        assert!(child2.clone().unwrap().is_leaf);
 
         assert_eq!(
             node.breadth_first_traverse(&storage),
