@@ -1,16 +1,37 @@
+/*
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 #![allow(unused_variables)]
 #![allow(dead_code)]
 
 use crate::digest::ValueDigest;
 use crate::storage::NodeStorage;
 use serde::{Deserialize, Serialize};
+use std::hash::Hash;
+use std::hash::Hasher;
+use twox_hash::XxHash64;
 
 const MAX_KEYS: usize = 4; // Maximum number of keys in a node before it splits
 const ROOT_LEVEL: u8 = 0;
+const BASE: u64 = 257;
+const MOD: u64 = 1_000_000_007;
+const MIN_CHUNK_SIZE: usize = 2;
+const MAX_CHUNK_SIZE: usize = 10;
+const PATTERN: u64 = 0b1111; // Example pattern (e.g., last 4 bits are 1111)
 
 pub trait Node<const N: usize> {
     fn insert<S: NodeStorage<N>>(&mut self, key: Vec<u8>, value: Vec<u8>, storage: &mut S);
-    fn update<S: NodeStorage<N>>(&mut self, key: Vec<u8>, value: Vec<u8>, storage: &mut S);
     fn delete<S: NodeStorage<N>>(&mut self, key: &[u8], storage: &mut S) -> bool;
     fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<ProllyNode<N>>;
 }
@@ -107,25 +128,84 @@ impl<const N: usize> ProllyNode<N> {
     }
 }
 
+impl<const N: usize> NodeChunk for ProllyNode<N> {
+    fn polynomial_hash<T: Hash>(data: &[T], base: u64, modulus: u64) -> u64 {
+        let mut hash = 0;
+        for item in data {
+            let mut hasher = XxHash64::with_seed(0);
+            item.hash(&mut hasher);
+            hash = (hash * base + hasher.finish()) % modulus;
+        }
+        hash
+    }
+    fn calculate_rolling_hash(
+        &self,
+        keys: &[Vec<u8>],
+        values: &[Vec<u8>],
+        window_size: usize,
+    ) -> u64 {
+        let keys_hash = Self::polynomial_hash(&keys[..window_size], BASE, MOD);
+        let values_hash = Self::polynomial_hash(&values[..window_size], BASE, MOD);
+        (keys_hash + values_hash) % MOD
+    }
+    fn chunk_content(&self) -> Vec<(usize, usize)> {
+        let mut chunks = Vec::new();
+        let mut start = 0;
+
+        while start < self.keys.len() {
+            let mut end = start + MIN_CHUNK_SIZE;
+            while end < self.keys.len() && end - start < MAX_CHUNK_SIZE {
+                let hash = self.calculate_rolling_hash(
+                    &self.keys[start..end],
+                    &self.values[start..end],
+                    end - start,
+                );
+                if hash & PATTERN == PATTERN {
+                    break;
+                }
+                end += 1;
+            }
+            chunks.push((start, end));
+            start = end;
+        }
+
+        chunks
+    }
+}
+
+trait NodeChunk {
+    fn polynomial_hash<T: Hash>(data: &[T], base: u64, modulus: u64) -> u64;
+    fn calculate_rolling_hash(
+        &self,
+        keys: &[Vec<u8>],
+        values: &[Vec<u8>],
+        window_size: usize,
+    ) -> u64;
+    fn chunk_content(&self) -> Vec<(usize, usize)>;
+}
+
 // implement the Node trait for ProllyNode
 impl<const N: usize> Node<N> for ProllyNode<N> {
     fn insert<S: NodeStorage<N>>(&mut self, key: Vec<u8>, value: Vec<u8>, storage: &mut S) {
         if self.is_leaf {
-            // The node is a leaf node, so insert the key-value pair directly.
+            // Check if the key already exists in the node
+            if let Some(pos) = self.keys.iter().position(|k| k == &key) {
+                // If the key exists, update its value
+                self.values[pos] = value;
+            } else {
+                // Otherwise, insert the key-value pair into the node
+                self.keys.push(key);
+                self.values.push(value);
+            }
 
-            // TODO: Check if the key already exists in the node
-            // insert the key-value pair into the node
-            self.keys.push(key);
-            self.values.push(value);
-
-            // sort the keys and values and split the node if necessary
+            // Sort the keys and values and split the node if necessary
             self.sort_and_split_and_persist(storage);
         } else {
-            // The node is an internal (non-leaf) node, so find the child node to insert the key-value pair.
+            // The node is an internal (non-leaf) node, so find the child node to insert the key-value pair
 
             // Find the child node to insert the key-value pair
             // by comparing the key with the keys in the node and finding the correct child index
-            // assuming the keys are already sorted increasingly.
+            // assuming the keys are already sorted increasingly
             let i = self.keys.iter().rposition(|k| key >= *k).unwrap_or(0);
 
             // Retrieve the child node using the stored hash
@@ -135,27 +215,21 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
             {
                 child_node.insert(key.clone(), value.clone(), storage);
-                // let new_node_hash = ValueDigest::<N>::new(&child_node.values.concat().clone()).as_bytes().to_vec();
-                let new_node_hash = &child_node.get_hash().as_bytes().to_vec();
-                // save the updated child node back to the storage
+                let new_node_hash = child_node.get_hash().as_bytes().to_vec();
+
+                // Save the updated child node back to the storage
                 storage.insert_node(child_node.get_hash(), child_node);
-                // update this node's value with the new hash
-                self.values[i].clone_from(new_node_hash);
+
+                // Update this node's value with the new hash
+                self.values[i] = new_node_hash;
             } else {
                 // Handle the case when the child node is not found
-                // For example, you can log an error message or return an error
-                // throw exception
-                // TODO: return error
                 println!("Child node not found: {:?}", child_hash);
             }
 
-            // Try to sort the keys and values and split the node if necessary
+            // Sort the keys and values and split the node if necessary
             self.sort_and_split_and_persist(storage);
         }
-    }
-
-    fn update<S: NodeStorage<N>>(&mut self, key: Vec<u8>, value: Vec<u8>, _storage: &mut S) {
-        // TODO to be implemented
     }
 
     fn delete<S: NodeStorage<N>>(&mut self, key: &[u8], storage: &mut S) -> bool {
@@ -403,10 +477,52 @@ mod tests {
         node.insert(vec![28], value_for_all.clone(), &mut storage);
         println!("{}", node.breadth_first_traverse(&storage));
 
-        // assert_eq!(
-        //     node.breadth_first_traverse(&storage),
-        //     "[L0:[[5], [6], [8], [10]]][L0:[[5], [6], [8], [10]]][L0:[[12]]]"
-        // );
+        assert_eq!(
+            node.breadth_first_traverse(&storage),
+            "[L0:[[1], [2], [3], [4]]][L0:[[5], [6], [8], [10]]][L0:[[12], [15], [20], [28]]]"
+        );
+    }
+
+    #[test]
+    fn test_insert_update() {
+        let mut storage = HashMapNodeStorage::<32>::new();
+
+        let value1 = vec![100];
+        let value2 = vec![200];
+
+        // initialize a new root node with the first key-value pair
+        let mut node: ProllyNode<32> = ProllyNode::init_root(vec![1], value1.clone());
+
+        // insert the 2nd key-value pair
+        node.insert(vec![2], value1.clone(), &mut storage);
+        assert_eq!(node.keys.len(), 2);
+        assert_eq!(node.values.len(), 2);
+        assert!(node.is_leaf);
+
+        // insert the 3rd key-value pair
+        node.insert(vec![3], value1.clone(), &mut storage);
+        assert_eq!(node.keys.len(), 3);
+        assert_eq!(node.values.len(), 3);
+        assert!(node.is_leaf);
+
+        // insert the 4th key-value pair
+        node.insert(vec![4], value1.clone(), &mut storage);
+        assert_eq!(node.keys.len(), 4);
+        assert_eq!(node.values.len(), 4);
+        assert!(node.is_leaf);
+
+        // Update the value of an existing key
+        node.insert(vec![3], value2.clone(), &mut storage);
+        assert_eq!(node.values[2], value2);
+
+        // insert more key-value pairs
+        node.insert(vec![5], value1.clone(), &mut storage);
+        node.insert(vec![6], value1.clone(), &mut storage);
+        node.insert(vec![7], value1.clone(), &mut storage);
+
+        // Update the value of another existing key
+        node.insert(vec![6], value2.clone(), &mut storage);
+        assert!(node.find(&[6], &storage).unwrap().values.contains(&value2));
     }
 
     #[test]

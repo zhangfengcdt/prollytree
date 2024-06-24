@@ -46,7 +46,6 @@ limitations under the License.
 pub mod digest;
 pub mod errors;
 pub mod node;
-pub mod rolling_hash;
 pub mod storage;
 mod tracing;
 pub mod tree;

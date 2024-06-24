@@ -75,17 +75,6 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         self.root_hash = None; // Invalidate the cached root hash
     }
 
-    /// Updates the value associated with a key in the tree.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key to update.
-    /// * `value` - The new value to update.
-    pub fn update(&mut self, key: Vec<u8>, value: Vec<u8>) {
-        self.root.update(key, value, &mut self.storage);
-        self.root_hash = None; // Invalidate the cached root hash
-    }
-
     /// Deletes a key-value pair from the tree.
     ///
     /// # Arguments
