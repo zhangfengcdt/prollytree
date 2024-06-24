@@ -22,13 +22,15 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use twox_hash::XxHash64;
 
+// TODO: remove this once the hash splitting logic is implemented
 const MAX_KEYS: usize = 4; // Maximum number of keys in a node before it splits
+
 const ROOT_LEVEL: u8 = 0;
-const BASE: u64 = 257;
-const MOD: u64 = 1_000_000_007;
-const MIN_CHUNK_SIZE: usize = 2;
-const MAX_CHUNK_SIZE: usize = 10;
-const PATTERN: u64 = 0b1111; // Example pattern (e.g., last 4 bits are 1111)
+const DEFAULT_BASE: u64 = 257;
+const DEFAULT_MOD: u64 = 1_000_000_007;
+const DEFAULT_MIN_CHUNK_SIZE: usize = 2;
+const DEFAULT_MAX_CHUNK_SIZE: usize = 10;
+const DEFAULT_PATTERN: u64 = 0b1111; // Example pattern (e.g., last 4 bits are 1111)
 
 pub trait Node<const N: usize> {
     fn insert<S: NodeStorage<N>>(&mut self, key: Vec<u8>, value: Vec<u8>, storage: &mut S);
@@ -36,12 +38,121 @@ pub trait Node<const N: usize> {
     fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<ProllyNode<N>>;
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProllyNode<const N: usize> {
     pub keys: Vec<Vec<u8>>,
     pub values: Vec<Vec<u8>>,
     pub is_leaf: bool,
     pub level: u8,
+    pub base: u64,
+    pub modulus: u64,
+    pub min_chunk_size: usize,
+    pub max_chunk_size: usize,
+    pub pattern: u64,
+}
+
+impl<const N: usize> Default for ProllyNode<N> {
+    fn default() -> Self {
+        ProllyNode {
+            keys: Vec::new(),
+            values: Vec::new(),
+            is_leaf: true,
+            level: 0,
+            base: DEFAULT_BASE,
+            modulus: DEFAULT_MOD,
+            min_chunk_size: DEFAULT_MIN_CHUNK_SIZE,
+            max_chunk_size: DEFAULT_MAX_CHUNK_SIZE,
+            pattern: DEFAULT_PATTERN,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ProllyNodeBuilder<const N: usize> {
+    keys: Vec<Vec<u8>>,
+    values: Vec<Vec<u8>>,
+    is_leaf: bool,
+    level: u8,
+    base: u64,
+    modulus: u64,
+    min_chunk_size: usize,
+    max_chunk_size: usize,
+    pattern: u64,
+}
+
+impl<const N: usize> ProllyNodeBuilder<N> {
+    pub fn new() -> Self {
+        ProllyNodeBuilder {
+            keys: Vec::new(),
+            values: Vec::new(),
+            is_leaf: true,
+            level: ROOT_LEVEL,
+            base: DEFAULT_BASE,
+            modulus: DEFAULT_MOD,
+            min_chunk_size: DEFAULT_MIN_CHUNK_SIZE,
+            max_chunk_size: DEFAULT_MAX_CHUNK_SIZE,
+            pattern: DEFAULT_PATTERN,
+        }
+    }
+
+    pub fn keys(mut self, keys: Vec<Vec<u8>>) -> Self {
+        self.keys = keys;
+        self
+    }
+
+    pub fn values(mut self, values: Vec<Vec<u8>>) -> Self {
+        self.values = values;
+        self
+    }
+
+    pub fn is_leaf(mut self, is_leaf: bool) -> Self {
+        self.is_leaf = is_leaf;
+        self
+    }
+
+    pub fn level(mut self, level: u8) -> Self {
+        self.level = level;
+        self
+    }
+
+    pub fn base(mut self, base: u64) -> Self {
+        self.base = base;
+        self
+    }
+
+    pub fn modulus(mut self, modulus: u64) -> Self {
+        self.modulus = modulus;
+        self
+    }
+
+    pub fn min_chunk_size(mut self, min_chunk_size: usize) -> Self {
+        self.min_chunk_size = min_chunk_size;
+        self
+    }
+
+    pub fn max_chunk_size(mut self, max_chunk_size: usize) -> Self {
+        self.max_chunk_size = max_chunk_size;
+        self
+    }
+
+    pub fn pattern(mut self, pattern: u64) -> Self {
+        self.pattern = pattern;
+        self
+    }
+
+    pub fn build(self) -> ProllyNode<N> {
+        ProllyNode {
+            keys: self.keys,
+            values: self.values,
+            is_leaf: self.is_leaf,
+            level: self.level,
+            base: self.base,
+            modulus: self.modulus,
+            min_chunk_size: self.min_chunk_size,
+            max_chunk_size: self.max_chunk_size,
+            pattern: self.pattern,
+        }
+    }
 }
 
 impl<const N: usize> ProllyNode<N> {
@@ -51,16 +162,12 @@ impl<const N: usize> ProllyNode<N> {
             values: vec![value],
             is_leaf: true,
             level: ROOT_LEVEL,
+            ..Default::default()
         }
     }
 
-    pub fn new(key: Vec<u8>, value: Vec<u8>, is_leaf: bool, level: u8) -> Self {
-        ProllyNode {
-            keys: vec![key],
-            values: vec![value],
-            is_leaf,
-            level,
-        }
+    pub fn builder() -> ProllyNodeBuilder<N> {
+        ProllyNodeBuilder::default()
     }
 
     fn sort_and_split_and_persist<S: NodeStorage<N>>(&mut self, storage: &mut S) {
@@ -88,6 +195,11 @@ impl<const N: usize> ProllyNode<N> {
             values: vec![last_value.clone()],
             is_leaf: self.is_leaf,
             level: self.level,
+            base: self.base,
+            modulus: self.modulus,
+            min_chunk_size: self.min_chunk_size,
+            max_chunk_size: self.max_chunk_size,
+            pattern: self.pattern,
         };
 
         // Remove the last key-value pair from the current node
@@ -113,6 +225,11 @@ impl<const N: usize> ProllyNode<N> {
                 ],
                 is_leaf: false,
                 level: self.level + 1,
+                base: self.base,
+                modulus: self.modulus,
+                min_chunk_size: self.min_chunk_size,
+                max_chunk_size: self.max_chunk_size,
+                pattern: self.pattern,
             };
             *self = new_root;
         } else {
@@ -144,23 +261,23 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
         values: &[Vec<u8>],
         window_size: usize,
     ) -> u64 {
-        let keys_hash = Self::polynomial_hash(&keys[..window_size], BASE, MOD);
-        let values_hash = Self::polynomial_hash(&values[..window_size], BASE, MOD);
-        (keys_hash + values_hash) % MOD
+        let keys_hash = Self::polynomial_hash(&keys[..window_size], self.base, self.modulus);
+        let values_hash = Self::polynomial_hash(&values[..window_size], self.base, self.modulus);
+        (keys_hash + values_hash) % self.modulus
     }
     fn chunk_content(&self) -> Vec<(usize, usize)> {
         let mut chunks = Vec::new();
         let mut start = 0;
 
         while start < self.keys.len() {
-            let mut end = start + MIN_CHUNK_SIZE;
-            while end < self.keys.len() && end - start < MAX_CHUNK_SIZE {
+            let mut end = start + self.min_chunk_size;
+            while end < self.keys.len() && end - start < self.max_chunk_size {
                 let hash = self.calculate_rolling_hash(
                     &self.keys[start..end],
                     &self.values[start..end],
                     end - start,
                 );
-                if hash & PATTERN == PATTERN {
+                if hash & self.pattern == self.pattern {
                     break;
                 }
                 end += 1;
@@ -613,5 +730,60 @@ mod tests {
 
         assert!(node.delete(&[9], &mut storage));
         assert!(node.find(&[9], &storage).is_none());
+    }
+
+    #[test]
+    fn test_chunk_content() {
+        let value_for_all = vec![100];
+        let mut node: ProllyNode<32> = ProllyNode::default();
+
+        // Insert multiple key-value pairs
+        node.insert(
+            vec![1],
+            value_for_all.clone(),
+            &mut HashMapNodeStorage::new(),
+        );
+        node.insert(
+            vec![2],
+            value_for_all.clone(),
+            &mut HashMapNodeStorage::new(),
+        );
+        node.insert(
+            vec![3],
+            value_for_all.clone(),
+            &mut HashMapNodeStorage::new(),
+        );
+        node.insert(
+            vec![4],
+            value_for_all.clone(),
+            &mut HashMapNodeStorage::new(),
+        );
+        node.insert(
+            vec![5],
+            value_for_all.clone(),
+            &mut HashMapNodeStorage::new(),
+        );
+        node.insert(
+            vec![6],
+            value_for_all.clone(),
+            &mut HashMapNodeStorage::new(),
+        );
+        node.insert(
+            vec![7],
+            value_for_all.clone(),
+            &mut HashMapNodeStorage::new(),
+        );
+        node.insert(
+            vec![8],
+            value_for_all.clone(),
+            &mut HashMapNodeStorage::new(),
+        );
+
+        let chunks = node.chunk_content();
+        assert!(chunks.len() > 0);
+        for (start, end) in chunks {
+            assert!(end - start >= DEFAULT_MIN_CHUNK_SIZE);
+            assert!(end - start <= DEFAULT_MAX_CHUNK_SIZE);
+        }
     }
 }
