@@ -179,36 +179,32 @@ impl<const N: usize> ProllyNode<N> {
             self.values.insert(pos, last_value);
         }
 
-        // Check if the node should be split
-        if self.keys.len() <= MAX_KEYS {
+        // Use chunk_content to determine split points
+        let chunks = self.chunk_content();
+        if chunks.len() <= 1 {
             return;
         }
 
-        // Handle the last key-value pair separately for splitting
-        let last_index = self.keys.len() - 1;
-        let last_key = self.keys[last_index].clone();
-        let last_value = self.values[last_index].clone();
+        let mut siblings = Vec::new();
+        let original_keys = std::mem::take(&mut self.keys);
+        let original_values = std::mem::take(&mut self.values);
 
-        // Create a new node for the last key-value pair
-        let new_node = ProllyNode {
-            keys: vec![last_key.clone()],
-            values: vec![last_value.clone()],
-            is_leaf: self.is_leaf,
-            level: self.level,
-            base: self.base,
-            modulus: self.modulus,
-            min_chunk_size: self.min_chunk_size,
-            max_chunk_size: self.max_chunk_size,
-            pattern: self.pattern,
-        };
-
-        // Remove the last key-value pair from the current node
-        self.keys.pop();
-        self.values.pop();
-
-        // Save the new node to storage and get its hash
-        let new_node_hash = new_node.get_hash();
-        storage.insert_node(new_node_hash.clone(), new_node);
+        for (start, end) in chunks {
+            let sibling = ProllyNode {
+                keys: original_keys[start..end].to_vec(),
+                values: original_values[start..end].to_vec(),
+                is_leaf: self.is_leaf,
+                level: self.level,
+                base: self.base,
+                modulus: self.modulus,
+                min_chunk_size: self.min_chunk_size,
+                max_chunk_size: self.max_chunk_size,
+                pattern: self.pattern,
+            };
+            let sibling_hash = sibling.get_hash();
+            storage.insert_node(sibling_hash.clone(), sibling.clone());
+            siblings.push((sibling, sibling_hash));
+        }
 
         // If the current node is the root, create a new root
         if self.level == ROOT_LEVEL {
@@ -218,11 +214,8 @@ impl<const N: usize> ProllyNode<N> {
 
             // Create a new root node
             let new_root = ProllyNode {
-                keys: vec![self.keys[0].clone(), last_key],
-                values: vec![
-                    original_root_hash.as_bytes().to_vec(),
-                    new_node_hash.as_bytes().to_vec(),
-                ],
+                keys: siblings.iter().map(|(sibling, _)| sibling.keys[0].clone()).collect(),
+                values: siblings.iter().map(|(_, hash)| hash.as_bytes().to_vec()).collect(),
                 is_leaf: false,
                 level: self.level + 1,
                 base: self.base,
@@ -233,10 +226,11 @@ impl<const N: usize> ProllyNode<N> {
             };
             *self = new_root;
         } else {
-            // Otherwise, promote the last key to the parent
-            // Insert the new node's key and its hash into the parent node
-            self.keys.push(last_key);
-            self.values.push(new_node_hash.as_bytes().to_vec());
+            // Otherwise, promote the first key of each sibling to the parent
+            for (sibling, sibling_hash) in siblings {
+                self.keys.push(sibling.keys[0].clone());
+                self.values.push(sibling_hash.as_bytes().to_vec());
+            }
 
             // Persist the current node
             let current_node_hash = self.get_hash();
