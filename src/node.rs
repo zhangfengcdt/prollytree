@@ -27,7 +27,7 @@ const HASH_SEED: u64 = 0;
 const DEFAULT_BASE: u64 = 257;
 const DEFAULT_MOD: u64 = 1_000_000_007;
 const DEFAULT_MIN_CHUNK_SIZE: usize = 2;
-const DEFAULT_MAX_CHUNK_SIZE: usize = 10;
+const DEFAULT_MAX_CHUNK_SIZE: usize = 16*1024;
 const DEFAULT_PATTERN: u64 = 0b11;
 
 pub trait Node<const N: usize> {
@@ -662,18 +662,9 @@ mod tests {
     use crate::storage::HashMapNodeStorage;
 
     /// This test verifies the insertion of key-value pairs into a ProllyNode and ensures
-    /// that the keys are sorted correctly and the node splits as expected when the maximum
-    /// number of keys is exceeded.
-    ///
-    /// Steps:
-    /// 1. Initialize a new root node with the first key-value pair.
-    /// 2. Insert subsequent key-value pairs and verify that the node's keys and values
-    ///    are updated correctly without splitting.
-    /// 3. After inserting the 4th key-value pair, ensure that the keys are sorted correctly.
-    /// 4. Insert the 5th key-value pair and verify that the node splits:
-    ///    - The new root node should have 2 children.
-    ///    - The first child should have 2 key-value pairs.
-    ///    - The second child should have 1 key-value pair.
+    /// that the keys are sorted correctly and the node splits based on the chunk content.
+    /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
+    /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_insert_in_order() {
         let mut storage = HashMapNodeStorage::<32>::new();
@@ -762,6 +753,10 @@ mod tests {
         );
     }
 
+    /// This test verifies the insertion and update of key-value pairs into a ProllyNode and ensures
+    /// that the keys are sorted correctly and the node splits based on the chunk content.
+    /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
+    /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_insert_update() {
         let mut storage = HashMapNodeStorage::<32>::new();
@@ -804,6 +799,9 @@ mod tests {
         assert!(node.find(&[6], &storage).unwrap().values.contains(&value2));
     }
 
+    /// This test verifies the deletion of key-value pairs from a ProllyNode and ensures
+    /// that the keys are sorted correctly and the node rebalances based on the chunk content.
+    /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_find() {
         let mut storage = HashMapNodeStorage::<32>::new();
@@ -845,6 +843,10 @@ mod tests {
         assert!(node.find(&[10], &storage).is_none());
     }
 
+    /// This test verifies the deletion of key-value pairs from a ProllyNode and ensures
+    /// that the keys are sorted correctly and the node rebalances based on the chunk content.
+    /// The test uses a HashMapNodeStorage to store the nodes.
+    /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
     #[test]
     fn test_delete() {
         let mut storage = HashMapNodeStorage::<32>::new();
