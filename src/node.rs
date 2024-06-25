@@ -22,9 +22,6 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use twox_hash::XxHash64;
 
-// TODO: remove this once the hash splitting logic is implemented
-const MAX_KEYS: usize = 4; // Maximum number of keys in a node before it splits
-
 const ROOT_LEVEL: u8 = 0;
 const DEFAULT_BASE: u64 = 257;
 const DEFAULT_MOD: u64 = 1_000_000_007;
@@ -237,6 +234,119 @@ impl<const N: usize> ProllyNode<N> {
             storage.insert_node(current_node_hash.clone(), self.clone());
         }
     }
+
+    fn rebalance<S: NodeStorage<N>>(&mut self, storage: &mut S) {
+        // Use chunk_content to determine split points
+        let chunks = self.chunk_content();
+
+        // If chunks are valid and there are more than one chunk, split
+        if chunks.len() > 1 {
+            let mut siblings = Vec::new();
+            let original_keys = std::mem::take(&mut self.keys);
+            let original_values = std::mem::take(&mut self.values);
+
+            for (start, end) in chunks {
+                let sibling = ProllyNode {
+                    keys: original_keys[start..end].to_vec(),
+                    values: original_values[start..end].to_vec(),
+                    is_leaf: self.is_leaf,
+                    level: self.level,
+                    base: self.base,
+                    modulus: self.modulus,
+                    min_chunk_size: self.min_chunk_size,
+                    max_chunk_size: self.max_chunk_size,
+                    pattern: self.pattern,
+                };
+                let sibling_hash = sibling.get_hash();
+                storage.insert_node(sibling_hash.clone(), sibling.clone());
+                siblings.push((sibling, sibling_hash));
+            }
+
+            // If the current node is the root, create a new root
+            if self.level == ROOT_LEVEL {
+                // Save the current root node to storage and get its hash
+                let original_root_hash = self.get_hash();
+                storage.insert_node(original_root_hash.clone(), self.clone());
+
+                // Create a new root node
+                let new_root = ProllyNode {
+                    keys: siblings.iter().map(|(sibling, _)| sibling.keys[0].clone()).collect(),
+                    values: siblings.iter().map(|(_, hash)| hash.as_bytes().to_vec()).collect(),
+                    is_leaf: false,
+                    level: self.level + 1,
+                    base: self.base,
+                    modulus: self.modulus,
+                    min_chunk_size: self.min_chunk_size,
+                    max_chunk_size: self.max_chunk_size,
+                    pattern: self.pattern,
+                };
+                *self = new_root;
+            } else {
+                // Otherwise, promote the first key of each sibling to the parent
+                for (sibling, sibling_hash) in siblings {
+                    self.keys.push(sibling.keys[0].clone());
+                    self.values.push(sibling_hash.as_bytes().to_vec());
+                }
+
+                // Persist the current node
+                let current_node_hash = self.get_hash();
+                storage.insert_node(current_node_hash.clone(), self.clone());
+            }
+        } else {
+            // Attempt to merge with the next right neighbor if available
+            if let Some(next_sibling_hash) = self.get_next_sibling_hash(storage) {
+                if let Some(mut next_sibling) =
+                    storage.get_node_by_hash(&ValueDigest::raw_hash(&next_sibling_hash))
+                {
+                    self.merge_with_next_sibling(&mut next_sibling, storage);
+                }
+            }
+        }
+    }
+
+    fn get_next_sibling_hash<S: NodeStorage<N>>(&self, storage: &S) -> Option<Vec<u8>> {
+        // TODO: Implement get_next_sibling_hash method
+        // Logic to get the next sibling hash
+        // This is a placeholder and should be implemented based on the storage and node structure
+        None
+    }
+
+    fn merge_with_next_sibling<S: NodeStorage<N>>(&mut self, next_sibling: &mut ProllyNode<N>, storage: &mut S) {
+        // Merge the current node with the next sibling
+        self.keys.extend(next_sibling.keys.drain(..));
+        self.values.extend(next_sibling.values.drain(..));
+
+        // Persist the merged node
+        let merged_node_hash = self.get_hash();
+        storage.insert_node(merged_node_hash.clone(), self.clone());
+
+        // Remove the next sibling node from storage
+        let next_sibling_hash = next_sibling.get_hash();
+        // TODO: implement remove_node method in NodeStorage
+        //storage.remove_node(&next_sibling_hash);
+
+        // Update the parent node
+        if let Some(parent_hash) = self.get_parent_hash(storage) {
+            if let Some(mut parent_node) = storage.get_node_by_hash(&ValueDigest::raw_hash(&parent_hash)) {
+                parent_node.update_child_hash(&next_sibling_hash, &merged_node_hash, storage);
+            }
+        }
+    }
+
+    fn get_parent_hash<S: NodeStorage<N>>(&self, storage: &S) -> Option<Vec<u8>> {
+        // Logic to get the parent hash
+        // This is a placeholder and should be implemented based on the storage and node structure
+        None
+    }
+
+    fn update_child_hash<S: NodeStorage<N>>(&mut self, old_child_hash: &ValueDigest<N>, new_child_hash: &ValueDigest<N>, storage: &mut S) {
+        // Update the hash of the child node in the parent node
+        if let Some(pos) = self.values.iter().position(|v| v == old_child_hash.as_bytes()) {
+            self.values[pos] = new_child_hash.as_bytes().to_vec();
+            let parent_node_hash = self.get_hash();
+            storage.insert_node(parent_node_hash.clone(), self.clone());
+        }
+    }
 }
 
 impl<const N: usize> NodeChunk for ProllyNode<N> {
@@ -354,6 +464,9 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 let current_node_hash = self.get_hash();
                 storage.insert_node(current_node_hash.clone(), self.clone());
 
+                // Rebalance if necessary
+                self.rebalance(storage);
+
                 true
             } else {
                 false
@@ -378,7 +491,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                     storage.insert_node(current_node_hash.clone(), self.clone());
 
                     // Check if the child node needs rebalancing
-                    // TODO: Implement rebalancing (merging) logic
+                    self.rebalance(storage);
 
                     true
                 } else {
