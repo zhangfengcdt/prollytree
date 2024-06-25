@@ -748,6 +748,7 @@ mod tests {
         node.insert(vec![15], value_for_all.clone(), &mut storage);
         node.insert(vec![20], value_for_all.clone(), &mut storage);
         node.insert(vec![28], value_for_all.clone(), &mut storage);
+        // should trigger a split and create a new root node here
         node.insert(vec![30], value_for_all.clone(), &mut storage);
         node.insert(vec![31], value_for_all.clone(), &mut storage);
         node.insert(vec![32], value_for_all.clone(), &mut storage);
