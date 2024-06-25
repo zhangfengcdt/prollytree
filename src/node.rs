@@ -313,8 +313,8 @@ impl<const N: usize> ProllyNode<N> {
 
     fn merge_with_next_sibling<S: NodeStorage<N>>(&mut self, next_sibling: &mut ProllyNode<N>, storage: &mut S) {
         // Merge the current node with the next sibling
-        self.keys.extend(next_sibling.keys.drain(..));
-        self.values.extend(next_sibling.values.drain(..));
+        self.keys.append(&mut next_sibling.keys);
+        self.values.append(&mut next_sibling.values);
 
         // Persist the merged node
         let merged_node_hash = self.get_hash();
@@ -887,7 +887,7 @@ mod tests {
         );
 
         let chunks = node.chunk_content();
-        assert!(chunks.len() > 0);
+        assert!(!chunks.is_empty());
         for (start, end) in chunks {
             assert!(end - start >= DEFAULT_MIN_CHUNK_SIZE);
             assert!(end - start <= DEFAULT_MAX_CHUNK_SIZE);
