@@ -272,7 +272,11 @@ impl<const N: usize> ProllyNode<N> {
         }
     }
 
-    fn rebalance<S: NodeStorage<N>>(&mut self, storage: &mut S) {
+    fn rebalance<S: NodeStorage<N>>(
+        &mut self,
+        storage: &mut S,
+        parent_hash: Option<&ValueDigest<N>>,
+    ) {
         // Use chunk_content to determine split points
         let chunks = self.chunk_content();
 
@@ -337,7 +341,7 @@ impl<const N: usize> ProllyNode<N> {
             }
         } else {
             // Attempt to merge with the next right neighbor if available
-            if let Some(next_sibling_hash) = self.get_next_sibling_hash(storage) {
+            if let Some(next_sibling_hash) = self.get_next_sibling_hash(storage, parent_hash) {
                 if let Some(mut next_sibling) =
                     storage.get_node_by_hash(&ValueDigest::raw_hash(&next_sibling_hash))
                 {
@@ -347,10 +351,28 @@ impl<const N: usize> ProllyNode<N> {
         }
     }
 
-    fn get_next_sibling_hash<S: NodeStorage<N>>(&self, storage: &S) -> Option<Vec<u8>> {
-        // TODO: Implement get_next_sibling_hash method
-        // Logic to get the next sibling hash
-        // This is a placeholder and should be implemented based on the storage and node structure
+    fn get_next_sibling_hash<S: NodeStorage<N>>(
+        &self,
+        storage: &S,
+        parent_hash: Option<&ValueDigest<N>>,
+    ) -> Option<Vec<u8>> {
+        if let Some(parent_hash) = parent_hash {
+            // Retrieve the parent node using the parent hash
+            if let Some(parent_node) = storage.get_node_by_hash(parent_hash) {
+                // Find the position of the current node in the parent node's values
+                if let Some(pos) = parent_node
+                    .values
+                    .iter()
+                    .position(|v| v == &self.get_hash().as_bytes().to_vec())
+                {
+                    // Check if there is a next sibling
+                    if pos + 1 < parent_node.values.len() {
+                        // Return the next sibling's hash
+                        return Some(parent_node.values[pos + 1].clone());
+                    }
+                }
+            }
+        }
         None
     }
 
@@ -576,7 +598,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 storage.insert_node(current_node_hash.clone(), self.clone());
 
                 // Rebalance if necessary
-                self.rebalance(storage);
+                self.rebalance(storage, parent_hash);
 
                 true
             } else {
@@ -632,7 +654,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                     storage.insert_node(current_node_hash.clone(), self.clone());
 
                     // Check if the parent node needs rebalancing
-                    self.rebalance(storage);
+                    self.rebalance(storage, parent_hash);
 
                     true
                 } else {
