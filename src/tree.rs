@@ -71,7 +71,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// * `key` - The key to insert.
     /// * `value` - The value to insert.
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
-        self.root.insert(key, value, &mut self.storage);
+        self.root.insert(key, value, &mut self.storage, None);
         self.root_hash = None; // Invalidate the cached root hash
     }
 
@@ -85,7 +85,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     ///
     /// `true` if the key was found and deleted, `false` otherwise.
     pub fn delete(&mut self, key: &[u8]) -> bool {
-        let deleted = self.root.delete(key, &mut self.storage);
+        let deleted = self.root.delete(key, &mut self.storage, None);
         if deleted {
             self.root_hash = None; // Invalidate the cached root hash
         }
