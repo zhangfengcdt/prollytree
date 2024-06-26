@@ -27,7 +27,7 @@ const HASH_SEED: u64 = 0;
 const DEFAULT_BASE: u64 = 257;
 const DEFAULT_MOD: u64 = 1_000_000_007;
 const DEFAULT_MIN_CHUNK_SIZE: usize = 2;
-const DEFAULT_MAX_CHUNK_SIZE: usize = 10;
+const DEFAULT_MAX_CHUNK_SIZE: usize = 16 * 1024;
 const DEFAULT_PATTERN: u64 = 0b11;
 
 pub trait Node<const N: usize> {
@@ -65,7 +65,6 @@ impl<const N: usize> Default for ProllyNode<N> {
     }
 }
 
-#[derive(Default)]
 pub struct ProllyNodeBuilder<const N: usize> {
     keys: Vec<Vec<u8>>,
     values: Vec<Vec<u8>>,
@@ -78,8 +77,8 @@ pub struct ProllyNodeBuilder<const N: usize> {
     pattern: u64,
 }
 
-impl<const N: usize> ProllyNodeBuilder<N> {
-    pub fn new() -> Self {
+impl<const N: usize> Default for ProllyNodeBuilder<N> {
+    fn default() -> Self {
         ProllyNodeBuilder {
             keys: Vec::new(),
             values: Vec::new(),
@@ -92,7 +91,9 @@ impl<const N: usize> ProllyNodeBuilder<N> {
             pattern: DEFAULT_PATTERN,
         }
     }
+}
 
+impl<const N: usize> ProllyNodeBuilder<N> {
     pub fn keys(mut self, keys: Vec<Vec<u8>>) -> Self {
         self.keys = keys;
         self
@@ -166,6 +167,24 @@ impl<const N: usize> ProllyNode<N> {
 
     pub fn builder() -> ProllyNodeBuilder<N> {
         ProllyNodeBuilder::default()
+    }
+
+    fn collect_leaf_nodes<S: NodeStorage<N>>(
+        &self,
+        leaf_nodes: &mut Vec<ProllyNode<N>>,
+        storage: &S,
+    ) {
+        if self.is_leaf {
+            leaf_nodes.push(self.clone());
+        } else {
+            for child_hash in &self.values {
+                if let Some(child_node) =
+                    storage.get_node_by_hash(&ValueDigest::raw_hash(child_hash))
+                {
+                    child_node.collect_leaf_nodes(leaf_nodes, storage);
+                }
+            }
+        }
     }
 
     fn sort_and_split_and_persist<S: NodeStorage<N>>(&mut self, storage: &mut S) {
@@ -486,10 +505,28 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 let new_node_hash = child_node.get_hash().as_bytes().to_vec();
 
                 // Save the updated child node back to the storage
-                storage.insert_node(child_node.get_hash(), child_node);
+                storage.insert_node(child_node.get_hash(), child_node.clone());
 
-                // Update this node's value with the new hash
-                self.values[i] = new_node_hash;
+                // Check if the child node needs to be merged into the parent node level
+                if !child_node.clone().is_leaf {
+                    // Collect all leaf nodes from the child node's subtree
+                    let mut leaf_nodes = vec![];
+                    child_node.collect_leaf_nodes(&mut leaf_nodes, storage);
+
+                    // Remove the non-leaf child node
+                    self.keys.remove(i);
+                    self.values.remove(i);
+
+                    // Insert each key and value from the leaf nodes into the parent node at position `i`
+                    for (j, leaf_node) in leaf_nodes.into_iter().enumerate() {
+                        self.keys.insert(i + j, leaf_node.keys[0].clone());
+                        self.values
+                            .insert(i + j, leaf_node.get_hash().as_bytes().to_vec());
+                    }
+                } else {
+                    // Update this node's value with the new hash
+                    self.values[i] = new_node_hash;
+                }
             } else {
                 // Handle the case when the child node is not found
                 println!("Child node not found: {:?}", child_hash);
@@ -506,6 +543,11 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             if let Some(pos) = self.keys.iter().position(|k| k == key) {
                 self.keys.remove(pos);
                 self.values.remove(pos);
+
+                // Check if the leaf node is empty
+                if self.keys.is_empty() {
+                    return true; // Indicate that the node should be removed from the parent
+                }
 
                 // Persist the current node after deletion
                 let current_node_hash = self.get_hash();
@@ -529,15 +571,45 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
             {
                 if child_node.delete(key, storage) {
-                    // If the deletion was successful, update the current node's child hash
-                    let new_child_hash = child_node.get_hash();
-                    self.values[i] = new_child_hash.as_bytes().to_vec();
+                    // If the deletion was successful, check if the child node is empty
+                    if child_node.keys.is_empty() {
+                        // Remove the empty child node from the parent node's keys and values
+                        self.keys.remove(i);
+                        self.values.remove(i);
 
-                    // Persist the current node after updating the child hash
+                        // Check if the current level is one above the root level and only one child node is left
+                        if self.level == ROOT_LEVEL + 1 && self.keys.len() == 1 {
+                            // Retrieve the remaining child node using the stored hash
+                            let remaining_child_hash = self.values[0].clone();
+                            if let Some(mut remaining_child_node) = storage
+                                .get_node_by_hash(&ValueDigest::raw_hash(&remaining_child_hash))
+                            {
+                                // Set the remaining child node as the new root node
+                                remaining_child_node.level = ROOT_LEVEL;
+                                remaining_child_node.is_leaf = true;
+
+                                // Persist the new root node
+                                let new_root_hash = remaining_child_node.get_hash();
+                                storage.insert_node(
+                                    new_root_hash.clone(),
+                                    remaining_child_node.clone(),
+                                );
+
+                                // Update the current node to become the new root node
+                                *self = remaining_child_node;
+                            }
+                        }
+                    } else {
+                        // Update the current node's child hash
+                        let new_child_hash = child_node.get_hash();
+                        self.values[i] = new_child_hash.as_bytes().to_vec();
+                    }
+
+                    // Persist the current node after updating the child hash or removing the child node
                     let current_node_hash = self.get_hash();
                     storage.insert_node(current_node_hash.clone(), self.clone());
 
-                    // Check if the child node needs rebalancing
+                    // Check if the parent node needs rebalancing
                     self.rebalance(storage);
 
                     true
@@ -662,18 +734,9 @@ mod tests {
     use crate::storage::HashMapNodeStorage;
 
     /// This test verifies the insertion of key-value pairs into a ProllyNode and ensures
-    /// that the keys are sorted correctly and the node splits as expected when the maximum
-    /// number of keys is exceeded.
-    ///
-    /// Steps:
-    /// 1. Initialize a new root node with the first key-value pair.
-    /// 2. Insert subsequent key-value pairs and verify that the node's keys and values
-    ///    are updated correctly without splitting.
-    /// 3. After inserting the 4th key-value pair, ensure that the keys are sorted correctly.
-    /// 4. Insert the 5th key-value pair and verify that the node splits:
-    ///    - The new root node should have 2 children.
-    ///    - The first child should have 2 key-value pairs.
-    ///    - The second child should have 1 key-value pair.
+    /// that the keys are sorted correctly and the node splits based on the chunk content.
+    /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
+    /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_insert_in_order() {
         let mut storage = HashMapNodeStorage::<32>::new();
@@ -763,6 +826,49 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_out_order() {
+        let mut storage = HashMapNodeStorage::<32>::new();
+
+        let value_for_all = vec![100];
+
+        let mut node: ProllyNode<32> = ProllyNode::init_root(vec![10], value_for_all.clone());
+        println!("{}", node.breadth_first_traverse(&storage));
+
+        // insert the 2nd key-value pair
+        node.insert(vec![5], value_for_all.clone(), &mut storage);
+        println!("{}", node.breadth_first_traverse(&storage));
+
+        node.insert(vec![2], value_for_all.clone(), &mut storage);
+        println!("{}", node.breadth_first_traverse(&storage));
+
+        node.insert(vec![3], value_for_all.clone(), &mut storage);
+        node.insert(vec![4], value_for_all.clone(), &mut storage);
+        println!("{}", node.breadth_first_traverse(&storage));
+
+        node.insert(vec![13], value_for_all.clone(), &mut storage);
+        node.insert(vec![14], value_for_all.clone(), &mut storage);
+        node.insert(vec![15], value_for_all.clone(), &mut storage);
+        node.insert(vec![16], value_for_all.clone(), &mut storage);
+        node.insert(vec![20], value_for_all.clone(), &mut storage);
+        println!("{}", node.breadth_first_traverse(&storage));
+
+        node.insert(vec![1], value_for_all.clone(), &mut storage);
+        println!("{}", node.breadth_first_traverse(&storage));
+
+        node.insert(vec![30], value_for_all.clone(), &mut storage);
+        node.insert(vec![35], value_for_all.clone(), &mut storage);
+        node.insert(vec![34], value_for_all.clone(), &mut storage);
+        node.insert(vec![40], value_for_all.clone(), &mut storage);
+        node.insert(vec![41], value_for_all.clone(), &mut storage);
+        node.insert(vec![41], value_for_all.clone(), &mut storage);
+        println!("{}", node.breadth_first_traverse(&storage));
+    }
+
+    /// This test verifies the insertion and update of key-value pairs into a ProllyNode and ensures
+    /// that the keys are sorted correctly and the node splits based on the chunk content.
+    /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
+    /// The test uses a HashMapNodeStorage to store the nodes.
+    #[test]
     fn test_insert_update() {
         let mut storage = HashMapNodeStorage::<32>::new();
 
@@ -804,6 +910,9 @@ mod tests {
         assert!(node.find(&[6], &storage).unwrap().values.contains(&value2));
     }
 
+    /// This test verifies the deletion of key-value pairs from a ProllyNode and ensures
+    /// that the keys are sorted correctly and the node rebalances based on the chunk content.
+    /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_find() {
         let mut storage = HashMapNodeStorage::<32>::new();
@@ -845,39 +954,53 @@ mod tests {
         assert!(node.find(&[10], &storage).is_none());
     }
 
+    /// This test verifies the deletion of key-value pairs from a ProllyNode and ensures
+    /// that the keys are sorted correctly and the node rebalances based on the chunk content.
+    /// The test uses a HashMapNodeStorage to store the nodes.
+    /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
     #[test]
     fn test_delete() {
         let mut storage = HashMapNodeStorage::<32>::new();
-
         let value_for_all = vec![100];
 
-        // initialize a new root node with the first key-value pair
-        let mut node: ProllyNode<32> = ProllyNode::init_root(vec![1], value_for_all.clone());
+        let mut node: ProllyNode<32> = ProllyNode::builder().build();
+
+        assert_eq!(node.breadth_first_traverse(&storage), "[L0:[]]");
 
         // insert key-value pairs
-        node.insert(vec![2], value_for_all.clone(), &mut storage);
-        node.insert(vec![3], value_for_all.clone(), &mut storage);
-        node.insert(vec![4], value_for_all.clone(), &mut storage);
-        node.insert(vec![5], value_for_all.clone(), &mut storage);
+        for i in 1..=10 {
+            node.insert(vec![i], value_for_all.clone(), &mut storage);
+        }
+
+        assert_eq!(
+            node.breadth_first_traverse(&storage),
+            "[L0:[[1], [2], [3], [4], [5]]][L0:[[6], [7], [8], [9], [10]]]"
+        );
 
         // Test deleting existing keys
         assert!(node.delete(&[1], &mut storage));
         assert!(node.find(&[1], &storage).is_none());
-
         assert!(node.delete(&[2], &mut storage));
         assert!(node.find(&[2], &storage).is_none());
-
         assert!(node.delete(&[3], &mut storage));
         assert!(node.find(&[3], &storage).is_none());
-
         assert!(node.delete(&[4], &mut storage));
         assert!(node.find(&[4], &storage).is_none());
-
         assert!(node.delete(&[5], &mut storage));
         assert!(node.find(&[5], &storage).is_none());
 
+        assert_eq!(
+            node.breadth_first_traverse(&storage),
+            "[L0:[[6], [7], [8], [9], [10]]]"
+        );
+
         // Test deleting a non-existing key
-        assert!(!node.delete(&[6], &mut storage));
+        assert!(node.delete(&[6], &mut storage));
+
+        assert_eq!(
+            node.breadth_first_traverse(&storage),
+            "[L0:[[7], [8], [9]]][L0:[[10]]]"
+        );
 
         // Insert more key-value pairs and delete them to verify tree consistency
         node.insert(vec![7], value_for_all.clone(), &mut storage);
@@ -886,12 +1009,23 @@ mod tests {
 
         assert!(node.delete(&[7], &mut storage));
         assert!(node.find(&[7], &storage).is_none());
-
         assert!(node.delete(&[8], &mut storage));
         assert!(node.find(&[8], &storage).is_none());
-
         assert!(node.delete(&[9], &mut storage));
         assert!(node.find(&[9], &storage).is_none());
+
+        assert_eq!(node.breadth_first_traverse(&storage), "[L0:[[10]]]");
+
+        assert!(node.delete(&[10], &mut storage));
+        assert!(node.find(&[10], &storage).is_none());
+
+        assert_eq!(node.breadth_first_traverse(&storage), "[L0:[]]");
+
+        node.insert(vec![12], value_for_all.clone(), &mut storage);
+        node.insert(vec![17], value_for_all.clone(), &mut storage);
+        node.insert(vec![20], value_for_all.clone(), &mut storage);
+
+        println!("{}", node.breadth_first_traverse(&storage));
     }
 
     #[test]
