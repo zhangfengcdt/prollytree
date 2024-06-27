@@ -28,6 +28,40 @@ pub trait Tree<const N: usize, S: NodeStorage<N>> {
     fn get_root_hash(&self) -> Option<ValueDigest<N>>;
     fn size(&self) -> usize;
     fn depth(&self) -> usize;
+    fn summary(&self) -> String;
+    fn stats(&self) -> TreeStats;
+}
+
+pub struct TreeStats {
+    pub num_nodes: usize,
+    pub num_leaves: usize,
+    pub num_internal_nodes: usize,
+    pub max_depth: usize,
+    pub avg_node_size: f64,
+    pub std_node_size: f64,
+    pub min_node_size: f64,
+    pub max_node_size: f64,
+}
+
+impl TreeStats {
+    pub fn new() -> Self {
+        TreeStats {
+            num_nodes: 0,
+            num_leaves: 0,
+            num_internal_nodes: 0,
+            max_depth: 0,
+            avg_node_size: 0.0,
+            std_node_size: 0.0,
+            min_node_size: 0.0,
+            max_node_size: 0.0,
+        }
+    }
+}
+
+impl Default for TreeStats {
+    fn default() -> Self {
+        TreeStats::new()
+    }
 }
 
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
@@ -81,6 +115,14 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn depth(&self) -> usize {
+        todo!()
+    }
+
+    fn summary(&self) -> String {
+        todo!()
+    }
+
+    fn stats(&self) -> TreeStats {
         todo!()
     }
 }
