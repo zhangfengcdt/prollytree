@@ -15,7 +15,7 @@ use crate::digest::ValueDigest;
 use crate::node::{Node, ProllyNode};
 use crate::storage::NodeStorage;
 
-pub trait ProllyTreeTrait<const N: usize, S: NodeStorage<N>> {
+pub trait Tree<const N: usize, S: NodeStorage<N>> {
     fn new(root: ProllyNode<N>, storage: S) -> Self;
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>);
     fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool;
@@ -35,7 +35,7 @@ pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
     storage: S,
 }
 
-impl<const N: usize, S: NodeStorage<N>> ProllyTreeTrait<N, S> for ProllyTree<N, S> {
+impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     fn new(root: ProllyNode<N>, storage: S) -> Self {
         ProllyTree { root, storage }
     }
@@ -88,11 +88,11 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTreeTrait<N, S> for ProllyTree<N, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::HashMapNodeStorage;
+    use crate::storage::InMemoryNodeStorage;
 
     #[test]
     fn test_insert_and_find() {
-        let storage = HashMapNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::new();
 
         let root = ProllyNode::default();
         let mut tree = ProllyTree::new(root, storage);
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn test_delete() {
-        let storage = HashMapNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::new();
         let root = ProllyNode::default();
         let mut tree = ProllyTree::new(root, storage);
 
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_traverse() {
-        let storage = HashMapNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::new();
         let root = ProllyNode::default();
         let mut tree = ProllyTree::new(root, storage);
 

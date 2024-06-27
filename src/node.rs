@@ -777,7 +777,7 @@ impl<const N: usize> ProllyNode<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::HashMapNodeStorage;
+    use crate::storage::InMemoryNodeStorage;
 
     /// This test verifies the insertion of key-value pairs into a ProllyNode and ensures
     /// that the keys are sorted correctly and the node splits based on the chunk content.
@@ -785,7 +785,7 @@ mod tests {
     /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_insert_in_order() {
-        let mut storage = HashMapNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::new();
 
         let value_for_all = vec![100];
 
@@ -873,7 +873,7 @@ mod tests {
 
     #[test]
     fn test_insert_out_order() {
-        let mut storage = HashMapNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::new();
 
         let value_for_all = vec![100];
 
@@ -916,7 +916,7 @@ mod tests {
     /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_insert_update() {
-        let mut storage = HashMapNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::new();
 
         let value1 = vec![100];
         let value2 = vec![200];
@@ -961,7 +961,7 @@ mod tests {
     /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_find() {
-        let mut storage = HashMapNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::new();
 
         let value_for_all = vec![100];
 
@@ -1006,7 +1006,7 @@ mod tests {
     /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
     #[test]
     fn test_delete() {
-        let mut storage = HashMapNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::new();
         let value_for_all = vec![100];
 
         let mut node: ProllyNode<32> = ProllyNode::builder().build();
@@ -1077,7 +1077,7 @@ mod tests {
 
     #[test]
     fn test_chunk_content() {
-        let mut storage = HashMapNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::new();
         let value_for_all = vec![100];
         let mut node: ProllyNode<32> = ProllyNode::default();
 
