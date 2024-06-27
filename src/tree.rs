@@ -44,8 +44,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTreeTrait<N, S> for ProllyTree<N, 
     }
 
     fn delete(&mut self, key: &[u8]) -> bool {
-        let deleted = self.root.delete(key, &mut self.storage, None);
-        deleted
+        self.root.delete(key, &mut self.storage, None)
     }
 
     fn find(&self, key: &[u8]) -> Option<ProllyNode<N>> {
@@ -117,7 +116,7 @@ mod tests {
         let expected_key2 = format!("{:?}", key2);
 
         // Check if the traversal contains the expected keys
-        assert!(traversal.contains(&format!("{}", expected_key1)));
-        assert!(traversal.contains(&format!("{}", expected_key2)));
+        assert!(traversal.contains(&expected_key1.to_string()));
+        assert!(traversal.contains(&expected_key2.to_string()));
     }
 }

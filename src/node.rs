@@ -739,14 +739,7 @@ impl<const N: usize> ProllyNode<N> {
         self.formatted_traverse(storage, |node| {
             if node.is_leaf {
                 // return the keys for leaf nodes
-                format!(
-                    "[L{}:{:?}]",
-                    node.level,
-                    node.keys
-                        .iter()
-                        .map(|k| k.clone())
-                        .collect::<Vec<Vec<u8>>>()
-                )
+                format!("[L{}:{:?}]", node.level, node.keys.to_vec())
             } else {
                 // return empty string for non-leaf nodes
                 "".to_string()
