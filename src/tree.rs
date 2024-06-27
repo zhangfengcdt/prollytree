@@ -11,19 +11,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
+use crate::digest::ValueDigest;
 use crate::node::{Node, ProllyNode};
 use crate::storage::NodeStorage;
 
 pub trait ProllyTreeTrait<const N: usize, S: NodeStorage<N>> {
     fn new(root: ProllyNode<N>, storage: S) -> Self;
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>);
+    fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool;
     fn delete(&mut self, key: &[u8]) -> bool;
     fn find(&self, key: &[u8]) -> Option<ProllyNode<N>>;
     fn traverse(&self) -> String;
     fn formatted_traverse<F>(&self, formatter: F) -> String
     where
         F: Fn(&ProllyNode<N>) -> String;
+    fn get_root_hash(&self) -> Option<ValueDigest<N>>;
+    fn size(&self) -> usize;
+    fn depth(&self) -> usize;
 }
 
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
@@ -57,6 +61,27 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTreeTrait<N, S> for ProllyTree<N, 
         F: Fn(&ProllyNode<N>) -> String,
     {
         self.root.formatted_traverse(&self.storage, formatter)
+    }
+
+    fn get_root_hash(&self) -> Option<ValueDigest<N>> {
+        todo!()
+    }
+
+    fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool {
+        if self.find(&key).is_some() {
+            self.insert(key, value);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn size(&self) -> usize {
+        todo!()
+    }
+
+    fn depth(&self) -> usize {
+        todo!()
     }
 }
 

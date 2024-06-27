@@ -6,13 +6,6 @@ peer-to-peer (P2P) networks.
 
 ## Getting Started
 
-Clone the repository:
-
-```sh
-git clone https://github.com/zhangfengcdt/prollytree.git
-cd prollytree
-```
-
 Build the project:
 
 ```sh
@@ -23,6 +16,13 @@ Run the tests:
 
 ```sh
 cargo test
+```
+
+Check formats and styles:
+
+```sh
+cargo fmt
+cargo clippy
 ```
 
 ## Key Characteristics:
@@ -142,15 +142,18 @@ For detailed documentation and examples, please visit [docs.rs/prollytree](https
 
 ## Roadmap
 
-The following features are for prollytree library:
+The following features are for Prolly Tree library:
 - [X] Implement basic Prolly Tree structure
-- [ ] Implement insertion and deletion operations
-- [ ] Implement hashing and verification
-- [ ] Add support for variable probabilistic balancing
+- [X] Implement insertion and deletion operations
+- [X] Implement tree traversal and search
+- [ ] Implement tree size and depth calculation
+- [ ] Implement tree configuration and tree meta data handling
+- [ ] Support probabilistic tree balancing
+- [ ] Implement hashing verification and proof generation
 - [ ] Add documentation and examples
 - [ ] Add benchmarks and optimizations
 
-The following features are for other prollytree projects:
+The following features are for other Prolly Tree projects:
 - [ ] prolly cli tool
 - [ ] integration with git
 - [ ] integration with ipfs
