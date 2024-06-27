@@ -55,31 +55,31 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
     fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()>;
 }
 
-/// An implementation of `NodeStorage2` that stores nodes in a HashMap.
+/// An implementation of `NodeStorage` that stores nodes in a HashMap.
 ///
 /// # Type Parameters
 ///
 /// - `N`: The size of the value digest.
-pub struct HashMapNodeStorage<const N: usize> {
+pub struct InMemoryNodeStorage<const N: usize> {
     map: HashMap<ValueDigest<N>, ProllyNode<N>>,
 }
 
-impl<const N: usize> Default for HashMapNodeStorage<N> {
+impl<const N: usize> Default for InMemoryNodeStorage<N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const N: usize> HashMapNodeStorage<N> {
+impl<const N: usize> InMemoryNodeStorage<N> {
     /// Creates a new instance of `HashMapNodeStorage2`.
     pub fn new() -> Self {
-        HashMapNodeStorage {
+        InMemoryNodeStorage {
             map: HashMap::new(),
         }
     }
 }
 
-impl<const N: usize> NodeStorage<N> for HashMapNodeStorage<N> {
+impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
         self.map.get(hash).cloned()
     }
