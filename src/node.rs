@@ -12,8 +12,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#![allow(unused_variables)]
-#![allow(dead_code)]
+// #![allow(unused_variables)]
+// #![allow(dead_code)]
 
 use crate::digest::ValueDigest;
 use crate::storage::NodeStorage;
@@ -345,7 +345,7 @@ impl<const N: usize> ProllyNode<N> {
                 if let Some(mut next_sibling) =
                     storage.get_node_by_hash(&ValueDigest::raw_hash(&next_sibling_hash))
                 {
-                    self.merge_with_next_sibling(&mut next_sibling, storage);
+                    self.merge_with_next_sibling(&mut next_sibling, storage, parent_hash);
                 }
             }
         }
@@ -380,6 +380,7 @@ impl<const N: usize> ProllyNode<N> {
         &mut self,
         next_sibling: &mut ProllyNode<N>,
         storage: &mut S,
+        parent_hash: Option<&ValueDigest<N>>,
     ) {
         // Merge the current node with the next sibling
         self.keys.append(&mut next_sibling.keys);
@@ -391,11 +392,10 @@ impl<const N: usize> ProllyNode<N> {
 
         // Remove the next sibling node from storage
         let next_sibling_hash = next_sibling.get_hash();
-        // TODO: implement remove_node method in NodeStorage
-        //storage.remove_node(&next_sibling_hash);
+        storage.delete_node(&next_sibling_hash);
 
         // Update the parent node
-        if let Some(parent_hash) = self.get_parent_hash(storage) {
+        if let Some(parent_hash) = self.get_parent_hash(parent_hash) {
             if let Some(mut parent_node) =
                 storage.get_node_by_hash(&ValueDigest::raw_hash(&parent_hash))
             {
@@ -404,10 +404,9 @@ impl<const N: usize> ProllyNode<N> {
         }
     }
 
-    fn get_parent_hash<S: NodeStorage<N>>(&self, storage: &S) -> Option<Vec<u8>> {
-        // Logic to get the parent hash
-        // This is a placeholder and should be implemented based on the storage and node structure
-        None
+    fn get_parent_hash(&self, parent_hash: Option<&ValueDigest<N>>) -> Option<Vec<u8>> {
+        // Logic to verify the parent hash and return the parent node hash
+        parent_hash.map(|hash| hash.as_bytes().to_vec())
     }
 
     fn update_child_hash<S: NodeStorage<N>>(
@@ -511,7 +510,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         key: Vec<u8>,
         value: Vec<u8>,
         storage: &mut S,
-        parent_hash: Option<&ValueDigest<N>>,
+        _parent_hash: Option<&ValueDigest<N>>,
     ) {
         if self.is_leaf {
             // Check if the key already exists in the node

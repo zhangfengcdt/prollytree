@@ -12,9 +12,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#![allow(static_mut_refs)]
-#![allow(dead_code)]
-
 use crate::node::{Node, ProllyNode};
 use crate::storage::NodeStorage;
 
