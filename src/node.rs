@@ -112,8 +112,8 @@ impl<const N: usize> ProllyNodeBuilder<N> {
         self
     }
 
-    pub fn is_leaf(mut self, is_leaf: bool) -> Self {
-        self.is_leaf = is_leaf;
+    pub fn leaf(mut self, leaf: bool) -> Self {
+        self.is_leaf = leaf;
         self
     }
 
@@ -957,7 +957,7 @@ mod tests {
     }
 
     /// This test verifies the deletion of key-value pairs from a ProllyNode and ensures
-    /// that the keys are sorted correctly and the node rebalances based on the chunk content.
+    /// that the keys are sorted correctly and the node balances based on the chunk content.
     /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_find() {
@@ -1001,7 +1001,7 @@ mod tests {
     }
 
     /// This test verifies the deletion of key-value pairs from a ProllyNode and ensures
-    /// that the keys are sorted correctly and the node rebalances based on the chunk content.
+    /// that the keys are sorted correctly and the node balances based on the chunk content.
     /// The test uses a HashMapNodeStorage to store the nodes.
     /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
     #[test]

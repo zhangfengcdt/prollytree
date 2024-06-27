@@ -78,6 +78,15 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         self.root.insert(key, value, &mut self.storage, None);
     }
 
+    fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool {
+        if self.find(&key).is_some() {
+            self.insert(key, value);
+            true
+        } else {
+            false
+        }
+    }
+
     fn delete(&mut self, key: &[u8]) -> bool {
         self.root.delete(key, &mut self.storage, None)
     }
@@ -99,15 +108,6 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
     fn get_root_hash(&self) -> Option<ValueDigest<N>> {
         todo!()
-    }
-
-    fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool {
-        if self.find(&key).is_some() {
-            self.insert(key, value);
-            true
-        } else {
-            false
-        }
     }
 
     fn size(&self) -> usize {
