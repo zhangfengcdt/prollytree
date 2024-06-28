@@ -27,7 +27,16 @@ const DEFAULT_MIN_CHUNK_SIZE: usize = 2;
 const DEFAULT_MAX_CHUNK_SIZE: usize = 16 * 1024;
 const DEFAULT_PATTERN: u64 = 0b11;
 
+/// Trait representing a node with a fixed size N.
+/// This trait provides methods for inserting, deleting, and finding key-value pairs in the node.
 pub trait Node<const N: usize> {
+    /// Inserts a key-value pair into the node.
+    ///
+    /// # Parameters
+    /// - `key`: The key to insert.
+    /// - `value`: The value associated with the key.
+    /// - `storage`: The storage to use for persisting nodes.
+    /// - `parent_hash`: An optional hash of the parent node.
     fn insert<S: NodeStorage<N>>(
         &mut self,
         key: Vec<u8>,
@@ -35,12 +44,31 @@ pub trait Node<const N: usize> {
         storage: &mut S,
         parent_hash: Option<&ValueDigest<N>>,
     );
+
+    /// Deletes a key-value pair from the node.
+    ///
+    /// # Parameters
+    /// - `key`: The key to delete.
+    /// - `storage`: The storage to use for persisting nodes.
+    /// - `parent_hash`: An optional hash of the parent node.
+    ///
+    /// # Returns
+    /// - `true` if the key was successfully deleted, `false` otherwise.
     fn delete<S: NodeStorage<N>>(
         &mut self,
         key: &[u8],
         storage: &mut S,
         parent_hash: Option<&ValueDigest<N>>,
     ) -> bool;
+
+    /// Finds a key-value pair in the node.
+    ///
+    /// # Parameters
+    /// - `key`: The key to find.
+    /// - `storage`: The storage to use for persisting nodes.
+    ///
+    /// # Returns
+    /// - `Some(ProllyNode<N>)` if the key was found, `None` otherwise.
     fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<ProllyNode<N>>;
 }
 
@@ -177,6 +205,9 @@ impl<const N: usize> ProllyNode<N> {
         ProllyNodeBuilder::default()
     }
 
+    /// Collects all the leaf nodes from the current node and its descendants.
+    /// If the current node is a leaf, it adds itself to the `leaf_nodes` vector.
+    /// Otherwise, it recursively collects leaf nodes from its child nodes.
     fn collect_leaf_nodes<S: NodeStorage<N>>(
         &self,
         leaf_nodes: &mut Vec<ProllyNode<N>>,
@@ -195,7 +226,10 @@ impl<const N: usize> ProllyNode<N> {
         }
     }
 
-    fn sort_and_split_and_persist<S: NodeStorage<N>>(&mut self, storage: &mut S) {
+    /// Attempts to split the current node into multiple smaller nodes if necessary.
+    /// The splitting is based on the content chunks determined by the `chunk_content` method.
+    /// If the current node is the root and needs to be split, a new root node is created.
+    fn try_split<S: NodeStorage<N>>(&mut self, storage: &mut S) {
         // Sort the keys and values in the node before splitting
         // Only sort the last key-value pair because the rest are already sorted
         if let (Some(last_key), Some(last_value)) = (self.keys.pop(), self.values.pop()) {
@@ -269,7 +303,11 @@ impl<const N: usize> ProllyNode<N> {
         }
     }
 
-    fn rebalance<S: NodeStorage<N>>(
+    /// Attempts to merge the current node with its siblings or the next right neighbor if possible.
+    /// If chunks are valid and there is more than one chunk, the current node will be split into multiple smaller nodes.
+    /// If the current node is the root and needs to be split, a new root node is created.
+    /// If merging is necessary, it attempts to merge with the next right neighbor.
+    fn try_merge<S: NodeStorage<N>>(
         &mut self,
         storage: &mut S,
         parent_hash: Option<&ValueDigest<N>>,
@@ -521,7 +559,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             }
 
             // Sort the keys and values and split the node if necessary
-            self.sort_and_split_and_persist(storage);
+            self.try_split(storage);
         } else {
             // The node is an internal (non-leaf) node, so find the child node to insert the key-value pair
 
@@ -568,7 +606,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             }
 
             // Sort the keys and values and split the node if necessary
-            self.sort_and_split_and_persist(storage);
+            self.try_split(storage);
         }
     }
 
@@ -594,7 +632,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 storage.insert_node(current_node_hash.clone(), self.clone());
 
                 // Rebalance if necessary
-                self.rebalance(storage, parent_hash);
+                self.try_merge(storage, parent_hash);
 
                 true
             } else {
@@ -650,7 +688,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                     storage.insert_node(current_node_hash.clone(), self.clone());
 
                     // Check if the parent node needs rebalancing
-                    self.rebalance(storage, parent_hash);
+                    self.try_merge(storage, parent_hash);
 
                     true
                 } else {

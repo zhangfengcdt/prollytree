@@ -15,20 +15,99 @@ use crate::digest::ValueDigest;
 use crate::node::{Node, ProllyNode};
 use crate::storage::NodeStorage;
 
+/// Trait representing a Prolly tree with a fixed size N and a node storage S.
+/// This trait provides methods for creating, modifying, and querying the tree.
 pub trait Tree<const N: usize, S: NodeStorage<N>> {
+    /// Creates a new Prolly tree with the specified root node and storage.
+    ///
+    /// # Parameters
+    /// - `root`: The root node of the tree.
+    /// - `storage`: The storage to use for persisting nodes.
+    ///
+    /// # Returns
+    /// - A new instance of the tree.
     fn new(root: ProllyNode<N>, storage: S) -> Self;
+
+    /// Inserts a key-value pair into the tree.
+    ///
+    /// # Parameters
+    /// - `key`: The key to insert.
+    /// - `value`: The value associated with the key.
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>);
+
+    /// Updates the value associated with the specified key in the tree.
+    ///
+    /// # Parameters
+    /// - `key`: The key to update.
+    /// - `value`: The new value to associate with the key.
+    ///
+    /// # Returns
+    /// - `true` if the key was found and updated, `false` otherwise.
     fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool;
+
+    /// Deletes the key-value pair associated with the specified key from the tree.
+    ///
+    /// # Parameters
+    /// - `key`: The key to delete.
+    ///
+    /// # Returns
+    /// - `true` if the key was found and deleted, `false` otherwise.
     fn delete(&mut self, key: &[u8]) -> bool;
+
+    /// Finds the node associated with the specified key in the tree.
+    ///
+    /// # Parameters
+    /// - `key`: The key to find.
+    ///
+    /// # Returns
+    /// - `Some(ProllyNode<N>)` if the key was found, `None` otherwise.
     fn find(&self, key: &[u8]) -> Option<ProllyNode<N>>;
+
+    /// Traverses the tree and returns a string representation of its structure.
+    ///
+    /// # Returns
+    /// - A string representation of the tree structure.
     fn traverse(&self) -> String;
+
+    /// Traverses the tree and returns a formatted string representation using the provided formatter function.
+    ///
+    /// # Parameters
+    /// - `formatter`: A function to format each node.
+    ///
+    /// # Returns
+    /// - A formatted string representation of the tree structure.
     fn formatted_traverse<F>(&self, formatter: F) -> String
     where
         F: Fn(&ProllyNode<N>) -> String;
+
+    /// Gets the hash of the root node of the tree.
+    ///
+    /// # Returns
+    /// - `Some(ValueDigest<N>)` if the root node exists, `None` otherwise.
     fn get_root_hash(&self) -> Option<ValueDigest<N>>;
+
+    /// Gets the number of nodes in the tree.
+    ///
+    /// # Returns
+    /// - The number of nodes in the tree.
     fn size(&self) -> usize;
+
+    /// Gets the depth of the tree.
+    ///
+    /// # Returns
+    /// - The depth of the tree.
     fn depth(&self) -> usize;
+
+    /// Provides a summary of the tree structure and contents.
+    ///
+    /// # Returns
+    /// - A summary of the tree.
     fn summary(&self) -> String;
+
+    /// Provides various statistics about the tree.
+    ///
+    /// # Returns
+    /// - A `TreeStats` object containing statistics about the tree.
     fn stats(&self) -> TreeStats;
 }
 
