@@ -11,6 +11,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+use crate::config::TreeConfig;
 use crate::digest::ValueDigest;
 use crate::node::{Node, ProllyNode};
 use crate::storage::NodeStorage;
@@ -21,12 +22,12 @@ pub trait Tree<const N: usize, S: NodeStorage<N>> {
     /// Creates a new Prolly tree with the specified root node and storage.
     ///
     /// # Parameters
-    /// - `root`: The root node of the tree.
     /// - `storage`: The storage to use for persisting nodes.
+    /// - `config`: The configuration for the tree.
     ///
     /// # Returns
     /// - A new instance of the tree.
-    fn new(root: ProllyNode<N>, storage: S) -> Self;
+    fn new(storage: S, config: TreeConfig<N>) -> Self;
 
     /// Inserts a key-value pair into the tree.
     ///
@@ -109,6 +110,18 @@ pub trait Tree<const N: usize, S: NodeStorage<N>> {
     /// # Returns
     /// - A `TreeStats` object containing statistics about the tree.
     fn stats(&self) -> TreeStats;
+
+    /// Loads the configuration for the tree from storage.
+    ///
+    /// # Parameters
+    /// - `storage`: The storage to load the configuration from.
+    fn load_config(storage: &S) -> Result<TreeConfig<N>, &'static str>;
+
+    /// Saves the configuration for the tree to storage.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the configuration was saved successfully, `Err(&'static str)` otherwise.
+    fn save_config(&self) -> Result<(), &'static str>;
 }
 
 pub struct TreeStats {
@@ -145,14 +158,34 @@ impl Default for TreeStats {
 
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
     root: ProllyNode<N>,
+    root_hash: Option<ValueDigest<N>>,
     storage: S,
+    config: TreeConfig<N>,
 }
 
 impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
-    fn new(root: ProllyNode<N>, storage: S) -> Self {
-        ProllyTree { root, storage }
+    fn new(storage: S, config: TreeConfig<N>) -> Self {
+        let root = ProllyNode {
+            keys: Vec::new(),
+            values: Vec::new(),
+            is_leaf: true,
+            level: 0,
+            base: config.base,
+            modulus: config.modulus,
+            min_chunk_size: config.min_chunk_size,
+            max_chunk_size: config.max_chunk_size,
+            pattern: config.pattern,
+        };
+        let root_hash = Some(root.get_hash());
+        let mut tree = ProllyTree {
+            root,
+            root_hash: root_hash.clone(),
+            storage,
+            config,
+        };
+        tree.config.root_hash = root_hash;
+        tree
     }
-
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
         self.root.insert(key, value, &mut self.storage, None);
     }
@@ -204,6 +237,26 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     fn stats(&self) -> TreeStats {
         todo!()
     }
+
+    fn load_config(storage: &S) -> Result<TreeConfig<N>, &'static str> {
+        // Implement the logic to load the configuration from storage
+        // Here we assume the config is stored with a specific key "tree_config"
+        if let Some(config_data) = storage.get_config("tree_config") {
+            let config: TreeConfig<N> =
+                serde_json::from_slice(&config_data).map_err(|_| "Failed to deserialize config")?;
+            Ok(config)
+        } else {
+            Err("Config not found")
+        }
+    }
+
+    fn save_config(&self) -> Result<(), &'static str> {
+        let mut config = self.config.clone();
+        config.root_hash.clone_from(&self.root_hash);
+        let config_data = serde_json::to_vec(&config).map_err(|_| "Failed to serialize config")?;
+        self.storage.save_config("tree_config", &config_data);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -215,8 +268,7 @@ mod tests {
     fn test_insert_and_find() {
         let storage = InMemoryNodeStorage::<32>::new();
 
-        let root = ProllyNode::default();
-        let mut tree = ProllyTree::new(root, storage);
+        let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
         tree.insert(b"key1".to_vec(), b"value1".to_vec());
         tree.insert(b"key2".to_vec(), b"value2".to_vec());
@@ -229,8 +281,7 @@ mod tests {
     #[test]
     fn test_delete() {
         let storage = InMemoryNodeStorage::<32>::new();
-        let root = ProllyNode::default();
-        let mut tree = ProllyTree::new(root, storage);
+        let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
         tree.insert(b"key1".to_vec(), b"value1".to_vec());
         tree.insert(b"key2".to_vec(), b"value2".to_vec());
@@ -243,8 +294,7 @@ mod tests {
     #[test]
     fn test_traverse() {
         let storage = InMemoryNodeStorage::<32>::new();
-        let root = ProllyNode::default();
-        let mut tree = ProllyTree::new(root, storage);
+        let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
         let key1 = b"key1".to_vec();
         let key2 = b"key2".to_vec();

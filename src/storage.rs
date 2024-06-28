@@ -53,6 +53,9 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
     ///
     /// * `hash` - A reference to the `ValueDigest` representing the hash of the node to delete.
     fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()>;
+
+    fn save_config(&self, key: &str, config: &[u8]);
+    fn get_config(&self, key: &str) -> Option<Vec<u8>>;
 }
 
 /// An implementation of `NodeStorage` that stores nodes in a HashMap.
@@ -62,6 +65,7 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
 /// - `N`: The size of the value digest.
 pub struct InMemoryNodeStorage<const N: usize> {
     map: HashMap<ValueDigest<N>, ProllyNode<N>>,
+    configs: HashMap<String, Vec<u8>>,
 }
 
 impl<const N: usize> Default for InMemoryNodeStorage<N> {
@@ -75,6 +79,7 @@ impl<const N: usize> InMemoryNodeStorage<N> {
     pub fn new() -> Self {
         InMemoryNodeStorage {
             map: HashMap::new(),
+            configs: HashMap::new(),
         }
     }
 }
@@ -92,5 +97,14 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
         self.map.remove(hash);
         Some(())
+    }
+
+    fn save_config(&self, key: &str, config: &[u8]) {
+        let mut configs = self.configs.clone();
+        configs.insert(key.to_string(), config.to_vec());
+    }
+
+    fn get_config(&self, key: &str) -> Option<Vec<u8>> {
+        self.configs.get(key).cloned()
     }
 }
