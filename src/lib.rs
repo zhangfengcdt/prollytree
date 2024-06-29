@@ -47,6 +47,7 @@ pub mod digest;
 pub mod config;
 pub mod errors;
 pub mod node;
+pub mod proof;
 pub mod storage;
 mod tracing;
 pub mod tree;

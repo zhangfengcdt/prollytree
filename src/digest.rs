@@ -88,6 +88,13 @@ impl<const N: usize> ValueDigest<N> {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
+
+    pub fn combine(lhs: &Self, rhs: &Self) -> Self {
+        let mut combined_data = vec![];
+        combined_data.extend_from_slice(&lhs.0);
+        combined_data.extend_from_slice(&rhs.0);
+        Self::new(&combined_data)
+    }
 }
 
 // Implement Default trait for ValueDigest
