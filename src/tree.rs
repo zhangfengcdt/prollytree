@@ -191,7 +191,6 @@ impl Default for TreeStats {
 
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
     root: ProllyNode<N>,
-    root_hash: Option<ValueDigest<N>>,
     storage: S,
     config: TreeConfig<N>,
 }
@@ -212,7 +211,6 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         let root_hash = Some(root.get_hash());
         let mut tree = ProllyTree {
             root,
-            root_hash: root_hash.clone(),
             storage,
             config,
         };
@@ -252,23 +250,97 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn get_root_hash(&self) -> Option<ValueDigest<N>> {
-        todo!()
+        Option::from(self.root.get_hash())
     }
 
     fn size(&self) -> usize {
-        todo!()
-    }
+        fn count_nodes<const N: usize, S: NodeStorage<N>>(
+            node: &ProllyNode<N>,
+            storage: &S,
+        ) -> usize {
+            if node.is_leaf {
+                1
+            } else {
+                let mut count = 1;
+                for value in &node.values {
+                    if let Some(child_node) =
+                        storage.get_node_by_hash(&ValueDigest::raw_hash(value))
+                    {
+                        count += count_nodes(&child_node, storage);
+                    }
+                }
+                count
+            }
+        }
 
+        count_nodes(&self.root, &self.storage)
+    }
     fn depth(&self) -> usize {
-        todo!()
+        fn node_depth<const N: usize, S: NodeStorage<N>>(
+            node: &ProllyNode<N>,
+            storage: &S,
+        ) -> usize {
+            if node.is_leaf {
+                1
+            } else {
+                let mut max_depth = 0;
+                for value in &node.values {
+                    if let Some(child_node) =
+                        storage.get_node_by_hash(&ValueDigest::raw_hash(value))
+                    {
+                        let depth = node_depth(&child_node, storage);
+                        if depth > max_depth {
+                            max_depth = depth;
+                        }
+                    }
+                }
+                max_depth + 1
+            }
+        }
+
+        node_depth(&self.root, &self.storage)
     }
 
     fn summary(&self) -> String {
-        todo!()
+        let stats = self.stats();
+        format!(
+            "Tree Summary:\n- Number of Nodes: {}\n- Number of Leaves: {}\n- Number of Internal Nodes: {}\n- Max Depth: {}\n- Average Node Size: {:.2}",
+            stats.num_nodes, stats.num_leaves, stats.num_internal_nodes, stats.max_depth, stats.avg_node_size
+        )
     }
 
     fn stats(&self) -> TreeStats {
-        todo!()
+        fn collect_stats<const N: usize, S: NodeStorage<N>>(
+            node: &ProllyNode<N>,
+            storage: &S,
+            level: usize,
+            stats: &mut TreeStats,
+        ) {
+            stats.num_nodes += 1;
+            if node.is_leaf {
+                stats.num_leaves += 1;
+            } else {
+                stats.num_internal_nodes += 1;
+                for value in &node.values {
+                    if let Some(child_node) =
+                        storage.get_node_by_hash(&ValueDigest::raw_hash(value))
+                    {
+                        collect_stats(&child_node, storage, level + 1, stats);
+                    }
+                }
+            }
+            if level > stats.max_depth {
+                stats.max_depth = level;
+            }
+        }
+
+        let mut stats = TreeStats::new();
+        collect_stats(&self.root, &self.storage, 1, &mut stats);
+        if stats.num_nodes > 0 {
+            stats.avg_node_size =
+                stats.num_nodes as f64 / (stats.num_leaves + stats.num_internal_nodes) as f64;
+        }
+        stats
     }
 
     fn load_config(storage: &S) -> Result<TreeConfig<N>, &'static str> {
@@ -285,7 +357,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
     fn save_config(&self) -> Result<(), &'static str> {
         let mut config = self.config.clone();
-        config.root_hash.clone_from(&self.root_hash);
+        config.root_hash = Option::from(self.root.get_hash());
         let config_data = serde_json::to_vec(&config).map_err(|_| "Failed to serialize config")?;
         self.storage.save_config("tree_config", &config_data);
         Ok(())
