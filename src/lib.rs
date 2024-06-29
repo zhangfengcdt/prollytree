@@ -45,8 +45,10 @@ limitations under the License.
 #[macro_use]
 pub mod digest;
 pub mod config;
+mod diff;
 pub mod errors;
 pub mod node;
+pub mod proof;
 pub mod storage;
 mod tracing;
 pub mod tree;
