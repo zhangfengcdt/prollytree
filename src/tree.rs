@@ -161,11 +161,8 @@ pub struct TreeStats {
     pub num_nodes: usize,
     pub num_leaves: usize,
     pub num_internal_nodes: usize,
-    pub max_depth: usize,
     pub avg_node_size: f64,
-    pub std_node_size: f64,
-    pub min_node_size: f64,
-    pub max_node_size: f64,
+    pub total_key_value_pairs: usize,
 }
 
 impl TreeStats {
@@ -174,11 +171,8 @@ impl TreeStats {
             num_nodes: 0,
             num_leaves: 0,
             num_internal_nodes: 0,
-            max_depth: 0,
             avg_node_size: 0.0,
-            std_node_size: 0.0,
-            min_node_size: 0.0,
-            max_node_size: 0.0,
+            total_key_value_pairs: 0,
         }
     }
 }
@@ -254,58 +248,41 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn size(&self) -> usize {
-        fn count_nodes<const N: usize, S: NodeStorage<N>>(
+        fn count_pairs<const N: usize, S: NodeStorage<N>>(
             node: &ProllyNode<N>,
             storage: &S,
         ) -> usize {
             if node.is_leaf {
-                1
+                node.keys.len()
             } else {
-                let mut count = 1;
+                let mut count = 0;
                 for value in &node.values {
                     if let Some(child_node) =
                         storage.get_node_by_hash(&ValueDigest::raw_hash(value))
                     {
-                        count += count_nodes(&child_node, storage);
+                        count += count_pairs(&child_node, storage);
                     }
                 }
                 count
             }
         }
 
-        count_nodes(&self.root, &self.storage)
+        count_pairs(&self.root, &self.storage)
     }
-    fn depth(&self) -> usize {
-        fn node_depth<const N: usize, S: NodeStorage<N>>(
-            node: &ProllyNode<N>,
-            storage: &S,
-        ) -> usize {
-            if node.is_leaf {
-                1
-            } else {
-                let mut max_depth = 0;
-                for value in &node.values {
-                    if let Some(child_node) =
-                        storage.get_node_by_hash(&ValueDigest::raw_hash(value))
-                    {
-                        let depth = node_depth(&child_node, storage);
-                        if depth > max_depth {
-                            max_depth = depth;
-                        }
-                    }
-                }
-                max_depth + 1
-            }
-        }
 
-        node_depth(&self.root, &self.storage)
+    fn depth(&self) -> usize {
+        (self.root.level as usize) + 1
     }
 
     fn summary(&self) -> String {
         let stats = self.stats();
         format!(
-            "Tree Summary:\n- Number of Nodes: {}\n- Number of Leaves: {}\n- Number of Internal Nodes: {}\n- Max Depth: {}\n- Average Node Size: {:.2}",
-            stats.num_nodes, stats.num_leaves, stats.num_internal_nodes, stats.max_depth, stats.avg_node_size
+            "Tree Summary:\n- Number of Key-Value Pairs: {}\n- Number of Nodes: {}\n- Number of Leaves: {}\n- Number of Internal Nodes: {}\n- Average Leaf Node Size: {:.2}",
+            self.size(),
+            stats.num_nodes,
+            stats.num_leaves,
+            stats.num_internal_nodes,
+            stats.avg_node_size
         )
     }
 
@@ -313,32 +290,28 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         fn collect_stats<const N: usize, S: NodeStorage<N>>(
             node: &ProllyNode<N>,
             storage: &S,
-            level: usize,
             stats: &mut TreeStats,
         ) {
             stats.num_nodes += 1;
             if node.is_leaf {
                 stats.num_leaves += 1;
+                stats.total_key_value_pairs += node.keys.len();
             } else {
                 stats.num_internal_nodes += 1;
                 for value in &node.values {
                     if let Some(child_node) =
                         storage.get_node_by_hash(&ValueDigest::raw_hash(value))
                     {
-                        collect_stats(&child_node, storage, level + 1, stats);
+                        collect_stats(&child_node, storage, stats);
                     }
                 }
-            }
-            if level > stats.max_depth {
-                stats.max_depth = level;
             }
         }
 
         let mut stats = TreeStats::new();
-        collect_stats(&self.root, &self.storage, 1, &mut stats);
-        if stats.num_nodes > 0 {
-            stats.avg_node_size =
-                stats.num_nodes as f64 / (stats.num_leaves + stats.num_internal_nodes) as f64;
+        collect_stats(&self.root, &self.storage, &mut stats);
+        if stats.num_leaves > 0 {
+            stats.avg_node_size = stats.total_key_value_pairs as f64 / stats.num_leaves as f64;
         }
         stats
     }
@@ -521,6 +494,55 @@ mod tests {
         // Check if the traversal contains the expected keys
         assert!(traversal.contains(&expected_key1.to_string()));
         assert!(traversal.contains(&expected_key2.to_string()));
+    }
+
+    #[test]
+    fn test_all() {
+        let storage = InMemoryNodeStorage::<32>::new();
+        let config = TreeConfig {
+            base: 131,
+            modulus: 1_000_000_009,
+            min_chunk_size: 4,
+            max_chunk_size: 8 * 1024,
+            pattern: 0b101,
+            root_hash: None,
+        };
+
+        let mut tree = ProllyTree::new(storage, config);
+
+        // Insert key-value pairs using a loop
+        for i in 0..50 {
+            tree.insert(vec![i], vec![i]);
+            let traversal = tree.formatted_traverse(|node| {
+                if !node.is_leaf {
+                    format!("[L{}:{:?}]", node.level, node.keys)
+                } else {
+                    String::new()
+                }
+            });
+            println!("Traversal #{}: {}", i, traversal);
+        }
+
+        // for i in 0..100 {
+        //     assert!(tree.find(&[i]).is_some());
+        // }
+        // assert!(tree.find(&[110]).is_none());
+
+        // //assert that the tree has 100 key-value pairs
+        // assert_eq!(tree.size(), 100);
+        //
+        // // assert that the tree has a depth of 2
+        // assert_eq!(tree.depth(), 2);
+        //
+        // println!("Size: {}", tree.size());
+        // println!("Depth: {}", tree.depth());
+        // println!("Summary: {}", tree.summary());
+        //
+        // println!("Traversal: {}", tree.traverse());
+        //
+        // assert!(tree.find(&[1]).is_some());
+        // assert!(tree.find(&[2]).is_some());
+        // assert!(tree.find(&[110]).is_none());
     }
 
     #[test]
