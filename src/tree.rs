@@ -387,11 +387,11 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
             }
         }
 
-        while let Some((old_key, old_value)) = old_iter.next() {
+        for (old_key, old_value) in old_iter {
             diffs.push(DiffResult::Removed(old_key.clone(), old_value.clone()));
         }
 
-        while let Some((new_key, new_value)) = new_iter.next() {
+        for (new_key, new_value) in new_iter {
             diffs.push(DiffResult::Added(new_key.clone(), new_value.clone()));
         }
     }
