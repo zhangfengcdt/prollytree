@@ -13,6 +13,7 @@ limitations under the License.
 */
 
 use crate::config::TreeConfig;
+use crate::diff::DiffResult;
 use crate::digest::ValueDigest;
 use crate::node::{Node, ProllyNode};
 use crate::proof::Proof;
@@ -125,7 +126,35 @@ pub trait Tree<const N: usize, S: NodeStorage<N>> {
     /// - `Ok(())` if the configuration was saved successfully, `Err(&'static str)` otherwise.
     fn save_config(&self) -> Result<(), &'static str>;
 
+    /// Generates a proof of existence for a given key in the tree.
+    ///
+    /// This function traverses the tree from the root to the target node containing the key,
+    /// collecting the hashes of all nodes along the path. The proof can be used to verify the
+    /// existence of the key and its associated value without revealing other data in the tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key for which to generate the proof.
+    ///
+    /// # Returns
+    ///
+    /// A `Proof` struct containing the path of hashes and the hash of the target node (if the key exists).
     fn generate_proof(&self, key: &[u8]) -> Proof<N>;
+
+    /// Computes the differences between two Prolly Trees.
+    ///
+    /// This function compares the current tree (`self`) with another tree (`other`)
+    /// and identifies the differences between them. It traverses both trees and
+    /// generates a list of changes, including added, removed, and modified key-value pairs.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The other Prolly Tree to compare against.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `DiffResult` containing the differences between the two trees.
+    fn diff(&self, other: &Self) -> Vec<DiffResult>;
 }
 
 pub struct TreeStats {
@@ -300,6 +329,70 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
                     };
                 }
             }
+        }
+    }
+
+    fn diff(&self, other: &Self) -> Vec<DiffResult> {
+        let mut diffs = Vec::new();
+        self.diff_recursive(&self.root, &other.root, &mut diffs);
+        diffs
+    }
+}
+
+impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
+    /// Recursively computes the differences between two Prolly Nodes.
+    ///
+    /// This helper function is used by `diff` to traverse the nodes of both trees
+    /// and identify changes. It compares the keys and values of the nodes and
+    /// generates appropriate `DiffResult` entries for added, removed, and modified
+    /// key-value pairs.
+    ///
+    /// # Arguments
+    ///
+    /// * `old_node` - The node from the original tree.
+    /// * `new_node` - The node from the new tree.
+    /// * `diffs` - The vector to store the differences.
+    fn diff_recursive(
+        &self,
+        old_node: &ProllyNode<N>,
+        new_node: &ProllyNode<N>,
+        diffs: &mut Vec<DiffResult>,
+    ) {
+        let mut old_iter = old_node.keys.iter().zip(old_node.values.iter()).peekable();
+        let mut new_iter = new_node.keys.iter().zip(new_node.values.iter()).peekable();
+
+        while let (Some((old_key, old_value)), Some((new_key, new_value))) =
+            (old_iter.peek(), new_iter.peek())
+        {
+            match old_key.cmp(new_key) {
+                std::cmp::Ordering::Less => {
+                    diffs.push(DiffResult::Removed(old_key.to_vec(), old_value.to_vec()));
+                    old_iter.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    diffs.push(DiffResult::Added(new_key.to_vec(), new_value.to_vec()));
+                    new_iter.next();
+                }
+                std::cmp::Ordering::Equal => {
+                    if old_value != new_value {
+                        diffs.push(DiffResult::Modified(
+                            old_key.to_vec(),
+                            old_value.to_vec(),
+                            new_value.to_vec(),
+                        ));
+                    }
+                    old_iter.next();
+                    new_iter.next();
+                }
+            }
+        }
+
+        while let Some((old_key, old_value)) = old_iter.next() {
+            diffs.push(DiffResult::Removed(old_key.clone(), old_value.clone()));
+        }
+
+        while let Some((new_key, new_value)) = new_iter.next() {
+            diffs.push(DiffResult::Added(new_key.clone(), new_value.clone()));
         }
     }
 }
