@@ -212,7 +212,7 @@ impl<const N: usize> ProllyNode<N> {
     /// The splitting is based on the content chunks determined by the `chunk_content` method.
     /// If the current node is the root and needs to be split, a new root node is created.
     /// Returns `true` if the node was split, `false` otherwise.
-    fn try_split<S: NodeStorage<N>>(&mut self, storage: &mut S, is_root_node:bool) {
+    fn try_split<S: NodeStorage<N>>(&mut self, storage: &mut S, is_root_node: bool) {
         // Sort the keys and values in the node before splitting
         // Only sort the last key-value pair because the rest are already sorted
         if let (Some(last_key), Some(last_value)) = (self.keys.pop(), self.values.pop()) {
@@ -283,6 +283,7 @@ impl<const N: usize> ProllyNode<N> {
                 self.values.push(sibling_hash.as_bytes().to_vec());
             }
             self.is_leaf = false;
+            self.promoted = true;
 
             // Persist the current node
             let current_node_hash = self.get_hash();
@@ -567,9 +568,9 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             if let Some(mut child_node) =
                 storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
             {
-                // if key == vec![51] {
-                //     println!("Inserting key: {:?}, value: {:?}", key, value);
-                // }
+                if key == vec![51] {
+                    println!("Inserting key: {:?}, value: {:?}", key, value);
+                }
 
                 // Insert the key-value pair into the child node retrieved from the storage
                 child_node.insert(key.clone(), value.clone(), storage, Some(&self.get_hash()));
@@ -578,13 +579,19 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 let new_node_hash = child_node.get_hash().as_bytes().to_vec();
                 storage.insert_node(child_node.get_hash(), child_node.clone());
 
-                // Check if the child node has been split and needs to be updated in the current node
-                if !child_node.is_leaf && child_node.keys.len() > 1 {
+                // Check if the child node has been promoted and needs to be updated in the current node
+                //if !child_node.is_leaf && child_node.keys.len() > 1 {
+                if child_node.promoted {
                     // Move the key-value pairs from the child node to the current node at position `i`
                     self.keys.remove(i);
                     self.values.remove(i);
 
-                    for (j, (key, value)) in child_node.keys.into_iter().zip(child_node.values).enumerate() {
+                    for (j, (key, value)) in child_node
+                        .keys
+                        .into_iter()
+                        .zip(child_node.values)
+                        .enumerate()
+                    {
                         self.keys.insert(i + j, key);
                         self.values.insert(i + j, value);
                     }

@@ -513,41 +513,33 @@ mod tests {
         let mut tree = ProllyTree::new(storage, config);
 
         // Insert key-value pairs using a loop
-        for i in 0..10 {
+        for i in 0..100 {
             tree.insert(vec![i], vec![i]);
             if true {
                 let traversal = tree.formatted_traverse(|node| {
+                    if i == 99 {
+                        println!("Node: {:?}", node);
+                    }
                     format!("[L{}:{:?}]\n", node.level, node.keys)
-                    // if node.is_leaf {
-                    //     format!("[L{}:{:?}]", node.level, node.keys)
-                    // } else {
-                    //     "".to_string()
-                    // }
                 });
                 println!("Traversal #{}:\n{}", i, traversal);
             }
         }
 
-        // for i in 0..100 {
-        //     assert!(tree.find(&[i]).is_some());
-        // }
-        // assert!(tree.find(&[110]).is_none());
+        for i in 0..100 {
+            assert!(tree.find(&[i]).is_some());
+        }
+        assert!(tree.find(&[110]).is_none());
 
-        // //assert that the tree has 100 key-value pairs
-        // assert_eq!(tree.size(), 100);
-        //
-        // // assert that the tree has a depth of 2
-        // assert_eq!(tree.depth(), 2);
-        //
-        // println!("Size: {}", tree.size());
-        // println!("Depth: {}", tree.depth());
-        // println!("Summary: {}", tree.summary());
-        //
-        // println!("Traversal: {}", tree.traverse());
-        //
-        // assert!(tree.find(&[1]).is_some());
-        // assert!(tree.find(&[2]).is_some());
-        // assert!(tree.find(&[110]).is_none());
+        //assert that the tree has 100 key-value pairs
+        assert_eq!(tree.size(), 100);
+
+        // assert that the tree has a depth of 2
+        assert_eq!(tree.depth(), 3);
+
+        println!("Size: {}", tree.size());
+        println!("Depth: {}", tree.depth());
+        println!("Summary: {}", tree.summary());
     }
 
     #[test]
