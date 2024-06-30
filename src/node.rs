@@ -538,7 +538,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         parent_hash: Option<&ValueDigest<N>>,
     ) {
         // set is root node based on parent hash
-        let is_root_node = parent_hash == None;
+        let is_root_node = parent_hash.is_none();
 
         if self.is_leaf {
             // Check if the key already exists in the node
