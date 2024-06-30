@@ -504,35 +504,35 @@ mod tests {
         let config = TreeConfig {
             base: 131,
             modulus: 1_000_000_009,
-            min_chunk_size: 4,
+            min_chunk_size: 16,
             max_chunk_size: 8 * 1024,
-            pattern: 0b101,
+            pattern: 0b111,
             root_hash: None,
         };
 
         let mut tree = ProllyTree::new(storage, config);
 
         // Insert key-value pairs using a loop
-        for i in 0..100 {
-            tree.insert(vec![i], vec![i]);
-            let traversal = tree.formatted_traverse(|node| {
-                if i == 99 {
-                    println!("Node: {:?}", node);
-                }
-                format!("[L{}:{:?}]\n", node.level, node.keys)
-            });
-            println!("Traversal #{}:\n{}", i, traversal);
+        let max_key = 3000u32;
+
+        for i in 0..max_key {
+            // Convert to big-endian byte array to maintain order
+            let key = i.to_be_bytes().to_vec();
+            let value = i.to_be_bytes().to_vec();
+            tree.insert(key.clone(), value.clone());
         }
 
-        for i in 0..100 {
-            assert!(tree.find(&[i]).is_some());
+        for i in 0..max_key {
+            let key = i.to_be_bytes().to_vec();
+            assert!(tree.find(&key).is_some());
         }
-        assert!(tree.find(&[110]).is_none());
+        let non_existing_key = (max_key + 10).to_be_bytes().to_vec();
+        assert!(tree.find(&non_existing_key).is_none());
 
-        //assert that the tree has 100 key-value pairs
-        assert_eq!(tree.size(), 100);
+        // assert that the tree has the expected key-value pairs
+        assert_eq!(tree.size(), max_key as usize);
 
-        // assert that the tree has a depth of 2
+        // assert that the tree has the expected depth
         assert_eq!(tree.depth(), 3);
 
         println!("Size: {}", tree.size());
