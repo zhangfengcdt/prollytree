@@ -19,7 +19,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use twox_hash::XxHash64;
 
-const ROOT_LEVEL: u8 = 0;
+const INIT_LEVEL: u8 = 0;
 const HASH_SEED: u64 = 0;
 const DEFAULT_BASE: u64 = 257;
 const DEFAULT_MOD: u64 = 1_000_000_007;
@@ -119,7 +119,7 @@ impl<const N: usize> Default for ProllyNodeBuilder<N> {
             keys: Vec::new(),
             values: Vec::new(),
             is_leaf: true,
-            level: ROOT_LEVEL,
+            level: INIT_LEVEL,
             base: DEFAULT_BASE,
             modulus: DEFAULT_MOD,
             min_chunk_size: DEFAULT_MIN_CHUNK_SIZE,
@@ -196,7 +196,7 @@ impl<const N: usize> ProllyNode<N> {
             keys: vec![key],
             values: vec![value],
             is_leaf: true,
-            level: ROOT_LEVEL,
+            level: INIT_LEVEL,
             ..Default::default()
         }
     }
@@ -205,31 +205,11 @@ impl<const N: usize> ProllyNode<N> {
         ProllyNodeBuilder::default()
     }
 
-    /// Collects all the leaf nodes from the current node and its descendants.
-    /// If the current node is a leaf, it adds itself to the `leaf_nodes` vector.
-    /// Otherwise, it recursively collects leaf nodes from its child nodes.
-    fn collect_leaf_nodes<S: NodeStorage<N>>(
-        &self,
-        leaf_nodes: &mut Vec<ProllyNode<N>>,
-        storage: &S,
-    ) {
-        if self.is_leaf {
-            leaf_nodes.push(self.clone());
-        } else {
-            for child_hash in &self.values {
-                if let Some(child_node) =
-                    storage.get_node_by_hash(&ValueDigest::raw_hash(child_hash))
-                {
-                    child_node.collect_leaf_nodes(leaf_nodes, storage);
-                }
-            }
-        }
-    }
-
     /// Attempts to split the current node into multiple smaller nodes if necessary.
     /// The splitting is based on the content chunks determined by the `chunk_content` method.
     /// If the current node is the root and needs to be split, a new root node is created.
-    fn try_split<S: NodeStorage<N>>(&mut self, storage: &mut S) {
+    /// Returns `true` if the node was split, `false` otherwise.
+    fn try_split<S: NodeStorage<N>>(&mut self, storage: &mut S, is_root_node:bool) {
         // Sort the keys and values in the node before splitting
         // Only sort the last key-value pair because the rest are already sorted
         if let (Some(last_key), Some(last_value)) = (self.keys.pop(), self.values.pop()) {
@@ -241,7 +221,6 @@ impl<const N: usize> ProllyNode<N> {
         // Use chunk_content to determine split points
         let chunks = self.chunk_content();
         if chunks.len() <= 1 {
-            return;
         }
 
         let mut siblings = Vec::new();
@@ -265,8 +244,9 @@ impl<const N: usize> ProllyNode<N> {
             siblings.push((sibling, sibling_hash));
         }
 
-        // If the current node is the root, create a new root
-        if self.level == ROOT_LEVEL {
+        // If the current node is the only node in this level
+        // we need to create a new root at the next level
+        if is_root_node {
             // Save the current root node to storage and get its hash
             let original_root_hash = self.get_hash();
             storage.insert_node(original_root_hash.clone(), self.clone());
@@ -296,6 +276,7 @@ impl<const N: usize> ProllyNode<N> {
                 self.keys.push(sibling.keys[0].clone());
                 self.values.push(sibling_hash.as_bytes().to_vec());
             }
+            self.is_leaf = false;
 
             // Persist the current node
             let current_node_hash = self.get_hash();
@@ -339,7 +320,7 @@ impl<const N: usize> ProllyNode<N> {
             }
 
             // If the current node is the root, create a new root
-            if self.level == ROOT_LEVEL {
+            if self.level == INIT_LEVEL {
                 // Save the current root node to storage and get its hash
                 let original_root_hash = self.get_hash();
                 storage.insert_node(original_root_hash.clone(), self.clone());
@@ -545,8 +526,11 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         key: Vec<u8>,
         value: Vec<u8>,
         storage: &mut S,
-        _parent_hash: Option<&ValueDigest<N>>,
+        parent_hash: Option<&ValueDigest<N>>,
     ) {
+        // set is root node based on parent hash
+        let is_root_node = parent_hash == None;
+
         if self.is_leaf {
             // Check if the key already exists in the node
             if let Some(pos) = self.keys.iter().position(|k| k == &key) {
@@ -559,7 +543,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             }
 
             // Sort the keys and values and split the node if necessary
-            self.try_split(storage);
+            self.try_split(storage, is_root_node);
         } else {
             // The node is an internal (non-leaf) node, so find the child node to insert the key-value pair
 
@@ -569,32 +553,32 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             let i = self.keys.iter().rposition(|k| key >= *k).unwrap_or(0);
 
             // Retrieve the child node using the stored hash
+            // child node can be either leaf or internal node
             let child_hash = self.values[i].clone();
 
             if let Some(mut child_node) =
                 storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
             {
+                // if key == vec![51] {
+                //     println!("Inserting key: {:?}, value: {:?}", key, value);
+                // }
+
+                // Insert the key-value pair into the child node retrieved from the storage
                 child_node.insert(key.clone(), value.clone(), storage, Some(&self.get_hash()));
-                let new_node_hash = child_node.get_hash().as_bytes().to_vec();
 
                 // Save the updated child node back to the storage
+                let new_node_hash = child_node.get_hash().as_bytes().to_vec();
                 storage.insert_node(child_node.get_hash(), child_node.clone());
 
-                // Check if the child node needs to be merged into the parent node level
-                if !child_node.clone().is_leaf {
-                    // Collect all leaf nodes from the child node's subtree
-                    let mut leaf_nodes = vec![];
-                    child_node.collect_leaf_nodes(&mut leaf_nodes, storage);
-
-                    // Remove the non-leaf child node
+                // Check if the child node has been split and needs to be updated in the current node
+                if !child_node.is_leaf && child_node.keys.len() > 1 {
+                    // Move the key-value pairs from the child node to the current node at position `i`
                     self.keys.remove(i);
                     self.values.remove(i);
 
-                    // Insert each key and value from the leaf nodes into the parent node at position `i`
-                    for (j, leaf_node) in leaf_nodes.into_iter().enumerate() {
-                        self.keys.insert(i + j, leaf_node.keys[0].clone());
-                        self.values
-                            .insert(i + j, leaf_node.get_hash().as_bytes().to_vec());
+                    for (j, (key, value)) in child_node.keys.into_iter().zip(child_node.values).enumerate() {
+                        self.keys.insert(i + j, key);
+                        self.values.insert(i + j, value);
                     }
                 } else {
                     // Update this node's value with the new hash
@@ -606,7 +590,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             }
 
             // Sort the keys and values and split the node if necessary
-            self.try_split(storage);
+            self.try_split(storage, is_root_node);
         }
     }
 
@@ -655,15 +639,15 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                         self.keys.remove(i);
                         self.values.remove(i);
 
-                        // Check if the current level is one above the root level and only one child node is left
-                        if self.level == ROOT_LEVEL + 1 && self.keys.len() == 1 {
+                        // Check if the current level is one above the init level and only one child node is left
+                        if self.level == INIT_LEVEL + 1 && self.keys.len() == 1 {
                             // Retrieve the remaining child node using the stored hash
                             let remaining_child_hash = self.values[0].clone();
                             if let Some(mut remaining_child_node) = storage
                                 .get_node_by_hash(&ValueDigest::raw_hash(&remaining_child_hash))
                             {
-                                // Set the remaining child node as the new root node
-                                remaining_child_node.level = ROOT_LEVEL;
+                                // Set the remaining child node as the new init node
+                                remaining_child_node.level = INIT_LEVEL;
                                 remaining_child_node.is_leaf = true;
 
                                 // Persist the new root node

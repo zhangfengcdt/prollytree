@@ -212,6 +212,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         tree
     }
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        // Root node does not have a parent hash
         self.root.insert(key, value, &mut self.storage, None);
     }
 
@@ -511,16 +512,19 @@ mod tests {
         let mut tree = ProllyTree::new(storage, config);
 
         // Insert key-value pairs using a loop
-        for i in 0..50 {
+        for i in 0..10 {
             tree.insert(vec![i], vec![i]);
-            let traversal = tree.formatted_traverse(|node| {
-                if !node.is_leaf {
-                    format!("[L{}:{:?}]", node.level, node.keys)
-                } else {
-                    String::new()
-                }
-            });
-            println!("Traversal #{}: {}", i, traversal);
+            if true {
+                let traversal = tree.formatted_traverse(|node| {
+                    format!("[L{}:{:?}]\n", node.level, node.keys)
+                    // if node.is_leaf {
+                    //     format!("[L{}:{:?}]", node.level, node.keys)
+                    // } else {
+                    //     "".to_string()
+                    // }
+                });
+                println!("Traversal #{}:\n{}", i, traversal);
+            }
         }
 
         // for i in 0..100 {
