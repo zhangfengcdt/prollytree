@@ -346,17 +346,17 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
             path.push(current_node.get_hash());
 
             if current_node.is_leaf {
-                if current_node.keys.contains(&key.to_vec()) {
-                    return Proof {
+                return if current_node.keys.contains(&key.to_vec()) {
+                    Proof {
                         path,
                         target_hash: Some(current_node.get_hash()),
-                    };
+                    }
                 } else {
-                    return Proof {
+                    Proof {
                         path,
                         target_hash: None,
-                    };
-                }
+                    }
+                };
             } else {
                 let mut found = false;
                 for i in 0..current_node.keys.len() {
@@ -515,15 +515,13 @@ mod tests {
         // Insert key-value pairs using a loop
         for i in 0..100 {
             tree.insert(vec![i], vec![i]);
-            if true {
-                let traversal = tree.formatted_traverse(|node| {
-                    if i == 99 {
-                        println!("Node: {:?}", node);
-                    }
-                    format!("[L{}:{:?}]\n", node.level, node.keys)
-                });
-                println!("Traversal #{}:\n{}", i, traversal);
-            }
+            let traversal = tree.formatted_traverse(|node| {
+                if i == 99 {
+                    println!("Node: {:?}", node);
+                }
+                format!("[L{}:{:?}]\n", node.level, node.keys)
+            });
+            println!("Traversal #{}:\n{}", i, traversal);
         }
 
         for i in 0..100 {
