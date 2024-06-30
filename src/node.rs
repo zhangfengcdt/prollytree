@@ -221,6 +221,7 @@ impl<const N: usize> ProllyNode<N> {
         // Use chunk_content to determine split points
         let chunks = self.chunk_content();
         if chunks.len() <= 1 {
+            return;
         }
 
         let mut siblings = Vec::new();
