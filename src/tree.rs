@@ -526,6 +526,55 @@ mod tests {
     use super::*;
     use crate::storage::InMemoryNodeStorage;
 
+    /// Example usage of the Prolly Tree
+    #[test]
+    fn main_test() {
+        // 1. Create a custom tree config
+        let config = TreeConfig {
+            base: 131,
+            modulus: 1_000_000_009,
+            min_chunk_size: 4,
+            max_chunk_size: 8 * 1024,
+            pattern: 0b101,
+            root_hash: None,
+        };
+
+        // 2. Create and Wrap the Storage Backend
+        let storage = InMemoryNodeStorage::<32>::new();
+
+        // 3. Create the Prolly Tree
+        let mut tree = ProllyTree::new(storage, config);
+
+        // 4. Insert New Key-Value Pairs
+        tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        tree.insert(b"key2".to_vec(), b"value2".to_vec());
+
+        // 5. Traverse the Tree with a Custom Formatter
+        let traversal = tree.formatted_traverse(|node| {
+            let keys_as_strings: Vec<String> =
+                node.keys.iter().map(|k| format!("{:?}", k)).collect();
+            format!("[L{}: {}]", node.level, keys_as_strings.join(", "))
+        });
+        println!("Traversal: {}", traversal);
+
+        // 6. Update the Value for an Existing Key
+        tree.update(b"key1".to_vec(), b"new_value1".to_vec());
+
+        // 7. Find or Search for a Key
+        if let Some(node) = tree.find(b"key1") {
+            println!("Found key1 with value: {:?}", node);
+        } else {
+            println!("key1 not found");
+        }
+
+        // 8. Delete a Key-Value Pair
+        if tree.delete(b"key2") {
+            println!("key2 deleted");
+        } else {
+            println!("key2 not found");
+        }
+    }
+
     #[test]
     fn test_insert_and_find() {
         let storage = InMemoryNodeStorage::<32>::new();
@@ -617,55 +666,6 @@ mod tests {
         println!("Summary: {}", tree.summary());
     }
 
-    /// Example usage of the Prolly Tree
-    #[test]
-    fn main_test() {
-        // 1. Create a custom tree config
-        let config = TreeConfig {
-            base: 131,
-            modulus: 1_000_000_009,
-            min_chunk_size: 4,
-            max_chunk_size: 8 * 1024,
-            pattern: 0b101,
-            root_hash: None,
-        };
-
-        // 2. Create and Wrap the Storage Backend
-        let storage = InMemoryNodeStorage::<32>::new();
-
-        // 3. Create the Prolly Tree
-        let mut tree = ProllyTree::new(storage, config);
-
-        // 4. Insert New Key-Value Pairs
-        tree.insert(b"key1".to_vec(), b"value1".to_vec());
-        tree.insert(b"key2".to_vec(), b"value2".to_vec());
-
-        // 5. Traverse the Tree with a Custom Formatter
-        let traversal = tree.formatted_traverse(|node| {
-            let keys_as_strings: Vec<String> =
-                node.keys.iter().map(|k| format!("{:?}", k)).collect();
-            format!("[L{}: {}]", node.level, keys_as_strings.join(", "))
-        });
-        println!("Traversal: {}", traversal);
-
-        // 6. Update the Value for an Existing Key
-        tree.update(b"key1".to_vec(), b"new_value1".to_vec());
-
-        // 7. Find or Search for a Key
-        if let Some(node) = tree.find(b"key1") {
-            println!("Found key1 with value: {:?}", node);
-        } else {
-            println!("key1 not found");
-        }
-
-        // 8. Delete a Key-Value Pair
-        if tree.delete(b"key2") {
-            println!("key2 deleted");
-        } else {
-            println!("key2 not found");
-        }
-    }
-
     #[test]
     fn test_generate_proof() {
         let config = TreeConfig::default();
@@ -695,5 +695,46 @@ mod tests {
         let verified_wrong =
             tree.verify(proof_wrong, &key_to_prove_wrong, Some(&key_to_prove_wrong));
         assert!(!verified_wrong);
+    }
+
+    #[test]
+    fn test_diff() {
+        let config = TreeConfig::default();
+        let storage1 = InMemoryNodeStorage::<32>::new();
+        let mut tree1 = ProllyTree::new(storage1, config.clone());
+
+        let storage2 = InMemoryNodeStorage::<32>::new();
+        let mut tree2 = ProllyTree::new(storage2, config);
+
+        // Insert key-value pairs into tree1
+        for i in 0..50 {
+            tree1.insert(vec![i], vec![i]);
+        }
+
+        // Insert different key-value pairs into tree2
+        for i in 0..48 {
+            tree2.insert(vec![i], vec![i]);
+        }
+
+        // Generate diff between tree1 and tree2
+        let differences = tree1.diff(&tree2);
+
+        // Check the differences
+        for diff in &differences {
+            match diff {
+                DiffResult::Added(key, value) => {
+                    println!("Added: key = {:?}, value = {:?}", key, value);
+                }
+                DiffResult::Removed(key, value) => {
+                    println!("Removed: key = {:?}, value = {:?}", key, value);
+                }
+                DiffResult::Modified(key, old_value, new_value) => {
+                    println!(
+                        "Modified: key = {:?}, old_value = {:?}, new_value = {:?}",
+                        key, old_value, new_value
+                    );
+                }
+            }
+        }
     }
 }
