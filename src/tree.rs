@@ -499,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn test_all() {
+    fn test_stats() {
         let storage = InMemoryNodeStorage::<32>::new();
         let config = TreeConfig {
             base: 131,
@@ -540,6 +540,7 @@ mod tests {
         println!("Summary: {}", tree.summary());
     }
 
+    /// Example usage of the Prolly Tree
     #[test]
     fn main_test() {
         // 1. Create a custom tree config
