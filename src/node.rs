@@ -83,6 +83,7 @@ pub struct ProllyNode<const N: usize> {
     pub min_chunk_size: usize,
     pub max_chunk_size: usize,
     pub pattern: u64,
+    pub promoted: bool,
 }
 
 impl<const N: usize> Default for ProllyNode<N> {
@@ -97,6 +98,7 @@ impl<const N: usize> Default for ProllyNode<N> {
             min_chunk_size: DEFAULT_MIN_CHUNK_SIZE,
             max_chunk_size: DEFAULT_MAX_CHUNK_SIZE,
             pattern: DEFAULT_PATTERN,
+            promoted: false,
         }
     }
 }
@@ -186,6 +188,7 @@ impl<const N: usize> ProllyNodeBuilder<N> {
             min_chunk_size: self.min_chunk_size,
             max_chunk_size: self.max_chunk_size,
             pattern: self.pattern,
+            ..Default::default()
         }
     }
 }
@@ -239,6 +242,7 @@ impl<const N: usize> ProllyNode<N> {
                 min_chunk_size: self.min_chunk_size,
                 max_chunk_size: self.max_chunk_size,
                 pattern: self.pattern,
+                promoted: self.promoted,
             };
             let sibling_hash = sibling.get_hash();
             storage.insert_node(sibling_hash.clone(), sibling.clone());
@@ -269,6 +273,7 @@ impl<const N: usize> ProllyNode<N> {
                 min_chunk_size: self.min_chunk_size,
                 max_chunk_size: self.max_chunk_size,
                 pattern: self.pattern,
+                promoted: self.promoted,
             };
             *self = new_root;
         } else {
@@ -314,6 +319,7 @@ impl<const N: usize> ProllyNode<N> {
                     min_chunk_size: self.min_chunk_size,
                     max_chunk_size: self.max_chunk_size,
                     pattern: self.pattern,
+                    promoted: self.promoted,
                 };
                 let sibling_hash = sibling.get_hash();
                 storage.insert_node(sibling_hash.clone(), sibling.clone());
@@ -343,6 +349,7 @@ impl<const N: usize> ProllyNode<N> {
                     min_chunk_size: self.min_chunk_size,
                     max_chunk_size: self.max_chunk_size,
                     pattern: self.pattern,
+                    promoted: self.promoted,
                 };
                 *self = new_root;
             } else {
