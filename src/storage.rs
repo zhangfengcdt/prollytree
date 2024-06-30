@@ -12,10 +12,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use std::collections::HashMap;
-
 use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
+use std::collections::HashMap;
 
 /// A trait for storage of nodes in the ProllyTree.
 ///
@@ -63,6 +62,7 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
 /// # Type Parameters
 ///
 /// - `N`: The size of the value digest.
+#[derive(Clone)]
 pub struct InMemoryNodeStorage<const N: usize> {
     map: HashMap<ValueDigest<N>, ProllyNode<N>>,
     configs: HashMap<String, Vec<u8>>,

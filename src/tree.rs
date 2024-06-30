@@ -141,6 +141,8 @@ pub trait Tree<const N: usize, S: NodeStorage<N>> {
     /// A `Proof` struct containing the path of hashes and the hash of the target node (if the key exists).
     fn generate_proof(&self, key: &[u8]) -> Proof<N>;
 
+    fn verify(&self, proof: Proof<N>, key: &[u8], expected_value: Option<&[u8]>) -> bool;
+
     /// Computes the differences between two Prolly Trees.
     ///
     /// This function compares the current tree (`self`) with another tree (`other`)
@@ -215,6 +217,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
         // Root node does not have a parent hash
         self.root.insert(key, value, &mut self.storage, None);
+        self.persist_root();
     }
 
     fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool {
@@ -227,7 +230,11 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn delete(&mut self, key: &[u8]) -> bool {
-        self.root.delete(key, &mut self.storage, None)
+        let deleted = self.root.delete(key, &mut self.storage, None);
+        if deleted {
+            self.persist_root();
+        }
+        deleted
     }
 
     fn find(&self, key: &[u8]) -> Option<ProllyNode<N>> {
@@ -338,51 +345,121 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         Ok(())
     }
 
+    /// Generates a proof of existence for a given key in the tree.
+    ///
+    /// This function traverses the tree from the root to the target node containing the key,
+    /// collecting the hashes of all nodes along the path. The proof can be used to verify the
+    /// existence of the key and its associated value without revealing other data in the tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key for which to generate the proof.
+    /// * `storage` - The storage implementation to retrieve child nodes.
+    ///
+    /// # Returns
+    ///
+    /// A `Proof` struct containing the path of hashes and the hash of the target node (if the key exists).
     fn generate_proof(&self, key: &[u8]) -> Proof<N> {
-        let mut path = Vec::new();
-        let mut current_node = self.root.clone();
+        /// Recursive helper function to generate the proof path.
+        ///
+        /// This function traverses the tree from the given node to the target node containing the key,
+        /// collecting the hashes of all nodes along the path. It returns the hash of the target node
+        /// if the key exists, or `None` if the key does not exist.
+        ///
+        /// # Arguments
+        ///
+        /// * `node` - The current node being traversed.
+        /// * `key` - The key for which to generate the proof.
+        /// * `storage` - The storage implementation to retrieve child nodes.
+        /// * `path` - The vector to store the hashes of the nodes along the path.
+        ///
+        /// # Returns
+        ///
+        /// The hash of the target node if the key exists, or `None` if the key does not exist.
+        fn generate_proof_recursive<const N: usize, S: NodeStorage<N>>(
+            node: &ProllyNode<N>,
+            key: &[u8],
+            storage: &S,
+            path: &mut Vec<ValueDigest<N>>,
+        ) -> Option<ValueDigest<N>> {
+            path.push(node.get_hash());
 
-        loop {
-            path.push(current_node.get_hash());
-
-            if current_node.is_leaf {
-                return if current_node.keys.contains(&key.to_vec()) {
-                    Proof {
-                        path,
-                        target_hash: Some(current_node.get_hash()),
-                    }
+            if node.is_leaf {
+                if node.keys.iter().any(|k| k == key) {
+                    Some(node.get_hash())
                 } else {
-                    Proof {
-                        path,
-                        target_hash: None,
-                    }
-                };
-            } else {
-                let mut found = false;
-                for i in 0..current_node.keys.len() {
-                    if current_node.keys[i] >= key.to_vec() {
-                        let child_hash = ValueDigest::raw_hash(&current_node.values[i]);
-                        if let Some(child_node) = self.storage.get_node_by_hash(&child_hash) {
-                            current_node = child_node.clone();
-                            found = true;
-                            break;
-                        }
-                    }
+                    None
                 }
-                if !found {
-                    return Proof {
-                        path,
-                        target_hash: None,
-                    };
+            } else {
+                let i = node.keys.iter().rposition(|k| key >= &k[..]).unwrap_or(0);
+                let child_hash = node.values[i].clone();
+
+                if let Some(child_node) =
+                    storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
+                {
+                    generate_proof_recursive(&child_node, key, storage, path)
+                } else {
+                    None
                 }
             }
         }
+
+        let mut path = Vec::new();
+        let target_hash = generate_proof_recursive(&self.root, key, &self.storage, &mut path);
+
+        Proof { path, target_hash }
+    }
+
+    fn verify(&self, proof: Proof<N>, key: &[u8], expected_value: Option<&[u8]>) -> bool {
+        // Start with the root hash
+        let mut current_hash = self.root.get_hash();
+
+        for (i, node_hash) in proof.path.iter().enumerate() {
+            // Retrieve the node content from storage using the current hash
+            if let Some(node) = self.storage.get_node_by_hash(&current_hash) {
+                // Check if the current node's hash matches the expected hash in the path
+                if node.get_hash() != *node_hash {
+                    return false;
+                }
+
+                // If it's the last node in the path, verify the leaf node
+                if i == proof.path.len() - 1 {
+                    if node.is_leaf {
+                        return node.keys.iter().any(|k| k == key)
+                            && (expected_value.is_none()
+                                || node
+                                    .values
+                                    .iter()
+                                    .any(|v| expected_value.unwrap() == &v[..]));
+                    } else {
+                        return false; // Path should end at a leaf node
+                    }
+                }
+
+                // Move to the next node in the path by finding the correct child
+                let child_index = node.keys.iter().rposition(|k| key >= &k[..]).unwrap_or(0);
+                current_hash = ValueDigest::raw_hash(&node.values[child_index]);
+            } else {
+                // If the node is not found in storage, the proof is invalid
+                return false;
+            }
+        }
+
+        false // If we exit the loop without verifying, the proof is invalid
     }
 
     fn diff(&self, other: &Self) -> Vec<DiffResult> {
         let mut diffs = Vec::new();
         self.diff_recursive(&self.root, &other.root, &mut diffs);
         diffs
+    }
+}
+
+impl<S: NodeStorage<N>, const N: usize> ProllyTree<N, S> {
+    fn persist_root(&mut self) {
+        // Save the updated child node back to the storage
+        self.storage
+            .insert_node(self.root.get_hash(), self.root.clone());
     }
 }
 
@@ -587,5 +664,36 @@ mod tests {
         } else {
             println!("key2 not found");
         }
+    }
+
+    #[test]
+    fn test_generate_proof() {
+        let config = TreeConfig::default();
+        let storage = InMemoryNodeStorage::<32>::new();
+        let mut tree = ProllyTree::new(storage, config);
+
+        // Insert key-value pairs
+        for i in 0..100 {
+            let key = vec![i];
+            let value = vec![i];
+            tree.insert(key.clone(), value.clone());
+        }
+
+        // Generate proof for an existing key
+        let key_to_prove = vec![5];
+        let proof = tree.generate_proof(&key_to_prove);
+
+        // Verify the proof
+        let verified = tree.verify(proof, &key_to_prove, Some(&key_to_prove));
+        assert!(verified);
+
+        // Generate proof for a non-existing key
+        let key_to_prove_wrong = vec![120];
+        let proof_wrong = tree.generate_proof(&key_to_prove_wrong);
+
+        // Should not be verified
+        let verified_wrong =
+            tree.verify(proof_wrong, &key_to_prove_wrong, Some(&key_to_prove_wrong));
+        assert!(!verified_wrong);
     }
 }
