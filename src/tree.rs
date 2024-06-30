@@ -161,11 +161,8 @@ pub struct TreeStats {
     pub num_nodes: usize,
     pub num_leaves: usize,
     pub num_internal_nodes: usize,
-    pub max_depth: usize,
     pub avg_node_size: f64,
-    pub std_node_size: f64,
-    pub min_node_size: f64,
-    pub max_node_size: f64,
+    pub total_key_value_pairs: usize,
 }
 
 impl TreeStats {
@@ -174,11 +171,8 @@ impl TreeStats {
             num_nodes: 0,
             num_leaves: 0,
             num_internal_nodes: 0,
-            max_depth: 0,
             avg_node_size: 0.0,
-            std_node_size: 0.0,
-            min_node_size: 0.0,
-            max_node_size: 0.0,
+            total_key_value_pairs: 0,
         }
     }
 }
@@ -191,7 +185,6 @@ impl Default for TreeStats {
 
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
     root: ProllyNode<N>,
-    root_hash: Option<ValueDigest<N>>,
     storage: S,
     config: TreeConfig<N>,
 }
@@ -208,11 +201,11 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
             min_chunk_size: config.min_chunk_size,
             max_chunk_size: config.max_chunk_size,
             pattern: config.pattern,
+            promoted: false,
         };
         let root_hash = Some(root.get_hash());
         let mut tree = ProllyTree {
             root,
-            root_hash: root_hash.clone(),
             storage,
             config,
         };
@@ -220,6 +213,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         tree
     }
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        // Root node does not have a parent hash
         self.root.insert(key, value, &mut self.storage, None);
     }
 
@@ -252,23 +246,76 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn get_root_hash(&self) -> Option<ValueDigest<N>> {
-        todo!()
+        Option::from(self.root.get_hash())
     }
 
     fn size(&self) -> usize {
-        todo!()
+        fn count_pairs<const N: usize, S: NodeStorage<N>>(
+            node: &ProllyNode<N>,
+            storage: &S,
+        ) -> usize {
+            if node.is_leaf {
+                node.keys.len()
+            } else {
+                let mut count = 0;
+                for value in &node.values {
+                    if let Some(child_node) =
+                        storage.get_node_by_hash(&ValueDigest::raw_hash(value))
+                    {
+                        count += count_pairs(&child_node, storage);
+                    }
+                }
+                count
+            }
+        }
+
+        count_pairs(&self.root, &self.storage)
     }
 
     fn depth(&self) -> usize {
-        todo!()
+        (self.root.level as usize) + 1
     }
 
     fn summary(&self) -> String {
-        todo!()
+        let stats = self.stats();
+        format!(
+            "Tree Summary:\n- Number of Key-Value Pairs: {}\n- Number of Nodes: {}\n- Number of Leaves: {}\n- Number of Internal Nodes: {}\n- Average Leaf Node Size: {:.2}",
+            self.size(),
+            stats.num_nodes,
+            stats.num_leaves,
+            stats.num_internal_nodes,
+            stats.avg_node_size
+        )
     }
 
     fn stats(&self) -> TreeStats {
-        todo!()
+        fn collect_stats<const N: usize, S: NodeStorage<N>>(
+            node: &ProllyNode<N>,
+            storage: &S,
+            stats: &mut TreeStats,
+        ) {
+            stats.num_nodes += 1;
+            if node.is_leaf {
+                stats.num_leaves += 1;
+                stats.total_key_value_pairs += node.keys.len();
+            } else {
+                stats.num_internal_nodes += 1;
+                for value in &node.values {
+                    if let Some(child_node) =
+                        storage.get_node_by_hash(&ValueDigest::raw_hash(value))
+                    {
+                        collect_stats(&child_node, storage, stats);
+                    }
+                }
+            }
+        }
+
+        let mut stats = TreeStats::new();
+        collect_stats(&self.root, &self.storage, &mut stats);
+        if stats.num_leaves > 0 {
+            stats.avg_node_size = stats.total_key_value_pairs as f64 / stats.num_leaves as f64;
+        }
+        stats
     }
 
     fn load_config(storage: &S) -> Result<TreeConfig<N>, &'static str> {
@@ -285,7 +332,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
     fn save_config(&self) -> Result<(), &'static str> {
         let mut config = self.config.clone();
-        config.root_hash.clone_from(&self.root_hash);
+        config.root_hash = Option::from(self.root.get_hash());
         let config_data = serde_json::to_vec(&config).map_err(|_| "Failed to serialize config")?;
         self.storage.save_config("tree_config", &config_data);
         Ok(())
@@ -299,17 +346,17 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
             path.push(current_node.get_hash());
 
             if current_node.is_leaf {
-                if current_node.keys.contains(&key.to_vec()) {
-                    return Proof {
+                return if current_node.keys.contains(&key.to_vec()) {
+                    Proof {
                         path,
                         target_hash: Some(current_node.get_hash()),
-                    };
+                    }
                 } else {
-                    return Proof {
+                    Proof {
                         path,
                         target_hash: None,
-                    };
-                }
+                    }
+                };
             } else {
                 let mut found = false;
                 for i in 0..current_node.keys.len() {
@@ -451,6 +498,49 @@ mod tests {
         assert!(traversal.contains(&expected_key2.to_string()));
     }
 
+    #[test]
+    fn test_stats() {
+        let storage = InMemoryNodeStorage::<32>::new();
+        let config = TreeConfig {
+            base: 131,
+            modulus: 1_000_000_009,
+            min_chunk_size: 16,
+            max_chunk_size: 8 * 1024,
+            pattern: 0b111,
+            root_hash: None,
+        };
+
+        let mut tree = ProllyTree::new(storage, config);
+
+        // Insert key-value pairs using a loop
+        let max_key = 3000u32;
+
+        for i in 0..max_key {
+            // Convert to big-endian byte array to maintain order
+            let key = i.to_be_bytes().to_vec();
+            let value = i.to_be_bytes().to_vec();
+            tree.insert(key.clone(), value.clone());
+        }
+
+        for i in 0..max_key {
+            let key = i.to_be_bytes().to_vec();
+            assert!(tree.find(&key).is_some());
+        }
+        let non_existing_key = (max_key + 10).to_be_bytes().to_vec();
+        assert!(tree.find(&non_existing_key).is_none());
+
+        // assert that the tree has the expected key-value pairs
+        assert_eq!(tree.size(), max_key as usize);
+
+        // assert that the tree has the expected depth
+        assert_eq!(tree.depth(), 3);
+
+        println!("Size: {}", tree.size());
+        println!("Depth: {}", tree.depth());
+        println!("Summary: {}", tree.summary());
+    }
+
+    /// Example usage of the Prolly Tree
     #[test]
     fn main_test() {
         // 1. Create a custom tree config

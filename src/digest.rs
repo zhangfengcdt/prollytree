@@ -54,6 +54,12 @@ impl<const N: usize> ValueDigest<N> {
     ///
     /// A `ValueDigest` instance containing the computed hash.
     pub fn new(data: &[u8]) -> Self {
+        // Ensure N is not larger than 32 to prevent out-of-bounds errors
+        assert!(
+            N <= 32,
+            "N must be less than or equal to 32 due to SHA-256 output size"
+        );
+
         let mut hasher = Sha256::new();
         hasher.update(data);
         let result = hasher.finalize();

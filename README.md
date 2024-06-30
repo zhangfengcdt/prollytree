@@ -155,10 +155,10 @@ The following features are for Prolly Tree library:
 - [X] Implement basic Prolly Tree structure
 - [X] Implement insertion and deletion operations
 - [X] Implement tree traversal and search
-- [ ] Implement tree size and depth calculation
-- [ ] Implement tree configuration and tree meta data handling
-- [ ] Support probabilistic tree balancing
+- [X] Implement tree size and depth calculation
+- [X] Implement tree configuration and tree meta data handling
 - [ ] Implement hashing verification and proof generation
+- [ ] Support probabilistic tree balancing
 - [ ] Add documentation and examples
 - [ ] Add benchmarks and optimizations
 
