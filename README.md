@@ -157,15 +157,23 @@ The following features are for Prolly Tree library:
 - [X] Implement tree traversal and search
 - [X] Implement tree size and depth calculation
 - [X] Implement tree configuration and tree meta data handling
-- [ ] Implement hashing verification and proof generation
-- [ ] Support probabilistic tree balancing
+- [X] Implement proof generation and verification
+- [ ] Support Arrow block encoding and decoding with block metadata
+- [ ] Support FILE block store (rocksdb)
+- [ ] Support IPFS / IPLD block store
+- [ ] Support S3 block store
+- [ ] Support Prolly Tree Indexes 
+- [ ] Support batch insertion and deletion
+- [ ] Support probabilistic tree balancing with cdf estimation
+- [ ] Benchmarks and optimizations
 - [ ] Add documentation and examples
-- [ ] Add benchmarks and optimizations
 
 The following features are for other Prolly Tree projects:
-- [ ] prolly cli tool
+- [ ] prolly-cli tool
+- [ ] prolly-wasm npm package 
+- [ ] prolly-sql with datafusion integration (query engine) 
+- [ ] integration with postgres (cdc)
 - [ ] integration with git
-- [ ] integration with ipfs
 - [ ] integration with blockchain systems (e.g., substrate)
 
 ## Contributing
