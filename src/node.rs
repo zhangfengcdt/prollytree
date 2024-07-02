@@ -815,6 +815,7 @@ impl<const N: usize> ProllyNode<N> {
 mod tests {
     use super::*;
     use crate::storage::InMemoryNodeStorage;
+    use rand::seq::SliceRandom;
 
     /// This test verifies the insertion of key-value pairs into a ProllyNode and ensures
     /// that the keys are sorted correctly and the node splits based on the chunk content.
@@ -1134,5 +1135,51 @@ mod tests {
         node.insert(vec![7], value_for_all.clone(), &mut storage, None);
         assert_eq!(node.chunk_content().len(), 1);
         node.insert(vec![8], value_for_all.clone(), &mut storage, None);
+    }
+
+    #[test]
+    fn test_history_independence_random() {
+        let value = vec![100];
+        let element_count = 4;
+
+        // Generate different sequences of insertions
+        // seq1. Insert elements in increasing order
+        let sequence1 = (1..=element_count).collect::<Vec<_>>();
+        // seq2. Insert elements in decreasing order
+        let sequence2 = (1..=element_count).rev().collect::<Vec<_>>();
+        // seq3. Insert elements in alternating order, e.g., (1, 3, 5, 7, 2, 4, 6, 8)
+        let sequence3 = (1..=element_count)
+            .step_by(2)
+            .chain((2..=element_count).step_by(2))
+            .collect::<Vec<_>>();
+        // seq4. Insert elements in random order
+        let mut sequence4 = (1..=element_count).collect::<Vec<_>>();
+        sequence4.shuffle(&mut rand::thread_rng());
+
+        let sequences = vec![sequence1, sequence2, sequence3, sequence4];
+
+        let mut trees = Vec::new();
+
+        for sequence in sequences {
+            let mut storage = InMemoryNodeStorage::<32>::new();
+            let mut node: ProllyNode<32> = ProllyNode::builder().build();
+
+            for key in sequence {
+                node.insert(vec![key as u8], value.clone(), &mut storage, None);
+            }
+
+            trees.push(node.traverse(&storage));
+        }
+
+        // Assert that all tree traversals are the same
+        for i in 1..trees.len() {
+            assert_eq!(
+                trees[0],
+                trees[i],
+                "History independence failed for sequences: {} and {}",
+                0,
+                i + 1
+            );
+        }
     }
 }
