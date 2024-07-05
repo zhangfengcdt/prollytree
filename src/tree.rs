@@ -203,7 +203,8 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
             min_chunk_size: config.min_chunk_size,
             max_chunk_size: config.max_chunk_size,
             pattern: config.pattern,
-            promoted: false,
+            split: false,
+            merged: false,
         };
         let root_hash = Some(root.get_hash());
         let mut tree = ProllyTree {
