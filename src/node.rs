@@ -744,7 +744,7 @@ impl<const N: usize> ProllyNode<N> {
     /// where L0, L1, ... are the levels of the nodes, and key1, key2, ... are the keys in the nodes.
     pub fn traverse(&self, storage: &impl NodeStorage<N>) -> String {
         self.formatted_traverse(storage, |node| {
-            if node.is_leaf {
+            if node.level >= 0 {
                 // return the keys for leaf nodes
                 format!("[L{}:{:?}]", node.level, node.keys.to_vec())
             } else {
@@ -890,6 +890,7 @@ mod tests {
         let mut storage = InMemoryNodeStorage::<32>::new();
 
         let value_for_all = vec![100];
+        let max_key = 100;
 
         let mut storage_ref = InMemoryNodeStorage::<32>::new();
 
@@ -897,7 +898,7 @@ mod tests {
         let mut node_ref: ProllyNode<32> = ProllyNode::default();
 
         // the keys equal to their index in the vector
-        for i in 0..=100 {
+        for i in 0..=max_key {
             node_ref.insert(vec![i], value_for_all.clone(), &mut storage_ref, None);
             storage.insert_node(node_ref.get_hash(), node_ref.clone());
         }
@@ -907,7 +908,7 @@ mod tests {
         let mut node: ProllyNode<32> = ProllyNode::default();
 
         // each time an insert is done, the root node hash is updated
-        for i in (0..=100).rev() {
+        for i in (0..=max_key).rev() {
             node.insert(vec![i], value_for_all.clone(), &mut storage, None);
             storage.insert_node(node.get_hash(), node.clone()); // save the updated root node hash to storage
                                                                 // println!("{}", node.traverse(&storage));
@@ -915,6 +916,42 @@ mod tests {
         println!("decreasing order: {}", node.traverse(&storage));
 
         assert_eq!(node_ref.traverse(&storage_ref), node.traverse(&storage));
+    }
+
+    #[test]
+    fn test_insert_alt_order() {
+        let mut storage = InMemoryNodeStorage::<32>::new();
+        let value_for_all = vec![100];
+        let max_key = 35;
+
+        // Initialize a new root node with the first key-value pair
+        let mut node_ref: ProllyNode<32> = ProllyNode::default();
+
+        // Insert elements in increasing order
+        for i in 0..=max_key {
+            node_ref.insert(vec![i], value_for_all.clone(), &mut storage, None);
+            storage.insert_node(node_ref.get_hash(), node_ref.clone());
+        }
+        println!("inc order: {}", node_ref.traverse(&storage));
+
+        // Initialize a new root node with the first key-value pair
+        let mut node: ProllyNode<32> = ProllyNode::default();
+
+        // Generate keys in an alternating order (odd numbers first, then even numbers)
+        let mut keys: Vec<u8> = (1..=max_key).step_by(2).collect(); // odd numbers
+        keys.extend((0..=max_key).step_by(2)); // even numbers
+
+        // Insert elements in alternating order
+        for key in keys {
+            node.insert(vec![key], value_for_all.clone(), &mut storage, None);
+            storage.insert_node(node.get_hash(), node.clone()); // save the updated root node hash to storage
+            println!("alt order: {}", node.traverse(&storage));
+        }
+
+        println!("alt order: {}", node.traverse(&storage));
+
+        // Verify that both trees have the same structure
+        assert_eq!(node_ref.traverse(&storage), node.traverse(&storage));
     }
 
     /// This test verifies the insertion and update of key-value pairs into a ProllyNode and ensures
@@ -1105,9 +1142,27 @@ mod tests {
     }
 
     #[test]
+    fn test_chunk_content2() {
+        let mut storage = InMemoryNodeStorage::<32>::new();
+        let value_for_all = vec![100];
+
+        let keys: Vec<Vec<u8>> =  vec![vec![29], vec![30], vec![31], vec![32], vec![33], vec![35]];
+        let values = vec![value_for_all.clone(); keys.len()];
+
+        // Initialize the prolly tree with multiple key-value pairs using the builder
+        let node: ProllyNode<32> = ProllyNode::builder().keys(keys).values(values).build();
+
+        // Insert the node into storage
+        storage.insert_node(node.get_hash(), node.clone());
+
+        // Print chunk content
+        println!("{:?}", node.chunk_content());
+    }
+
+    #[test]
     fn test_history_independence_random() {
         let value = vec![100];
-        let element_count = 7;
+        let element_count = 15;
 
         // Generate different sequences of insertions
         // seq1. Insert elements in increasing order
@@ -1138,18 +1193,15 @@ mod tests {
             trees.push(node.traverse(&storage));
         }
 
-        println!("Increasing order: {}", trees[0]);
-        println!("Decreasing order: {}", trees[1]);
-
         // Assert that all tree traversals are the same
-        // for i in 1..trees.len() {
-        //     assert_eq!(
-        //         trees[0],
-        //         trees[i],
-        //         "History independence failed for sequences: {} and {}",
-        //         0,
-        //         i + 1
-        //     );
-        // }
+        for i in 1..trees.len() {
+            assert_eq!(
+                trees[0],
+                trees[i],
+                "History independence failed for sequences: {} and {}",
+                0,
+                i + 1
+            );
+        }
     }
 }
