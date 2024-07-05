@@ -217,7 +217,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
         // Root node does not have a parent hash
-        self.root.insert(key, value, &mut self.storage, Vec::new());
+        self.root.insert(key, value, &mut self.storage, None);
         self.persist_root();
     }
 
@@ -231,7 +231,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn delete(&mut self, key: &[u8]) -> bool {
-        let deleted = self.root.delete(key, &mut self.storage, Vec::new());
+        let deleted = self.root.delete(key, &mut self.storage, None);
         if deleted {
             self.persist_root();
         }
