@@ -11,6 +11,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#![allow(clippy::too_many_arguments)]
 
 use crate::digest::ValueDigest;
 use crate::storage::NodeStorage;
@@ -379,7 +380,7 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
                 }
 
                 // Slide the window by one element to the right
-                if end + 1 <= self.keys.len() {
+                if end < self.keys.len() {
                     hash = Self::update_rolling_hash(
                         hash,
                         &self.keys[start],
@@ -412,7 +413,7 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
         modulus: u64,
     ) -> u64 {
         let mut hash = 0;
-        for (_i, (key, value)) in keys.iter().zip(values).enumerate() {
+        for (key, value) in keys.iter().zip(values) {
             hash = (hash * base
                 + Self::hash_item(key, base, modulus)
                 + Self::hash_item(value, base, modulus))
@@ -423,10 +424,10 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
 
     fn update_rolling_hash(
         old_hash: u64,
-        old_key: &Vec<u8>,
-        old_value: &Vec<u8>,
-        new_key: &Vec<u8>,
-        new_value: &Vec<u8>,
+        old_key: &[u8],
+        old_value: &[u8],
+        new_key: &[u8],
+        new_value: &[u8],
         base: u64,
         modulus: u64,
         window_size: u64,
@@ -440,9 +441,8 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
 
         let hash = (old_hash * base + new_key_hash + new_value_hash) % modulus;
         let hash = (hash + modulus - (old_key_hash * base_exp_window_size) % modulus) % modulus;
-        let hash = (hash + modulus - (old_value_hash * base_exp_window_size) % modulus) % modulus;
 
-        hash
+        (hash + modulus - (old_value_hash * base_exp_window_size) % modulus) % modulus
     }
 
     fn mod_exp(base: u64, exp: u64, modulus: u64) -> u64 {
@@ -461,7 +461,7 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
         result
     }
 
-    fn hash_item(item: &Vec<u8>, _base: u64, modulus: u64) -> u64 {
+    fn hash_item(item: &[u8], _base: u64, modulus: u64) -> u64 {
         let mut hasher = XxHash64::with_seed(HASH_SEED);
         item.hash(&mut hasher);
         hasher.finish() % modulus
@@ -478,16 +478,16 @@ trait NodeChunk {
     ) -> u64;
     fn update_rolling_hash(
         old_hash: u64,
-        old_key: &Vec<u8>,
-        old_value: &Vec<u8>,
-        new_key: &Vec<u8>,
-        new_value: &Vec<u8>,
+        old_key: &[u8],
+        old_value: &[u8],
+        new_key: &[u8],
+        new_value: &[u8],
         base: u64,
         modulus: u64,
         window_size: u64,
     ) -> u64;
     fn mod_exp(base: u64, exp: u64, modulus: u64) -> u64;
-    fn hash_item(item: &Vec<u8>, base: u64, modulus: u64) -> u64;
+    fn hash_item(item: &[u8], base: u64, modulus: u64) -> u64;
 }
 
 // implement the Node trait for ProllyNode
