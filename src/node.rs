@@ -212,7 +212,7 @@ impl<const N: usize> ProllyNode<N> {
 
     /// Attempts to balance the node by merging the next (right) neighbor
     /// and then splitting it into smaller nodes if necessary.
-    fn try_balance<S: NodeStorage<N>>(
+    fn balance<S: NodeStorage<N>>(
         &mut self,
         storage: &mut S,
         is_root_node: bool,
@@ -445,7 +445,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             }
 
             // Sort the keys and balance the node
-            self.try_balance(storage, is_root_node, parent_hash);
+            self.balance(storage, is_root_node, parent_hash);
         } else {
             // The node is an internal (non-leaf) node, so find the child node to insert the key-value pair
 
@@ -507,7 +507,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             }
 
             // Sort the keys and balance the node
-            self.try_balance(storage, is_root_node, parent_hash);
+            self.balance(storage, is_root_node, parent_hash);
         }
     }
 
@@ -536,7 +536,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 storage.insert_node(current_node_hash.clone(), self.clone());
 
                 // Sort the keys and balance the node
-                self.try_balance(storage, is_root_node, parent_hash);
+                self.balance(storage, is_root_node, parent_hash);
 
                 true
             } else {
@@ -592,7 +592,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                     storage.insert_node(current_node_hash.clone(), self.clone());
 
                     // Sort the keys and balance the node
-                    self.try_balance(storage, is_root_node, parent_hash);
+                    self.balance(storage, is_root_node, parent_hash);
 
                     true
                 } else {
