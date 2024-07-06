@@ -20,17 +20,23 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use twox_hash::XxHash64;
 
+/// initial (leaf) level from which the prolly tree is built
 const INIT_LEVEL: u8 = 0;
+/// seed for the hash function
 const HASH_SEED: u64 = 0;
+/// default base for the rolling hash
 const DEFAULT_BASE: u64 = 257;
+/// default modulus for the rolling hash
 const DEFAULT_MOD: u64 = 1_000_000_007;
-// min_chunk_size also known as the window size of the rolling hash
+/// min_chunk_size also known as the window size of the rolling hash
 const DEFAULT_MIN_CHUNK_SIZE: usize = 8;
+/// max_chunk_size is the maximum number of key-value pairs in a node
 const DEFAULT_MAX_CHUNK_SIZE: usize = 1024 * 1024;
 
 /// The default pattern is 0b11, which is used to determine the split points
 /// The number of bit 1 determines the probability of split,
 /// e.g., 0b11 has a higher probability of split than 0b1111
+/// default pattern is 0b111111 (value=63)
 const DEFAULT_PATTERN: u64 = 0b111111;
 
 /// Trait representing a node with a fixed size N.
