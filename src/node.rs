@@ -808,7 +808,9 @@ impl<const N: usize> ProllyNode<N> {
 mod tests {
     use super::*;
     use crate::storage::InMemoryNodeStorage;
+    use rand::prelude::StdRng;
     use rand::seq::SliceRandom;
+    use rand::SeedableRng;
 
     /// This test verifies the insertion of key-value pairs into a ProllyNode and ensures
     /// that the keys are sorted correctly and the node splits based on the chunk content.
@@ -941,6 +943,104 @@ mod tests {
 
         // Verify that both trees have the same structure
         assert_eq!(node_ref.traverse(&storage), node.traverse(&storage));
+    }
+
+    #[test]
+    fn test_insert_rnd_order() {
+        let mut storage = InMemoryNodeStorage::<32>::new();
+        let value_for_all = vec![100];
+
+        // Initialize a new root node
+        let mut node_ref: ProllyNode<32> = ProllyNode::builder()
+            .min_chunk_size(8)
+            .pattern(0b1111111)
+            .build();
+
+        // Insert elements in increasing order
+        for i in 1..=15 {
+            node_ref.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
+            storage.insert_node(node_ref.get_hash(), node_ref.clone());
+        }
+        println!("inc order: {}", node_ref.traverse(&storage));
+
+        // Initialize a new root node
+        let mut node: ProllyNode<32> = ProllyNode::builder()
+            .min_chunk_size(8)
+            .pattern(0b1111111)
+            .build();
+
+        // Define custom order for keys
+        let custom_keys = vec![
+            3, 9, 15, 4, 11, 13, 1, 2, 12, 8, 6, 14, 10, 5, 7, // Add more keys as needed
+        ];
+
+        // Insert elements in custom order
+        for key in custom_keys {
+            node.insert(vec![key], value_for_all.clone(), &mut storage, Vec::new());
+            storage.insert_node(node.get_hash(), node.clone()); // save the updated root node hash to storage
+        }
+        println!("ctm order: {}", node.traverse(&storage));
+
+        // Verify that both trees have the same structure
+        assert_eq!(node_ref.traverse(&storage), node.traverse(&storage));
+    }
+
+    /// This test verifies the history independence property of the ProllyNode data structure.
+    /// The test generates different sequences of insertions and ensures that the resulting trees
+    /// are the same regardless of the insertion order.
+    #[test]
+    fn test_history_independence_random() {
+        let value = vec![100];
+        let element_count = 100;
+
+        // Generate different sequences of insertions
+        // seq1. Insert elements in increasing order
+        let sequence1 = (1..=element_count).collect::<Vec<_>>();
+        // seq2. Insert elements in decreasing order
+        let sequence2 = (1..=element_count).rev().collect::<Vec<_>>();
+        // seq3. Insert elements in alternating order, e.g., (1, 3, 5, 7, 2, 4, 6, 8)
+        let sequence3 = (1..=element_count)
+            .step_by(2)
+            .chain((2..=element_count).step_by(2))
+            .collect::<Vec<_>>();
+        // seq4. Insert elements in random order
+        let mut sequence4 = (1..=element_count).collect::<Vec<_>>();
+        let seed = [0u8; 32]; // fixed seed for deterministic behavior
+        let mut rng = StdRng::from_seed(seed);
+        sequence4.shuffle(&mut rng);
+
+        let sequences = vec![sequence1, sequence2, sequence3, sequence4];
+
+        let mut trees = Vec::new();
+
+        for sequence in sequences {
+            let mut storage = InMemoryNodeStorage::<32>::new();
+            let mut node: ProllyNode<32> = ProllyNode::builder()
+                .min_chunk_size(8)
+                .pattern(0b1111111)
+                .build();
+
+            // print the sequence
+            println!("Sequence: {:?}", sequence);
+
+            for key in sequence {
+                node.insert(vec![key as u8], value.clone(), &mut storage, Vec::new());
+                storage.insert_node(node.get_hash(), node.clone());
+            }
+
+            trees.push(node.traverse(&storage));
+        }
+
+        // Assert that all tree traversals are the same
+        for i in 1..trees.len() {
+            assert_eq!(
+                trees[0],
+                trees[i],
+                "History independence failed for sequences: {} and {}",
+                0,
+                i + 1
+            );
+        }
     }
 
     /// This test verifies the insertion and update of key-value pairs into a ProllyNode and ensures
@@ -1146,55 +1246,5 @@ mod tests {
 
         // Print chunk content
         println!("{:?}", node.chunk_content());
-    }
-
-    #[test]
-    #[ignore]
-    fn test_history_independence_random() {
-        let value = vec![100];
-        let element_count = 14; // TODO: FIX IT, 15 fails with random order
-
-        // Generate different sequences of insertions
-        // seq1. Insert elements in increasing order
-        let sequence1 = (1..=element_count).collect::<Vec<_>>();
-        // seq2. Insert elements in decreasing order
-        let sequence2 = (1..=element_count).rev().collect::<Vec<_>>();
-        // seq3. Insert elements in alternating order, e.g., (1, 3, 5, 7, 2, 4, 6, 8)
-        let sequence3 = (1..=element_count)
-            .step_by(2)
-            .chain((2..=element_count).step_by(2))
-            .collect::<Vec<_>>();
-        // seq4. Insert elements in random order
-        let mut sequence4 = (1..=element_count).collect::<Vec<_>>();
-        sequence4.shuffle(&mut rand::thread_rng());
-
-        let sequences = vec![sequence1, sequence2, sequence3, sequence4];
-
-        let mut trees = Vec::new();
-
-        for sequence in sequences {
-            let mut storage = InMemoryNodeStorage::<32>::new();
-            let mut node: ProllyNode<32> = ProllyNode::builder()
-                .min_chunk_size(8)
-                .pattern(0b1111111)
-                .build();
-
-            for key in sequence {
-                node.insert(vec![key as u8], value.clone(), &mut storage, Vec::new());
-            }
-
-            trees.push(node.traverse(&storage));
-        }
-
-        // Assert that all tree traversals are the same
-        for i in 1..trees.len() {
-            assert_eq!(
-                trees[0],
-                trees[i],
-                "History independence failed for sequences: {} and {}",
-                0,
-                i + 1
-            );
-        }
     }
 }
