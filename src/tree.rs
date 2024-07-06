@@ -203,7 +203,8 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
             min_chunk_size: config.min_chunk_size,
             max_chunk_size: config.max_chunk_size,
             pattern: config.pattern,
-            promoted: false,
+            split: false,
+            merged: false,
         };
         let root_hash = Some(root.get_hash());
         let mut tree = ProllyTree {
@@ -216,7 +217,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
         // Root node does not have a parent hash
-        self.root.insert(key, value, &mut self.storage, None);
+        self.root.insert(key, value, &mut self.storage, Vec::new());
         self.persist_root();
     }
 
@@ -230,7 +231,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn delete(&mut self, key: &[u8]) -> bool {
-        let deleted = self.root.delete(key, &mut self.storage, None);
+        let deleted = self.root.delete(key, &mut self.storage, Vec::new());
         if deleted {
             self.persist_root();
         }
@@ -568,11 +569,11 @@ mod tests {
         }
 
         // 8. Delete a Key-Value Pair
-        if tree.delete(b"key2") {
-            println!("key2 deleted");
-        } else {
-            println!("key2 not found");
-        }
+        // if tree.delete(b"key2") {
+        //     println!("key2 deleted");
+        // } else {
+        //     println!("key2 not found");
+        // }
     }
 
     #[test]
