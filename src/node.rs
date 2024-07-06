@@ -989,7 +989,7 @@ mod tests {
     /// The test generates different sequences of insertions and ensures that the resulting trees
     /// are the same regardless of the insertion order.
     #[test]
-    fn test_history_independence_random() {
+    fn test_history_independence() {
         let value = vec![100];
         let element_count = 100;
 
@@ -1231,7 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_content2() {
+    fn test_chunk_content_rnd() {
         let mut storage = InMemoryNodeStorage::<32>::new();
         let value_for_all = vec![100];
 
