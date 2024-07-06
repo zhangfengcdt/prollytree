@@ -602,22 +602,14 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         storage: &mut S,
         mut path_hashes: Vec<ValueDigest<N>>,
     ) -> bool {
-        // Record the current node's hash in the path
-        path_hashes.push(self.get_hash());
-
         // set is root node based on parent hash
-        let is_root_node = path_hashes.len() == 1;
+        let is_root_node = path_hashes.is_empty();
 
         if self.is_leaf {
             // If the node is a leaf, try to find and remove the key
             if let Some(pos) = self.keys.iter().position(|k| k == key) {
                 self.keys.remove(pos);
                 self.values.remove(pos);
-
-                // Check if the leaf node is empty
-                if self.keys.is_empty() {
-                    return true; // Indicate that the node should be removed from the parent
-                }
 
                 // Persist the current node after deletion
                 let current_node_hash = self.get_hash();
@@ -640,52 +632,55 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             if let Some(mut child_node) =
                 storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
             {
-                if child_node.delete(key, storage, path_hashes.clone()) {
-                    // If the deletion was successful, check if the child node is empty
-                    if child_node.keys.is_empty() {
-                        // Remove the empty child node from the parent node's keys and values
-                        self.keys.remove(i);
-                        self.values.remove(i);
+                // Record the current node's hash in the path
+                path_hashes.push(self.get_hash());
 
-                        // Check if the current level is one above the init level and only one child node is left
-                        if self.level == INIT_LEVEL + 1 && self.keys.len() == 1 {
-                            // Retrieve the remaining child node using the stored hash
-                            let remaining_child_hash = self.values[0].clone();
-                            if let Some(mut remaining_child_node) = storage
-                                .get_node_by_hash(&ValueDigest::raw_hash(&remaining_child_hash))
-                            {
-                                // Set the remaining child node as the new init node
-                                remaining_child_node.level = INIT_LEVEL;
-                                remaining_child_node.is_leaf = true;
+                // Insert the key-value pair into the child node retrieved from the storage
+                let is_deleted = child_node.delete(key, storage, path_hashes.clone());
 
-                                // Persist the new root node
-                                let new_root_hash = remaining_child_node.get_hash();
-                                storage.insert_node(
-                                    new_root_hash.clone(),
-                                    remaining_child_node.clone(),
-                                );
+                // Remove the current node's hash from the path
+                path_hashes.pop();
 
-                                // Update the current node to become the new root node
-                                *self = remaining_child_node;
-                            }
-                        }
-                    } else {
-                        // Update the current node's child hash
-                        let new_child_hash = child_node.get_hash();
-                        self.values[i] = new_child_hash.as_bytes().to_vec();
-                    }
-
-                    // Persist the current node after updating the child hash or removing the child node
-                    let current_node_hash = self.get_hash();
-                    storage.insert_node(current_node_hash.clone(), self.clone());
-
-                    // Sort the keys and balance the node
-                    self.balance(storage, is_root_node, &path_hashes);
-
-                    true
-                } else {
-                    false
+                // If no key is deleted (e.g., key is not found), just return false
+                if !is_deleted {
+                    return false;
                 }
+
+                // Save the updated child node back to the storage
+                let new_node_hash = child_node.get_hash().as_bytes().to_vec();
+                storage.insert_node(child_node.get_hash(), child_node.clone());
+
+                // Check if the child node has been merged into its parent's next sibling
+                if child_node.merged {
+                    // remove the next sibling from the parent node
+                    if i + 1 < self.keys.len() {
+                        self.keys.remove(i + 1);
+                        self.values.remove(i + 1);
+                    }
+                }
+
+                // Check if the child node has been split and needs to be updated in the current node
+                //if !child_node.is_leaf && child_node.keys.len() > 1 {
+                if child_node.split {
+                    // Move the key-value pairs from the child node to the current node at position `i`
+                    self.keys.remove(i);
+                    self.values.remove(i);
+
+                    for (j, (key, value)) in child_node
+                        .keys
+                        .into_iter()
+                        .zip(child_node.values)
+                        .enumerate()
+                    {
+                        self.keys.insert(i + j, key);
+                        self.values.insert(i + j, value);
+                    }
+                } else {
+                    // Update this node's value with the new hash
+                    self.values[i] = new_node_hash;
+                }
+
+                true
             } else {
                 // Handle the case when the child node is not found
                 println!("Child node not found: {:?}", child_hash);
@@ -1138,18 +1133,21 @@ mod tests {
     /// The test uses a HashMapNodeStorage to store the nodes.
     /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
     #[test]
-    #[ignore]
     fn test_delete() {
         let mut storage = InMemoryNodeStorage::<32>::new();
         let value_for_all = vec![100];
 
-        let mut node: ProllyNode<32> = ProllyNode::builder().build();
+        let mut node: ProllyNode<32> = ProllyNode::builder()
+            .pattern(0b11)
+            .min_chunk_size(2)
+            .build();
 
         assert_eq!(node.traverse(&storage), "[L0:[]]");
 
         // insert key-value pairs
         for i in 1..=10 {
             node.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
+            storage.insert_node(node.get_hash(), node.clone());
         }
 
         assert_eq!(
@@ -1157,29 +1155,42 @@ mod tests {
             "[L0:[[1], [2], [3], [4], [5], [6]]][L0:[[7], [8], [9], [10]]]"
         );
 
+        println!("{}", node.traverse(&storage));
+
         // Test deleting existing keys
         assert!(node.delete(&[1], &mut storage, Vec::new()));
+        storage.insert_node(node.get_hash(), node.clone());
         assert!(node.find(&[1], &storage).is_none());
+
         assert!(node.delete(&[2], &mut storage, Vec::new()));
+        storage.insert_node(node.get_hash(), node.clone());
         assert!(node.find(&[2], &storage).is_none());
+
         assert!(node.delete(&[3], &mut storage, Vec::new()));
+        storage.insert_node(node.get_hash(), node.clone());
         assert!(node.find(&[3], &storage).is_none());
+
         assert!(node.delete(&[4], &mut storage, Vec::new()));
+        storage.insert_node(node.get_hash(), node.clone());
         assert!(node.find(&[4], &storage).is_none());
+
         assert!(node.delete(&[5], &mut storage, Vec::new()));
+        storage.insert_node(node.get_hash(), node.clone());
         assert!(node.find(&[5], &storage).is_none());
 
         assert_eq!(node.traverse(&storage), "[L0:[[6], [7], [8], [9], [10]]]");
 
         // Test deleting a non-existing key
         assert!(node.delete(&[6], &mut storage, Vec::new()));
-
-        assert_eq!(node.traverse(&storage), "[L0:[[7], [8], [9]]][L0:[[10]]]");
+        assert_eq!(node.traverse(&storage), "[L0:[[7], [8], [9], [10]]]");
 
         // Insert more key-value pairs and delete them to verify tree consistency
         node.insert(vec![7], value_for_all.clone(), &mut storage, Vec::new());
+        storage.insert_node(node.get_hash(), node.clone());
         node.insert(vec![8], value_for_all.clone(), &mut storage, Vec::new());
+        storage.insert_node(node.get_hash(), node.clone());
         node.insert(vec![9], value_for_all.clone(), &mut storage, Vec::new());
+        storage.insert_node(node.get_hash(), node.clone());
 
         assert!(node.delete(&[7], &mut storage, Vec::new()));
         assert!(node.find(&[7], &storage).is_none());
@@ -1206,7 +1217,7 @@ mod tests {
 
         node.insert(vec![32], value_for_all.clone(), &mut storage, Vec::new());
 
-        println!("{}", node.traverse(&storage));
+        assert_eq!(node.traverse(&storage), "[L0:[[17], [20], [32]]]");
     }
 
     #[test]
@@ -1235,11 +1246,16 @@ mod tests {
         let mut storage = InMemoryNodeStorage::<32>::new();
         let value_for_all = vec![100];
 
-        let keys: Vec<Vec<u8>> = vec![vec![29], vec![30], vec![31], vec![32], vec![33], vec![35]];
+        let keys: Vec<Vec<u8>> = vec![vec![17], vec![30], vec![32]];
         let values = vec![value_for_all.clone(); keys.len()];
 
-        // Initialize the prolly tree with multiple key-value pairs using the builder
-        let node: ProllyNode<32> = ProllyNode::builder().keys(keys).values(values).build();
+        // initialize the prolly tree with multiple key-value pairs using the builder
+        let node: ProllyNode<32> = ProllyNode::builder()
+            .keys(keys)
+            .values(values)
+            .pattern(0b11)
+            .min_chunk_size(2)
+            .build();
 
         // Insert the node into storage
         storage.insert_node(node.get_hash(), node.clone());
