@@ -141,6 +141,14 @@ fn main() {
     } else {
         println!("key2 not found");
     }
+
+    // 9. Print tree stats
+    println!("Size: {}", tree.size());
+    println!("Depth: {}", tree.depth());
+    println!("Summary: {}", tree.summary());
+
+    // 10. Print tree structure
+    println!("{:?}", tree.root.print_tree(&tree.storage));    
 }
 
 ```

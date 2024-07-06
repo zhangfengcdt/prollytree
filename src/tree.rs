@@ -568,12 +568,20 @@ mod tests {
             println!("key1 not found");
         }
 
-        // 8. Delete a Key-Value Pair
+        // 8. Delete a key-value pair
         if tree.delete(b"key2") {
             println!("key2 deleted");
         } else {
             println!("key2 not found");
         }
+
+        // 9. Print tree stats
+        println!("Size: {}", tree.size());
+        println!("Depth: {}", tree.depth());
+        println!("Summary: {}", tree.summary());
+
+        // 10. Print Tree
+        println!("{:?}", tree.root.print_tree(&tree.storage));
     }
 
     #[test]
@@ -648,6 +656,8 @@ mod tests {
             let value = i.to_be_bytes().to_vec();
             tree.insert(key.clone(), value.clone());
         }
+
+        println!("{:?}", tree.root.print_tree(&tree.storage));
 
         for i in 0..max_key {
             let key = i.to_be_bytes().to_vec();
