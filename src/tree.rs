@@ -722,15 +722,23 @@ mod tests {
             tree1.insert(vec![i], vec![i]);
         }
 
-        // Insert different key-value pairs into tree2
-        for i in 0..48 {
+        // Insert key-value pairs into tree1
+        for i in 0..50 {
             tree2.insert(vec![i], vec![i]);
         }
+
+        // modify some keys in tree2
+        tree2.insert(vec![10], vec![200]);
+
+        // print tree1 and tree2
+        println!("{:?}", tree1.root.print_tree(&tree1.storage));
+        println!("{:?}", tree2.root.print_tree(&tree2.storage));
 
         // Generate diff between tree1 and tree2
         let differences = tree1.diff(&tree2);
 
         // Check the differences
+        // Expecting only the first L1 value would change
         for diff in &differences {
             match diff {
                 DiffResult::Added(key, value) => {
