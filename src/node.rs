@@ -788,7 +788,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             }
         });
         println!("{}", output);
-        println!("Note: * indicates internal node, [key] indicates leaf node");
+        println!("Note: *[keys] indicates internal node, [keys] indicates leaf node");
     }
 }
 
