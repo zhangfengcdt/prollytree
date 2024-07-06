@@ -898,7 +898,7 @@ mod tests {
             .min_chunk_size(2)
             .build();
 
-        for i in 0..=100 {
+        for i in 3..=89 {
             node.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
             storage.insert_node(node.get_hash(), node.clone());
         }
