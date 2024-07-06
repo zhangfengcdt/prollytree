@@ -569,11 +569,11 @@ mod tests {
         }
 
         // 8. Delete a Key-Value Pair
-        // if tree.delete(b"key2") {
-        //     println!("key2 deleted");
-        // } else {
-        //     println!("key2 not found");
-        // }
+        if tree.delete(b"key2") {
+            println!("key2 deleted");
+        } else {
+            println!("key2 not found");
+        }
     }
 
     #[test]
