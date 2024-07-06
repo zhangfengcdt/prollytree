@@ -82,6 +82,14 @@ pub trait Node<const N: usize> {
     /// # Returns
     /// - `Some(ProllyNode<N>)` if the key was found, `None` otherwise.
     fn find<S: NodeStorage<N>>(&self, key: &[u8], storage: &S) -> Option<ProllyNode<N>>;
+
+    /// Traverses the prolly tree and prints it in a directory-like structure.
+    /// Each key in a node is printed on the same line.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - A reference to the node storage containing the prolly tree nodes.
+    fn print_tree<S: NodeStorage<N>>(&self, storage: &S);
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -220,6 +228,41 @@ impl<const N: usize> ProllyNode<N> {
 
     pub fn builder() -> ProllyNodeBuilder<N> {
         ProllyNodeBuilder::default()
+    }
+
+    pub fn formatted_traverse_3<F>(&self, storage: &impl NodeStorage<N>, formatter: F) -> String
+    where
+        F: Fn(&ProllyNode<N>, &str, bool) -> String,
+    {
+        fn traverse_node<const N: usize, S: NodeStorage<N>, F>(
+            node: &ProllyNode<N>,
+            storage: &S,
+            formatter: &F,
+            prefix: &str,
+            is_last: bool,
+            output: &mut String,
+        ) where
+            F: Fn(&ProllyNode<N>, &str, bool) -> String,
+        {
+            *output += &formatter(node, prefix, is_last);
+
+            let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
+            let children = node.children(storage);
+            for (i, child) in children.iter().enumerate() {
+                traverse_node(
+                    child,
+                    storage,
+                    formatter,
+                    &new_prefix,
+                    i == children.len() - 1,
+                    output,
+                );
+            }
+        }
+
+        let mut output = String::new();
+        traverse_node(self, storage, &formatter, "", true, &mut output);
+        output
     }
 
     /// Attempts to balance the node by merging the next (right) neighbor
@@ -713,6 +756,40 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             }
         }
     }
+
+    fn print_tree<S: NodeStorage<N>>(&self, storage: &S) {
+        println!("root:");
+        let output = self.formatted_traverse_3(storage, |node, prefix, is_last| {
+            let keys_str = node
+                .keys
+                .iter()
+                .map(|key| {
+                    key.iter()
+                        .map(|byte| format!("{:0}", byte))
+                        .collect::<Vec<String>>()
+                        .join(" ")
+                })
+                .collect::<Vec<String>>()
+                .join(", ");
+            if node.is_leaf {
+                format!(
+                    "{}{}[{}]\n",
+                    prefix,
+                    if is_last { "└── " } else { "├── " },
+                    keys_str
+                )
+            } else {
+                format!(
+                    "{}{}*[{}]\n",
+                    prefix,
+                    if is_last { "└── " } else { "├── " },
+                    keys_str
+                )
+            }
+        });
+        println!("{}", output);
+        println!("Note: * indicates internal node, [key] indicates leaf node");
+    }
 }
 
 // implement get hash function of the ProllyNode
@@ -806,6 +883,29 @@ mod tests {
     use rand::prelude::StdRng;
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
+
+    /// This test verifies the insertion of key-value pairs into a ProllyNode and ensures
+    /// that the keys are sorted correctly and the node splits based on the chunk content.
+    /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
+    #[test]
+    fn test_print_tree() {
+        let mut storage = InMemoryNodeStorage::<32>::new();
+        let value_for_all = vec![100];
+
+        // initialize the prolly tree with multiple key-value pairs using the builder
+        let mut node: ProllyNode<32> = ProllyNode::builder()
+            .pattern(0b11)
+            .min_chunk_size(2)
+            .build();
+
+        for i in 0..=100 {
+            node.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
+            storage.insert_node(node.get_hash(), node.clone());
+        }
+
+        // Print the tree
+        node.print_tree(&storage);
+    }
 
     /// This test verifies the insertion of key-value pairs into a ProllyNode and ensures
     /// that the keys are sorted correctly and the node splits based on the chunk content.
