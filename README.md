@@ -87,7 +87,7 @@ To use this library, add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-prollytree = "0.1.0-alpha"
+prollytree = "0.1.0-beta.1"
 ```
 
 ```rust
