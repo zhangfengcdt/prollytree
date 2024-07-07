@@ -87,12 +87,8 @@ To use this library, add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-prollytree = "0.1.0"
+prollytree = "0.1.0-alpha"
 ```
-
-## Usage
-
-Here is a simple example to get you started:
 
 ```rust
 use prollytree::tree::ProllyTree;
@@ -198,11 +194,10 @@ The following features are for Prolly tree library:
 - [X] Implement tree size and depth calculation
 - [X] Implement tree configuration and tree meta data handling
 - [X] Implement proof generation and verification
-- [ ] Support Arrow block encoding and decoding with block metadata
-- [ ] Support tree Indexes 
-- [ ] Support batch insertion and deletion
-- [ ] Support advanced probabilistic tree balancing
-- [ ] Benchmarks and optimizations
+- [ ] Arrow block encoding and decoding with block metadata
+- [ ] Batch insertion and deletion
+- [ ] Advanced probabilistic tree balancing
+- [ ] Tree Indexes
 
 ## Contributing
 
