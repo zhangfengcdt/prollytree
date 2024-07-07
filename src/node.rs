@@ -14,6 +14,7 @@ limitations under the License.
 #![allow(clippy::too_many_arguments)]
 
 use crate::digest::ValueDigest;
+use crate::encoding::EncodingType;
 use crate::storage::NodeStorage;
 use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
@@ -108,7 +109,7 @@ pub struct ProllyNode<const N: usize> {
     pub pattern: u64,
     pub split: bool,
     pub merged: bool,
-    pub encode_types: Vec<Vec<u8>>,
+    pub encode_types: Vec<EncodingType>,
     pub encode_values: Vec<Vec<u8>>,
 }
 

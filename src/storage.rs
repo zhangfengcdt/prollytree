@@ -13,7 +13,6 @@ limitations under the License.
 */
 
 use crate::digest::ValueDigest;
-use crate::encoding::EncodingType;
 use crate::node::ProllyNode;
 use std::collections::HashMap;
 
@@ -56,7 +55,6 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
 
     fn save_config(&self, key: &str, config: &[u8]);
     fn get_config(&self, key: &str) -> Option<Vec<u8>>;
-    fn set_encoding_type(&mut self, encoding_type: Option<EncodingType>);
 }
 
 /// An implementation of `NodeStorage` that stores nodes in a HashMap.
@@ -68,61 +66,31 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
 pub struct InMemoryNodeStorage<const N: usize> {
     map: HashMap<ValueDigest<N>, ProllyNode<N>>,
     configs: HashMap<String, Vec<u8>>,
-    encoding_type: Option<EncodingType>,
 }
 
 impl<const N: usize> Default for InMemoryNodeStorage<N> {
     fn default() -> Self {
-        Self::new(None)
+        Self::new()
     }
 }
 
 impl<const N: usize> InMemoryNodeStorage<N> {
-    pub fn new(encoding_type: Option<EncodingType>) -> Self {
+    pub fn new() -> Self {
         InMemoryNodeStorage {
             map: HashMap::new(),
             configs: HashMap::new(),
-            encoding_type,
         }
     }
 }
 
 impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
-        if let Some(node) = self.map.get(hash) {
-            if let Some(encoding_type) = self.encoding_type {
-                match encoding_type {
-                    EncodingType::Json =>
-                    // Add other encoding types here if needed
-                    {
-                        Some(node.clone())
-                    }
-                };
-            } else {
-                return Some(node.clone());
-            }
-        }
-        None
+        self.map.get(hash).cloned()
     }
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
-        let node_to_insert = if let Some(encoding_type) = self.encoding_type {
-            match encoding_type {
-                EncodingType::Json => {
-                    // Add other encoding types here if needed
-                    Some(node)
-                } // Add other encoding types here if needed
-            }
-        } else {
-            Some(node)
-        };
-
-        if let Some(valid_node) = node_to_insert {
-            self.map.insert(hash, valid_node);
-            Some(())
-        } else {
-            None
-        }
+        self.map.insert(hash, node);
+        Some(())
     }
 
     fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
@@ -137,9 +105,5 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
 
     fn get_config(&self, key: &str) -> Option<Vec<u8>> {
         self.configs.get(key).cloned()
-    }
-
-    fn set_encoding_type(&mut self, encoding_type: Option<EncodingType>) {
-        self.encoding_type = encoding_type;
     }
 }
