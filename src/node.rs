@@ -108,6 +108,8 @@ pub struct ProllyNode<const N: usize> {
     pub pattern: u64,
     pub split: bool,
     pub merged: bool,
+    pub encode_types: Vec<Vec<u8>>,
+    pub encode_values: Vec<Vec<u8>>,
 }
 
 impl<const N: usize> Default for ProllyNode<N> {
@@ -126,6 +128,8 @@ impl<const N: usize> Default for ProllyNode<N> {
             pattern: DEFAULT_PATTERN,
             split: false,
             merged: false,
+            encode_types: Vec::new(),
+            encode_values: Vec::new(),
         }
     }
 }
@@ -322,6 +326,8 @@ impl<const N: usize> ProllyNode<N> {
                 pattern: self.pattern,
                 split: self.split,
                 merged: self.merged,
+                encode_types: self.encode_types.clone(),
+                encode_values: self.encode_values.clone(),
             };
             let sibling_hash = sibling.get_hash();
             storage.insert_node(sibling_hash.clone(), sibling.clone());
@@ -356,6 +362,8 @@ impl<const N: usize> ProllyNode<N> {
                 pattern: self.pattern,
                 split: self.split,
                 merged: self.merged,
+                encode_types: self.encode_types.clone(),
+                encode_values: self.encode_values.clone(),
             };
             *self = new_root;
         } else {

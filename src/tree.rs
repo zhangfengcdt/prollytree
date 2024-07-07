@@ -207,6 +207,8 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
             pattern: config.pattern,
             split: false,
             merged: false,
+            encode_types: Vec::new(),
+            encode_values: Vec::new(),
         };
         let root_hash = Some(root.get_hash());
         let mut tree = ProllyTree {
