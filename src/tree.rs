@@ -195,7 +195,9 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     fn new(storage: S, config: TreeConfig<N>) -> Self {
         let root = ProllyNode {
             keys: Vec::new(),
+            key_schema: config.key_schema.clone(),
             values: Vec::new(),
+            value_schema: config.value_schema.clone(),
             is_leaf: true,
             level: 0,
             base: config.base,
@@ -538,6 +540,8 @@ mod tests {
             max_chunk_size: 8 * 1024,
             pattern: 0b101,
             root_hash: None,
+            key_schema: None,
+            value_schema: None,
         };
 
         // 2. Create and Wrap the Storage Backend
@@ -643,6 +647,8 @@ mod tests {
             max_chunk_size: 8 * 1024,
             pattern: 0b111,
             root_hash: None,
+            key_schema: None,
+            value_schema: None,
         };
 
         let mut tree = ProllyTree::new(storage, config);

@@ -11,8 +11,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
 use crate::digest::ValueDigest;
+use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -23,6 +23,8 @@ pub struct TreeConfig<const N: usize> {
     pub max_chunk_size: usize,
     pub pattern: u64,
     pub root_hash: Option<ValueDigest<N>>,
+    pub key_schema: Option<RootSchema>,
+    pub value_schema: Option<RootSchema>,
 }
 
 impl<const N: usize> Default for TreeConfig<N> {
@@ -34,6 +36,8 @@ impl<const N: usize> Default for TreeConfig<N> {
             max_chunk_size: 16 * 1024,
             pattern: 0b11,
             root_hash: None,
+            key_schema: None,
+            value_schema: None,
         }
     }
 }

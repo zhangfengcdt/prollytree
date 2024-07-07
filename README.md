@@ -191,7 +191,7 @@ For detailed documentation and examples, please visit [docs.rs/prollytree](https
 
 ## Roadmap
 
-The following features are for Prolly Tree library:
+The following features are for Prolly tree library:
 - [X] Implement basic Prolly Tree structure
 - [X] Implement insertion and deletion operations
 - [X] Implement tree traversal and search
@@ -199,9 +199,6 @@ The following features are for Prolly Tree library:
 - [X] Implement tree configuration and tree meta data handling
 - [X] Implement proof generation and verification
 - [ ] Support Arrow block encoding and decoding with block metadata
-- [ ] Support FILE block store (rocksdb)
-- [ ] Support IPFS / IPLD block store
-- [ ] Support S3 block store
 - [ ] Support Prolly Tree Indexes 
 - [ ] Support batch insertion and deletion
 - [ ] Support probabilistic tree balancing with cdf estimation

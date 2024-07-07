@@ -15,6 +15,7 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use crate::storage::NodeStorage;
+use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -95,7 +96,9 @@ pub trait Node<const N: usize> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProllyNode<const N: usize> {
     pub keys: Vec<Vec<u8>>,
+    pub key_schema: Option<RootSchema>,
     pub values: Vec<Vec<u8>>,
+    pub value_schema: Option<RootSchema>,
     pub is_leaf: bool,
     pub level: u8,
     pub base: u64,
@@ -111,7 +114,9 @@ impl<const N: usize> Default for ProllyNode<N> {
     fn default() -> Self {
         ProllyNode {
             keys: Vec::new(),
+            key_schema: None,
             values: Vec::new(),
+            value_schema: None,
             is_leaf: true,
             level: 0,
             base: DEFAULT_BASE,
@@ -305,7 +310,9 @@ impl<const N: usize> ProllyNode<N> {
         for (start, end) in chunks {
             let sibling = ProllyNode {
                 keys: original_keys[start..end].to_vec(),
+                key_schema: self.key_schema.clone(),
                 values: original_values[start..end].to_vec(),
+                value_schema: self.value_schema.clone(),
                 is_leaf: self.is_leaf,
                 level: self.level,
                 base: self.base,
@@ -334,10 +341,12 @@ impl<const N: usize> ProllyNode<N> {
                     .iter()
                     .map(|(sibling, _)| sibling.keys[0].clone())
                     .collect(),
+                key_schema: self.key_schema.clone(),
                 values: siblings
                     .iter()
                     .map(|(_, hash)| hash.as_bytes().to_vec())
                     .collect(),
+                value_schema: self.value_schema.clone(),
                 is_leaf: false,
                 level: self.level + 1,
                 base: self.base,
