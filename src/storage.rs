@@ -13,10 +13,9 @@ limitations under the License.
 */
 
 use crate::digest::ValueDigest;
-use crate::encoding::EncodingScheme;
+use crate::encoding::EncodingType;
 use crate::node::ProllyNode;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// A trait for storage of nodes in the ProllyTree.
 ///
@@ -57,7 +56,7 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
 
     fn save_config(&self, key: &str, config: &[u8]);
     fn get_config(&self, key: &str) -> Option<Vec<u8>>;
-    fn set_encoding_scheme(&mut self, scheme: Option<Arc<dyn EncodingScheme>>);
+    fn set_encoding_type(&mut self, encoding_type: Option<EncodingType>);
 }
 
 /// An implementation of `NodeStorage` that stores nodes in a HashMap.
@@ -69,7 +68,7 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
 pub struct InMemoryNodeStorage<const N: usize> {
     map: HashMap<ValueDigest<N>, ProllyNode<N>>,
     configs: HashMap<String, Vec<u8>>,
-    encoding_scheme: Option<Arc<dyn EncodingScheme>>,
+    encoding_type: Option<EncodingType>,
 }
 
 impl<const N: usize> Default for InMemoryNodeStorage<N> {
@@ -79,12 +78,11 @@ impl<const N: usize> Default for InMemoryNodeStorage<N> {
 }
 
 impl<const N: usize> InMemoryNodeStorage<N> {
-    /// Creates a new instance of `HashMapNodeStorage2`.
-    pub fn new(encoding_scheme: Option<Arc<dyn EncodingScheme>>) -> Self {
+    pub fn new(encoding_type: Option<EncodingType>) -> Self {
         InMemoryNodeStorage {
             map: HashMap::new(),
             configs: HashMap::new(),
-            encoding_scheme,
+            encoding_type,
         }
     }
 }
@@ -92,13 +90,14 @@ impl<const N: usize> InMemoryNodeStorage<N> {
 impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
         if let Some(node) = self.map.get(hash) {
-            // TODO: Implement encoding/decoding for nodes
-            // check node.value_schema, node.key_schema
-            if let Some(encoding) = &self.encoding_scheme {
-                let encoded = encoding.encode(&serde_json::to_value(node).unwrap());
-                return encoding
-                    .decode(&encoded)
-                    .and_then(|val| serde_json::from_value(val).ok());
+            if let Some(encoding_type) = self.encoding_type {
+                match encoding_type {
+                    EncodingType::Json =>
+                    // Add other encoding types here if needed
+                    {
+                        Some(node.clone())
+                    }
+                };
             } else {
                 return Some(node.clone());
             }
@@ -107,13 +106,13 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     }
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
-        let node_to_insert = if let Some(encoding) = &self.encoding_scheme {
-            // TODO: Implement encoding/decoding for nodes
-            // check node.value_schema, node.key_schema
-            let encoded = encoding.encode(&serde_json::to_value(&node).unwrap());
-            encoding
-                .decode(&encoded)
-                .and_then(|val| serde_json::from_value(val).ok())
+        let node_to_insert = if let Some(encoding_type) = self.encoding_type {
+            match encoding_type {
+                EncodingType::Json => {
+                    // Add other encoding types here if needed
+                    Some(node)
+                } // Add other encoding types here if needed
+            }
         } else {
             Some(node)
         };
@@ -140,7 +139,7 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
         self.configs.get(key).cloned()
     }
 
-    fn set_encoding_scheme(&mut self, scheme: Option<Arc<dyn EncodingScheme>>) {
-        self.encoding_scheme = scheme;
+    fn set_encoding_type(&mut self, encoding_type: Option<EncodingType>) {
+        self.encoding_type = encoding_type;
     }
 }
