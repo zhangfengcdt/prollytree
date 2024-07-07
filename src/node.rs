@@ -898,7 +898,7 @@ mod tests {
     /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
     #[test]
     fn test_print_tree() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
         let value_for_all = vec![100];
 
         // initialize the prolly tree with multiple key-value pairs using the builder
@@ -922,7 +922,7 @@ mod tests {
     /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_insert_in_order() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
 
         let value_for_all = vec![100];
 
@@ -985,12 +985,12 @@ mod tests {
 
     #[test]
     fn test_insert_rev_order() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
 
         let value_for_all = vec![100];
         let max_key = 200;
 
-        let mut storage_ref = InMemoryNodeStorage::<32>::new();
+        let mut storage_ref = InMemoryNodeStorage::<32>::default();
 
         // initialize a new root node with the first key-value pair
         let mut node_ref: ProllyNode<32> = ProllyNode::default();
@@ -1017,7 +1017,7 @@ mod tests {
 
     #[test]
     fn test_insert_alt_order() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
         let value_for_all = vec![100];
         let max_key = 200;
 
@@ -1051,7 +1051,7 @@ mod tests {
 
     #[test]
     fn test_insert_rnd_order() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
         let value_for_all = vec![100];
 
         // Initialize a new root node
@@ -1118,7 +1118,7 @@ mod tests {
         let mut trees = Vec::new();
 
         for sequence in sequences {
-            let mut storage = InMemoryNodeStorage::<32>::new();
+            let mut storage = InMemoryNodeStorage::<32>::default();
             let mut node: ProllyNode<32> = ProllyNode::builder()
                 .min_chunk_size(8)
                 .pattern(0b1111111)
@@ -1153,7 +1153,7 @@ mod tests {
     /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_insert_update() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
 
         let value1 = vec![100];
         let value2 = vec![200];
@@ -1198,7 +1198,7 @@ mod tests {
     /// The test uses a HashMapNodeStorage to store the nodes.
     #[test]
     fn test_find() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
 
         let value_for_all = vec![100];
 
@@ -1243,7 +1243,7 @@ mod tests {
     /// The test also checks the tree structure by traversing the tree in a breadth-first manner.
     #[test]
     fn test_delete() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
         let value_for_all = vec![100];
 
         let mut node: ProllyNode<32> = ProllyNode::builder()
@@ -1331,7 +1331,7 @@ mod tests {
 
     #[test]
     fn test_chunk_content() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
         let value_for_all = vec![100];
 
         for size in 0..=20 {
@@ -1352,7 +1352,7 @@ mod tests {
 
     #[test]
     fn test_chunk_content_rnd() {
-        let mut storage = InMemoryNodeStorage::<32>::new();
+        let mut storage = InMemoryNodeStorage::<32>::default();
         let value_for_all = vec![100];
 
         let keys: Vec<Vec<u8>> = vec![vec![17], vec![30], vec![32]];

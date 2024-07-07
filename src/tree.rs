@@ -545,7 +545,7 @@ mod tests {
         };
 
         // 2. Create and Wrap the Storage Backend
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
 
         // 3. Create the Prolly Tree
         let mut tree = ProllyTree::new(storage, config);
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_find() {
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
 
         let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn test_delete() {
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
         let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
         tree.insert(b"key1".to_vec(), b"value1".to_vec());
@@ -617,7 +617,7 @@ mod tests {
 
     #[test]
     fn test_traverse() {
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
         let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
         let key1 = b"key1".to_vec();
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_stats() {
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
         let config = TreeConfig {
             base: 131,
             modulus: 1_000_000_009,
@@ -686,7 +686,7 @@ mod tests {
     #[test]
     fn test_generate_proof() {
         let config = TreeConfig::default();
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
         let mut tree = ProllyTree::new(storage, config);
 
         // Insert key-value pairs
@@ -717,10 +717,10 @@ mod tests {
     #[test]
     fn test_diff() {
         let config = TreeConfig::default();
-        let storage1 = InMemoryNodeStorage::<32>::new();
+        let storage1 = InMemoryNodeStorage::<32>::default();
         let mut tree1 = ProllyTree::new(storage1, config.clone());
 
-        let storage2 = InMemoryNodeStorage::<32>::new();
+        let storage2 = InMemoryNodeStorage::<32>::default();
         let mut tree2 = ProllyTree::new(storage2, config);
 
         // Insert key-value pairs into tree1
