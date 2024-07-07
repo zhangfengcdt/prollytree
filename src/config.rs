@@ -12,6 +12,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 use crate::digest::ValueDigest;
+use crate::encoding::EncodingType;
 use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,8 @@ pub struct TreeConfig<const N: usize> {
     pub root_hash: Option<ValueDigest<N>>,
     pub key_schema: Option<RootSchema>,
     pub value_schema: Option<RootSchema>,
+    pub encode_types: Vec<EncodingType>,
+    pub encode_values: Vec<Vec<u8>>,
 }
 
 impl<const N: usize> Default for TreeConfig<N> {
@@ -38,6 +41,8 @@ impl<const N: usize> Default for TreeConfig<N> {
             root_hash: None,
             key_schema: None,
             value_schema: None,
+            encode_types: vec![],
+            encode_values: vec![],
         }
     }
 }

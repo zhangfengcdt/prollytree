@@ -544,6 +544,8 @@ mod tests {
             root_hash: None,
             key_schema: None,
             value_schema: None,
+            encode_values: vec![],
+            encode_types: vec![],
         };
 
         // 2. Create and Wrap the Storage Backend
@@ -651,6 +653,8 @@ mod tests {
             root_hash: None,
             key_schema: None,
             value_schema: None,
+            encode_values: vec![],
+            encode_types: vec![],
         };
 
         let mut tree = ProllyTree::new(storage, config);
