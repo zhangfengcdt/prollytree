@@ -27,7 +27,6 @@ pub struct TreeConfig<const N: usize> {
     pub key_schema: Option<RootSchema>,
     pub value_schema: Option<RootSchema>,
     pub encode_types: Vec<EncodingType>,
-    pub encode_values: Vec<Vec<u8>>,
 }
 
 impl<const N: usize> Default for TreeConfig<N> {
@@ -42,7 +41,6 @@ impl<const N: usize> Default for TreeConfig<N> {
             key_schema: None,
             value_schema: None,
             encode_types: vec![],
-            encode_values: vec![],
         }
     }
 }

@@ -544,7 +544,6 @@ mod tests {
             root_hash: None,
             key_schema: None,
             value_schema: None,
-            encode_values: vec![],
             encode_types: vec![],
         };
 
@@ -653,7 +652,6 @@ mod tests {
             root_hash: None,
             key_schema: None,
             value_schema: None,
-            encode_values: vec![],
             encode_types: vec![],
         };
 
