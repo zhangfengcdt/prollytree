@@ -194,10 +194,10 @@ The following features are for Prolly tree library:
 - [X] Implement tree size and depth calculation
 - [X] Implement tree configuration and tree meta data handling
 - [X] Implement proof generation and verification
-- [ ] Arrow block encoding and decoding with block metadata
+- [X] Arrow block encoding and decoding
+- [ ] Parquet/Avro block encoding and decoding
 - [ ] Batch insertion and deletion
 - [ ] Advanced probabilistic tree balancing
-- [ ] Tree Indexes
 
 ## Contributing
 
