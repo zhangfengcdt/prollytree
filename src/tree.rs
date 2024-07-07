@@ -195,7 +195,9 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     fn new(storage: S, config: TreeConfig<N>) -> Self {
         let root = ProllyNode {
             keys: Vec::new(),
+            key_schema: config.key_schema.clone(),
             values: Vec::new(),
+            value_schema: config.value_schema.clone(),
             is_leaf: true,
             level: 0,
             base: config.base,
@@ -205,6 +207,8 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
             pattern: config.pattern,
             split: false,
             merged: false,
+            encode_types: Vec::new(),
+            encode_values: Vec::new(),
         };
         let root_hash = Some(root.get_hash());
         let mut tree = ProllyTree {
@@ -538,10 +542,13 @@ mod tests {
             max_chunk_size: 8 * 1024,
             pattern: 0b101,
             root_hash: None,
+            key_schema: None,
+            value_schema: None,
+            encode_types: vec![],
         };
 
         // 2. Create and Wrap the Storage Backend
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
 
         // 3. Create the Prolly Tree
         let mut tree = ProllyTree::new(storage, config);
@@ -586,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_find() {
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
 
         let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
@@ -600,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_delete() {
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
         let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
         tree.insert(b"key1".to_vec(), b"value1".to_vec());
@@ -613,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_traverse() {
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
         let mut tree = ProllyTree::new(storage, TreeConfig::default());
 
         let key1 = b"key1".to_vec();
@@ -635,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_stats() {
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
         let config = TreeConfig {
             base: 131,
             modulus: 1_000_000_009,
@@ -643,6 +650,9 @@ mod tests {
             max_chunk_size: 8 * 1024,
             pattern: 0b111,
             root_hash: None,
+            key_schema: None,
+            value_schema: None,
+            encode_types: vec![],
         };
 
         let mut tree = ProllyTree::new(storage, config);
@@ -680,7 +690,7 @@ mod tests {
     #[test]
     fn test_generate_proof() {
         let config = TreeConfig::default();
-        let storage = InMemoryNodeStorage::<32>::new();
+        let storage = InMemoryNodeStorage::<32>::default();
         let mut tree = ProllyTree::new(storage, config);
 
         // Insert key-value pairs
@@ -711,10 +721,10 @@ mod tests {
     #[test]
     fn test_diff() {
         let config = TreeConfig::default();
-        let storage1 = InMemoryNodeStorage::<32>::new();
+        let storage1 = InMemoryNodeStorage::<32>::default();
         let mut tree1 = ProllyTree::new(storage1, config.clone());
 
-        let storage2 = InMemoryNodeStorage::<32>::new();
+        let storage2 = InMemoryNodeStorage::<32>::default();
         let mut tree2 = ProllyTree::new(storage2, config);
 
         // Insert key-value pairs into tree1

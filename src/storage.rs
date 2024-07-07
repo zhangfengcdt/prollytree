@@ -75,7 +75,6 @@ impl<const N: usize> Default for InMemoryNodeStorage<N> {
 }
 
 impl<const N: usize> InMemoryNodeStorage<N> {
-    /// Creates a new instance of `HashMapNodeStorage2`.
     pub fn new() -> Self {
         InMemoryNodeStorage {
             map: HashMap::new(),

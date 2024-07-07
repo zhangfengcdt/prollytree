@@ -87,12 +87,8 @@ To use this library, add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-prollytree = "0.1.0"
+prollytree = "0.1.0-beta.1"
 ```
-
-## Usage
-
-Here is a simple example to get you started:
 
 ```rust
 use prollytree::tree::ProllyTree;
@@ -191,30 +187,17 @@ For detailed documentation and examples, please visit [docs.rs/prollytree](https
 
 ## Roadmap
 
-The following features are for Prolly Tree library:
+The following features are for Prolly tree library:
 - [X] Implement basic Prolly Tree structure
 - [X] Implement insertion and deletion operations
 - [X] Implement tree traversal and search
 - [X] Implement tree size and depth calculation
 - [X] Implement tree configuration and tree meta data handling
 - [X] Implement proof generation and verification
-- [ ] Support Arrow block encoding and decoding with block metadata
-- [ ] Support FILE block store (rocksdb)
-- [ ] Support IPFS / IPLD block store
-- [ ] Support S3 block store
-- [ ] Support Prolly Tree Indexes 
-- [ ] Support batch insertion and deletion
-- [ ] Support probabilistic tree balancing with cdf estimation
-- [ ] Benchmarks and optimizations
-- [ ] Add documentation and examples
-
-The following features are for other Prolly Tree projects:
-- [ ] prolly-cli tool
-- [ ] prolly-wasm npm package 
-- [ ] prolly-sql with datafusion integration (query engine) 
-- [ ] integration with postgres (cdc)
-- [ ] integration with git
-- [ ] integration with blockchain systems (e.g., substrate)
+- [X] Arrow block encoding and decoding
+- [ ] Parquet/Avro block encoding and decoding
+- [ ] Batch insertion and deletion
+- [ ] Advanced probabilistic tree balancing
 
 ## Contributing
 

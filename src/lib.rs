@@ -46,6 +46,7 @@ limitations under the License.
 pub mod digest;
 pub mod config;
 mod diff;
+mod encoding;
 pub mod errors;
 pub mod node;
 pub mod proof;
