@@ -199,19 +199,10 @@ The following features are for Prolly tree library:
 - [X] Implement tree configuration and tree meta data handling
 - [X] Implement proof generation and verification
 - [ ] Support Arrow block encoding and decoding with block metadata
-- [ ] Support Prolly Tree Indexes 
+- [ ] Support tree Indexes 
 - [ ] Support batch insertion and deletion
-- [ ] Support probabilistic tree balancing with cdf estimation
+- [ ] Support advanced probabilistic tree balancing
 - [ ] Benchmarks and optimizations
-- [ ] Add documentation and examples
-
-The following features are for other Prolly Tree projects:
-- [ ] prolly-cli tool
-- [ ] prolly-wasm npm package 
-- [ ] prolly-sql with datafusion integration (query engine) 
-- [ ] integration with postgres (cdc)
-- [ ] integration with git
-- [ ] integration with blockchain systems (e.g., substrate)
 
 ## Contributing
 
