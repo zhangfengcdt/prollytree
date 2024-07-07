@@ -15,7 +15,7 @@ limitations under the License.
 #![allow(unused_imports)]
 
 use crate::node::ProllyNode;
-use arrow::array::Array;
+use arrow::array::{Array, Float64Array};
 use arrow::array::{ArrayRef, BooleanArray, Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::StreamWriter;
@@ -117,6 +117,7 @@ impl<const N: usize> ProllyNode<N> {
                                     schemars::schema::InstanceType::String => DataType::Utf8,
                                     schemars::schema::InstanceType::Integer => DataType::Int32,
                                     schemars::schema::InstanceType::Boolean => DataType::Boolean,
+                                    schemars::schema::InstanceType::Number => DataType::Float64,
                                     _ => panic!("Unsupported data type in schema"),
                                 }
                             }
@@ -125,6 +126,7 @@ impl<const N: usize> ProllyNode<N> {
                                     [schemars::schema::InstanceType::String] => DataType::Utf8,
                                     [schemars::schema::InstanceType::Integer] => DataType::Int32,
                                     [schemars::schema::InstanceType::Boolean] => DataType::Boolean,
+                                    [schemars::schema::InstanceType::Number] => DataType::Float64,
                                     _ => panic!("Unsupported data type in schema"),
                                 }
                             }
@@ -164,6 +166,13 @@ impl<const N: usize> ProllyNode<N> {
                             .collect();
                         Arc::new(BooleanArray::from(bool_values)) as ArrayRef
                     }
+                    DataType::Float64 => {
+                        let float_values: Vec<f64> = values
+                            .iter()
+                            .map(|value| value.get(field.name()).unwrap().as_f64().unwrap())
+                            .collect();
+                        Arc::new(Float64Array::from(float_values)) as ArrayRef
+                    }
                     _ => panic!("Unsupported data type"),
                 })
                 .collect();
@@ -188,16 +197,19 @@ mod tests {
     use arrow::ipc::reader::StreamReader;
     use schemars::{schema_for, JsonSchema};
 
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
     struct ComplexKey {
-        id: i32,
-        name: String,
+        id: i64,
+        uuid: String,
     }
 
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
     struct ComplexValue {
+        name: String,
+        age: i32,
         description: String,
         active: bool,
+        balance: f64,
     }
 
     #[test]
@@ -219,27 +231,87 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_json_complex() {
+        let mut node: ProllyNode<1024> = ProllyNode::default();
+
+        let keys = vec![
+            ComplexKey {
+                id: 1,
+                uuid: "guid-key1".to_string(),
+            },
+            ComplexKey {
+                id: 2,
+                uuid: "guid-key2".to_string(),
+            },
+        ];
+        let values = vec![
+            ComplexValue {
+                name: "name1".to_string(),
+                age: 30,
+                description: "value1".to_string(),
+                active: true,
+                balance: 100.0,
+            },
+            ComplexValue {
+                name: "name2".to_string(),
+                age: 55,
+                description: "value2".to_string(),
+                active: false,
+                balance: -50.0,
+            },
+        ];
+
+        node.keys = keys
+            .iter()
+            .map(|k| serde_json::to_vec(k).unwrap())
+            .collect();
+        node.values = values
+            .iter()
+            .map(|v| serde_json::to_vec(v).unwrap())
+            .collect();
+        node.encode_types = vec![EncodingType::Json];
+
+        node.encode_all_pairs();
+
+        for encoded_value in &node.encode_values {
+            let decoded: Vec<(Vec<u8>, Vec<u8>)> = serde_json::from_slice(encoded_value).unwrap();
+            for (i, (key, value)) in decoded.iter().enumerate() {
+                let original_key: ComplexKey = serde_json::from_slice(key).unwrap();
+                let original_value: ComplexValue = serde_json::from_slice(value).unwrap();
+                assert_eq!(original_key, keys[i]);
+                assert_eq!(original_value, values[i]);
+            }
+        }
+    }
+
+    #[test]
     fn test_encode_arrow() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
 
         let keys = vec![
             ComplexKey {
                 id: 1,
-                name: "key1".to_string(),
+                uuid: "guid-key1".to_string(),
             },
             ComplexKey {
                 id: 2,
-                name: "key2".to_string(),
+                uuid: "guid-key2".to_string(),
             },
         ];
         let values = vec![
             ComplexValue {
+                name: "name1".to_string(),
+                age: 30,
                 description: "value1".to_string(),
                 active: true,
+                balance: 100.0,
             },
             ComplexValue {
+                name: "name2".to_string(),
+                age: 55,
                 description: "value2".to_string(),
                 active: false,
+                balance: -50.0,
             },
         ];
 
@@ -268,13 +340,16 @@ mod tests {
             // Convert the RecordBatch to a string for comparison
             let batch_string = record_batch_to_string(&batch);
             assert_eq!(batch.num_rows(), 2);
+            println!("{}", batch_string);
             // Define the expected output
             let expected_output = r#"id: 1, 2
-name: key1, key2
+uuid: guid-key1, guid-key2
 active: true, false
+age: 30, 55
+balance: 100, -50
 description: value1, value2
+name: name1, name2
 "#;
-
             assert_eq!(batch_string, expected_output);
         }
     }
@@ -310,6 +385,15 @@ description: value1, value2
                 }
                 DataType::Boolean => {
                     let array = column.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    for i in 0..array.len() {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
+                        result.push_str(&array.value(i).to_string());
+                    }
+                }
+                DataType::Float64 => {
+                    let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
                     for i in 0..array.len() {
                         if i > 0 {
                             result.push_str(", ");
