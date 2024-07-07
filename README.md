@@ -68,19 +68,6 @@ performance or structure.
 - Real-time Collaborative Editing: Support multiple users making simultaneous changes with efficient merging.
 - Cloud Storage Services: Manage file versions and ensure efficient data retrieval and synchronization.
 
-## Prolly Tree v.s. Merkle Search Tree 
-
-- **Structure**: Merkle Search Trees are binary trees with added security features. Prolly Trees are like 
-B-trees (balanced trees) but with the same security features.
-- **Efficiency**: Prolly Trees work like B-trees, which are efficient for large data sets. 
-Merkle Search Trees work like binary trees.
-- **Path Dependency**: Prolly Trees use a special balancing technique to avoid issues common in B-trees. 
-Merkle Search Trees don't specifically address these issues.
-- **Use Cases**: Prolly Trees are good for large databases and peer-to-peer networks. Merkle Search Trees 
-are better for tasks needing binary tree features and security.
-- Prolly Trees are efficient for maintaining large indexes like B-trees and can be shared and synchronized 
-over a peer-to-peer network.
-
 ## Usage
 
 To use this library, add the following to your `Cargo.toml`:
