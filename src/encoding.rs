@@ -11,11 +11,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
+#![allow(unused_imports)]
+
 use crate::node::ProllyNode;
-use arrow::array::{Array, StringArray};
+use arrow::array::Array;
+use arrow::array::{ArrayRef, BooleanArray, Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
+use schemars::schema::RootSchema;
+use schemars::schema::SchemaObject;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -40,47 +46,132 @@ impl<const N: usize> ProllyNode<N> {
     }
 
     fn encode_arrow(&self) -> Vec<u8> {
-        // Prepare the keys and values as strings
-        let key_strings: Vec<&str> = self
-            .keys
-            .iter()
-            .map(|key| std::str::from_utf8(key).unwrap_or(""))
-            .collect();
-        let value_strings: Vec<&str> = self
-            .values
-            .iter()
-            .map(|value| std::str::from_utf8(value).unwrap_or(""))
-            .collect();
+        // Convert keys and values to arrays based on their schemas
+        let key_batch = self.convert_to_arrow_array(&self.keys, &self.key_schema);
+        let value_batch = self.convert_to_arrow_array(&self.values, &self.value_schema);
 
-        // Create Arrow arrays
-        let key_array = StringArray::from(key_strings);
-        let value_array = StringArray::from(value_strings);
+        // Combine the two RecordBatches into one
+        let combined_batch = self.combine_record_batches(key_batch, value_batch);
 
         // Define the schema
-        let schema = Schema::new(vec![
-            Field::new("keys", DataType::Utf8, false),
-            Field::new("values", DataType::Utf8, false),
-        ]);
-
-        // Create a RecordBatch
-        let record_batch = RecordBatch::try_new(
-            schema.clone().into(),
-            vec![
-                Arc::new(key_array) as Arc<dyn Array>,
-                Arc::new(value_array) as Arc<dyn Array>,
-            ],
-        )
-        .unwrap();
+        let schema = combined_batch.schema();
 
         // Encode to Arrow IPC format
         let mut encoded_data = Vec::new();
         {
             let mut writer = StreamWriter::try_new(&mut encoded_data, &schema).unwrap();
-            writer.write(&record_batch).unwrap();
+            writer.write(&combined_batch).unwrap();
             writer.finish().unwrap();
         }
 
         encoded_data
+    }
+
+    fn combine_record_batches(
+        &self,
+        key_batch: RecordBatch,
+        value_batch: RecordBatch,
+    ) -> RecordBatch {
+        // Extract columns from both batches
+        let mut columns = Vec::new();
+        let mut fields = Vec::new();
+
+        // Add key_batch columns and fields
+        for column in key_batch.columns() {
+            columns.push(column.clone());
+        }
+        for field in key_batch.schema().fields() {
+            fields.push(field.clone());
+        }
+
+        // Add value_batch columns and fields
+        for column in value_batch.columns() {
+            columns.push(column.clone());
+        }
+        for field in value_batch.schema().fields() {
+            fields.push(field.clone());
+        }
+
+        // Create a new schema with combined fields
+        let schema = Arc::new(Schema::new(fields));
+
+        // Create a new RecordBatch with combined columns and schema
+        RecordBatch::try_new(schema, columns).unwrap()
+    }
+
+    fn convert_to_arrow_array(&self, data: &[Vec<u8>], schema: &Option<RootSchema>) -> RecordBatch {
+        let schema = schema.as_ref().unwrap();
+
+        if let Some(object) = &schema.schema.object {
+            let fields: Vec<Field> = object
+                .properties
+                .iter()
+                .map(|(name, schema)| {
+                    let data_type = match &schema {
+                        schemars::schema::Schema::Object(SchemaObject {
+                            instance_type: Some(instance_type),
+                            ..
+                        }) => match instance_type {
+                            schemars::schema::SingleOrVec::Single(single_type) => {
+                                match **single_type {
+                                    schemars::schema::InstanceType::String => DataType::Utf8,
+                                    schemars::schema::InstanceType::Integer => DataType::Int32,
+                                    schemars::schema::InstanceType::Boolean => DataType::Boolean,
+                                    _ => panic!("Unsupported data type in schema"),
+                                }
+                            }
+                            schemars::schema::SingleOrVec::Vec(vec_type) => {
+                                match vec_type.as_slice() {
+                                    [schemars::schema::InstanceType::String] => DataType::Utf8,
+                                    [schemars::schema::InstanceType::Integer] => DataType::Int32,
+                                    [schemars::schema::InstanceType::Boolean] => DataType::Boolean,
+                                    _ => panic!("Unsupported data type in schema"),
+                                }
+                            }
+                        },
+                        _ => panic!("Unsupported schema format"),
+                    };
+                    Field::new(name, data_type, false)
+                })
+                .collect();
+
+            let values: Vec<serde_json::Value> = data
+                .iter()
+                .map(|v| serde_json::from_slice(v).unwrap())
+                .collect();
+
+            let arrays: Vec<ArrayRef> = fields
+                .iter()
+                .map(|field| match field.data_type() {
+                    DataType::Utf8 => {
+                        let string_values: Vec<&str> = values
+                            .iter()
+                            .map(|value| value.get(field.name()).unwrap().as_str().unwrap())
+                            .collect();
+                        Arc::new(StringArray::from(string_values)) as ArrayRef
+                    }
+                    DataType::Int32 => {
+                        let int_values: Vec<i32> = values
+                            .iter()
+                            .map(|value| value.get(field.name()).unwrap().as_i64().unwrap() as i32)
+                            .collect();
+                        Arc::new(Int32Array::from(int_values)) as ArrayRef
+                    }
+                    DataType::Boolean => {
+                        let bool_values: Vec<bool> = values
+                            .iter()
+                            .map(|value| value.get(field.name()).unwrap().as_bool().unwrap())
+                            .collect();
+                        Arc::new(BooleanArray::from(bool_values)) as ArrayRef
+                    }
+                    _ => panic!("Unsupported data type"),
+                })
+                .collect();
+
+            // Create a RecordBatch to return
+            return RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).unwrap();
+        }
+        panic!("Unsupported schema");
     }
 
     pub fn encode_all_pairs(&mut self) {
@@ -95,13 +186,26 @@ impl<const N: usize> ProllyNode<N> {
 mod tests {
     use super::*;
     use arrow::ipc::reader::StreamReader;
+    use schemars::{schema_for, JsonSchema};
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    struct ComplexKey {
+        id: i32,
+        name: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    struct ComplexValue {
+        description: String,
+        active: bool,
+    }
 
     #[test]
     fn test_encode_json() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
         node.keys = vec![b"key1".to_vec(), b"key2".to_vec()];
         node.values = vec![b"value1".to_vec(), b"value2".to_vec()];
-        node.encode_types = vec![EncodingType::Json, EncodingType::Json];
+        node.encode_types = vec![EncodingType::Json];
 
         node.encode_all_pairs();
 
@@ -117,39 +221,110 @@ mod tests {
     #[test]
     fn test_encode_arrow() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
-        node.keys = vec![b"key1".to_vec(), b"key2".to_vec()];
-        node.values = vec![b"value1".to_vec(), b"value2".to_vec()];
-        node.encode_types = vec![EncodingType::Arrow, EncodingType::Arrow];
+
+        let keys = vec![
+            ComplexKey {
+                id: 1,
+                name: "key1".to_string(),
+            },
+            ComplexKey {
+                id: 2,
+                name: "key2".to_string(),
+            },
+        ];
+        let values = vec![
+            ComplexValue {
+                description: "value1".to_string(),
+                active: true,
+            },
+            ComplexValue {
+                description: "value2".to_string(),
+                active: false,
+            },
+        ];
+
+        node.keys = keys
+            .iter()
+            .map(|k| serde_json::to_vec(k).unwrap())
+            .collect();
+        node.values = values
+            .iter()
+            .map(|v| serde_json::to_vec(v).unwrap())
+            .collect();
+        node.encode_types = vec![EncodingType::Arrow];
+
+        let key_schema = schema_for!(ComplexKey);
+        let value_schema = schema_for!(ComplexValue);
+        node.key_schema = Some(key_schema);
+        node.value_schema = Some(value_schema);
 
         node.encode_all_pairs();
 
         for encoded_value in &node.encode_values {
-            // Create a schema for decoding
-            let _schema = Arc::new(Schema::new(vec![
-                Field::new("keys", DataType::Utf8, false),
-                Field::new("values", DataType::Utf8, false),
-            ]));
-
             // Decode the Arrow IPC format
             let mut reader = StreamReader::try_new(encoded_value.as_slice(), None).unwrap();
             let batch = reader.next().unwrap().unwrap();
 
-            // Extract keys and values from the RecordBatch
-            let key_array = batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap();
-            let value_array = batch
-                .column(1)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap();
+            // Convert the RecordBatch to a string for comparison
+            let batch_string = record_batch_to_string(&batch);
+            assert_eq!(batch.num_rows(), 2);
+            // Define the expected output
+            let expected_output = r#"id: 1, 2
+name: key1, key2
+active: true, false
+description: value1, value2
+"#;
 
-            for i in 0..key_array.len() {
-                assert_eq!(key_array.value(i).as_bytes(), node.keys[i].as_slice());
-                assert_eq!(value_array.value(i).as_bytes(), node.values[i].as_slice());
-            }
+            assert_eq!(batch_string, expected_output);
         }
+    }
+
+    fn record_batch_to_string(batch: &RecordBatch) -> String {
+        let mut result = String::new();
+        let schema = batch.schema(); // Store schema reference to avoid temporary value issues
+
+        for column_index in 0..batch.num_columns() {
+            let column = batch.column(column_index);
+            let field = schema.field(column_index); // Use the stored schema reference
+
+            result.push_str(&format!("{}: ", field.name()));
+
+            match column.data_type() {
+                DataType::Utf8 => {
+                    let array = column.as_any().downcast_ref::<StringArray>().unwrap();
+                    for i in 0..array.len() {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
+                        result.push_str(array.value(i));
+                    }
+                }
+                DataType::Int32 => {
+                    let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
+                    for i in 0..array.len() {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
+                        result.push_str(&array.value(i).to_string());
+                    }
+                }
+                DataType::Boolean => {
+                    let array = column.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    for i in 0..array.len() {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
+                        result.push_str(&array.value(i).to_string());
+                    }
+                }
+                _ => {
+                    panic!("Unsupported data type");
+                }
+            }
+
+            result.push('\n');
+        }
+
+        result
     }
 }
