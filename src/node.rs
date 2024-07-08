@@ -661,7 +661,9 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         // If so, merge the child node with the current node
         if !self.is_leaf && is_root_node && self.keys.len() == 1 && self.level > INIT_LEVEL + 1 {
             let child_hash = self.values[0].clone();
-            if let Some(mut child_node) = storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash)) {
+            if let Some(mut child_node) =
+                storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
+            {
                 // Merge the child node with the current node
                 self.keys = child_node.keys.clone();
                 self.values = child_node.values.clone();
@@ -803,12 +805,8 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 })
                 .collect::<Vec<String>>()
                 .join(", ");
-            let hash = Self::initialize_rolling_hash(
-                &self.keys,
-                &self.values,
-                self.base,
-                self.modulus,
-            );
+            let hash =
+                Self::initialize_rolling_hash(&self.keys, &self.values, self.base, self.modulus);
             if node.is_leaf {
                 format!(
                     "{}{}[{}]\n",

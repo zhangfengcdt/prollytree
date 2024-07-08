@@ -1,9 +1,9 @@
 use prollytree::node::{Node, ProllyNode};
 use prollytree::storage::{InMemoryNodeStorage, NodeStorage};
 
+use std::io::{self, Write};
 use std::thread::sleep;
 use std::time::Duration;
-use std::io::{self, Write};
 
 fn main() {
     let num_keys = 100; // Variable to control the number of total pairs inserted
@@ -33,11 +33,21 @@ fn main() {
         io::stdout().flush().unwrap();
 
         // Insert the next key in increasing order
-        node_increasing.insert(keys[i].clone(), value_for_all.clone(), &mut storage_increasing, Vec::new());
+        node_increasing.insert(
+            keys[i].clone(),
+            value_for_all.clone(),
+            &mut storage_increasing,
+            Vec::new(),
+        );
         storage_increasing.insert_node(node_increasing.get_hash(), node_increasing.clone());
 
         // Insert the next key in reverse order
-        node_reverse.insert(keys_reverse[i].clone(), value_for_all.clone(), &mut storage_reverse, Vec::new());
+        node_reverse.insert(
+            keys_reverse[i].clone(),
+            value_for_all.clone(),
+            &mut storage_reverse,
+            Vec::new(),
+        );
         storage_reverse.insert_node(node_reverse.get_hash(), node_reverse.clone());
 
         // Print the trees
