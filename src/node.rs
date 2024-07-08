@@ -661,8 +661,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         // If so, merge the child node with the current node
         if !self.is_leaf && is_root_node && self.keys.len() == 1 && self.level > INIT_LEVEL + 1 {
             let child_hash = self.values[0].clone();
-            if let Some(child_node) =
-                storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
+            if let Some(child_node) = storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
             {
                 // Merge the child node with the current node
                 self.keys.clone_from(&child_node.keys);

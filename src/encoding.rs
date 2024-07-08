@@ -234,15 +234,18 @@ mod tests {
     fn test_encode_json_complex() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
 
-        let keys = [ComplexKey {
+        let keys = [
+            ComplexKey {
                 id: 1,
                 uuid: "guid-key1".to_string(),
             },
             ComplexKey {
                 id: 2,
                 uuid: "guid-key2".to_string(),
-            }];
-        let values = [ComplexValue {
+            },
+        ];
+        let values = [
+            ComplexValue {
                 name: "name1".to_string(),
                 age: 30,
                 description: "value1".to_string(),
@@ -255,7 +258,8 @@ mod tests {
                 description: "value2".to_string(),
                 active: false,
                 balance: -50.0,
-            }];
+            },
+        ];
 
         node.keys = keys
             .iter()
@@ -284,15 +288,18 @@ mod tests {
     fn test_encode_arrow() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
 
-        let keys = [ComplexKey {
+        let keys = [
+            ComplexKey {
                 id: 1,
                 uuid: "guid-key1".to_string(),
             },
             ComplexKey {
                 id: 2,
                 uuid: "guid-key2".to_string(),
-            }];
-        let values = [ComplexValue {
+            },
+        ];
+        let values = [
+            ComplexValue {
                 name: "name1".to_string(),
                 age: 30,
                 description: "value1".to_string(),
@@ -305,7 +312,8 @@ mod tests {
                 description: "value2".to_string(),
                 active: false,
                 balance: -50.0,
-            }];
+            },
+        ];
 
         node.keys = keys
             .iter()
