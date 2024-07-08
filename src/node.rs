@@ -655,6 +655,21 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             // Sort the keys and balance the node
             self.balance(storage, is_root_node, &path_hashes);
         }
+
+        // Extra check / logic before returning
+        // Check if the node is a non-leaf root node and it has only one child
+        // If so, merge the child node with the current node
+        if !self.is_leaf && is_root_node && self.keys.len() == 1 && self.level > INIT_LEVEL + 1 {
+            let child_hash = self.values[0].clone();
+            if let Some(child_node) = storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
+            {
+                // Merge the child node with the current node
+                self.keys.clone_from(&child_node.keys);
+                self.values.clone_from(&child_node.values);
+                self.is_leaf = child_node.is_leaf;
+                self.level = child_node.level;
+            }
+        }
     }
 
     fn delete<S: NodeStorage<N>>(
@@ -789,6 +804,8 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 })
                 .collect::<Vec<String>>()
                 .join(", ");
+            let hash =
+                Self::initialize_rolling_hash(&self.keys, &self.values, self.base, self.modulus);
             if node.is_leaf {
                 format!(
                     "{}{}[{}]\n",
@@ -798,15 +815,17 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 )
             } else {
                 format!(
-                    "{}{}*[{}]\n",
+                    "{}{}#({}\x1B[31m0x{:?}\x1B[0m)[{}]\n",
                     prefix,
                     if is_last { "└── " } else { "├── " },
+                    "",
+                    hash,
                     keys_str
                 )
             }
         });
         println!("{}", output);
-        println!("Note: *[keys] indicates internal node, [keys] indicates leaf node");
+        println!("Note: #[keys] indicates internal node, [keys] indicates leaf node");
     }
 }
 

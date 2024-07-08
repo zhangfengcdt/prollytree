@@ -234,7 +234,7 @@ mod tests {
     fn test_encode_json_complex() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
 
-        let keys = vec![
+        let keys = [
             ComplexKey {
                 id: 1,
                 uuid: "guid-key1".to_string(),
@@ -244,7 +244,7 @@ mod tests {
                 uuid: "guid-key2".to_string(),
             },
         ];
-        let values = vec![
+        let values = [
             ComplexValue {
                 name: "name1".to_string(),
                 age: 30,
@@ -288,7 +288,7 @@ mod tests {
     fn test_encode_arrow() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
 
-        let keys = vec![
+        let keys = [
             ComplexKey {
                 id: 1,
                 uuid: "guid-key1".to_string(),
@@ -298,7 +298,7 @@ mod tests {
                 uuid: "guid-key2".to_string(),
             },
         ];
-        let values = vec![
+        let values = [
             ComplexValue {
                 name: "name1".to_string(),
                 age: 30,
