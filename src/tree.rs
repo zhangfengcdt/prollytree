@@ -157,6 +157,14 @@ pub trait Tree<const N: usize, S: NodeStorage<N>> {
     ///
     /// A vector of `DiffResult` containing the differences between the two trees.
     fn diff(&self, other: &Self) -> Vec<DiffResult>;
+
+    /// Prints the tree structure to the console.
+    /// This function is useful for debugging and visualizing the tree.
+    /// It prints the tree structure in a human-readable format.
+    /// The tree is printed in a depth-first manner, starting from the root node.
+    /// Each node is printed with its keys and values, along with the hash of the node.
+    ///
+    fn print(&mut self);
 }
 
 pub struct TreeStats {
@@ -429,16 +437,16 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
                 // If it's the last node in the path, verify the leaf node
                 if i == proof.path.len() - 1 {
-                    if node.is_leaf {
-                        return node.keys.iter().any(|k| k == key)
+                    return if node.is_leaf {
+                        node.keys.iter().any(|k| k == key)
                             && (expected_value.is_none()
                                 || node
                                     .values
                                     .iter()
-                                    .any(|v| expected_value.unwrap() == &v[..]));
+                                    .any(|v| expected_value.unwrap() == &v[..]))
                     } else {
-                        return false; // Path should end at a leaf node
-                    }
+                        false // Path should end at a leaf node
+                    };
                 }
 
                 // Move to the next node in the path by finding the correct child
@@ -457,6 +465,10 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         let mut diffs = Vec::new();
         self.diff_recursive(&self.root, &other.root, &mut diffs);
         diffs
+    }
+
+    fn print(&mut self) {
+        println!("{:?}", self.root.print_tree(&self.storage));
     }
 }
 
