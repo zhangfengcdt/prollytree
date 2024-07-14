@@ -468,7 +468,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn print(&mut self) {
-        println!("{:?}", self.root.print_tree(&self.storage));
+        self.root.print_tree(&self.storage);
     }
 }
 

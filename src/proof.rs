@@ -14,9 +14,44 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Proof<const N: usize> {
     pub path: Vec<ValueDigest<N>>, // Hashes of the nodes along the path
     pub target_hash: Option<ValueDigest<N>>, // Hash of the target node (if exists)
+}
+
+// Assuming ValueDigest has a ToString implementation or similar
+impl<const N: usize> fmt::Debug for Proof<N> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Proof")
+            .field(
+                "path",
+                &self
+                    .path
+                    .iter()
+                    .map(|digest| {
+                        let bytes = digest.as_bytes();
+                        if bytes.len() > 8 {
+                            format!("{:02x?}...", &bytes[..8])
+                        } else {
+                            format!("{:02x?}", bytes)
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .field(
+                "target_hash",
+                &self.target_hash.as_ref().map(|digest| {
+                    let bytes = digest.as_bytes();
+                    if bytes.len() > 8 {
+                        format!("{:02x?}...", &bytes[..8])
+                    } else {
+                        format!("{:02x?}", bytes)
+                    }
+                }),
+            )
+            .finish()
+    }
 }
