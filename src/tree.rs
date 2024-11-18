@@ -627,9 +627,9 @@ mod tests {
 
     #[test]
     fn file_node_storage_test() {
-        use std::path::PathBuf;
         use crate::storage::FileNodeStorage;
         use std::fs;
+        use std::path::PathBuf;
 
         // 1. Create a custom tree config
         let config = TreeConfig {
