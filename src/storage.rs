@@ -15,6 +15,10 @@ limitations under the License.
 use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
 use std::collections::HashMap;
+use std::fmt;
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::PathBuf;
 
 /// A trait for storage of nodes in the ProllyTree.
 ///
@@ -105,5 +109,83 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
 
     fn get_config(&self, key: &str) -> Option<Vec<u8>> {
         self.configs.get(key).cloned()
+    }
+}
+
+pub struct FileNodeStorage<const N: usize> {
+    storage_dir: PathBuf,
+}
+
+impl<const N: usize> FileNodeStorage<N> {
+    pub fn new(storage_dir: PathBuf) -> Self {
+        fs::create_dir_all(&storage_dir).unwrap();
+        FileNodeStorage { storage_dir }
+    }
+
+    fn node_path(&self, hash: &ValueDigest<N>) -> PathBuf {
+        self.storage_dir.join(format!("{:x}", hash))
+    }
+
+    fn config_path(&self, key: &str) -> PathBuf {
+        self.storage_dir.join(format!("config_{}", key))
+    }
+}
+
+impl<const N: usize> fmt::LowerHex for ValueDigest<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
+        let path = self.node_path(hash);
+        if path.exists() {
+            let mut file = File::open(path).unwrap();
+            let mut data = Vec::new();
+            file.read_to_end(&mut data).unwrap();
+            Some(bincode::deserialize(&data).unwrap())
+        } else {
+            None
+        }
+    }
+
+    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
+        let path = self.node_path(&hash);
+        let data = bincode::serialize(&node).unwrap();
+        let mut file = File::create(path).unwrap();
+        file.write_all(&data).unwrap();
+        Some(())
+    }
+
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
+        let path = self.node_path(hash);
+        if path.exists() {
+            fs::remove_file(path).unwrap();
+            Some(())
+        } else {
+            None
+        }
+    }
+
+    fn save_config(&self, key: &str, config: &[u8]) {
+        let path = self.config_path(key);
+        let mut file = File::create(path).unwrap();
+        file.write_all(config).unwrap();
+    }
+
+    fn get_config(&self, key: &str) -> Option<Vec<u8>> {
+        let path = self.config_path(key);
+        if path.exists() {
+            let mut file = File::open(path).unwrap();
+            let mut data = Vec::new();
+            file.read_to_end(&mut data).unwrap();
+            Some(data)
+        } else {
+            None
+        }
     }
 }

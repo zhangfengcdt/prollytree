@@ -567,7 +567,7 @@ mod tests {
 
     /// Example usage of the Prolly Tree
     #[test]
-    fn main_test() {
+    fn inmem_node_storage_test() {
         // 1. Create a custom tree config
         let config = TreeConfig {
             base: 131,
@@ -623,6 +623,73 @@ mod tests {
 
         // 10. Print Tree
         println!("{:?}", tree.root.print_tree(&tree.storage));
+    }
+
+    #[test]
+    fn file_node_storage_test() {
+        use crate::storage::FileNodeStorage;
+        use std::fs;
+        use std::path::PathBuf;
+
+        // 1. Create a custom tree config
+        let config = TreeConfig {
+            base: 131,
+            modulus: 1_000_000_009,
+            min_chunk_size: 4,
+            max_chunk_size: 8 * 1024,
+            pattern: 0b101,
+            root_hash: None,
+            key_schema: None,
+            value_schema: None,
+            encode_types: vec![],
+        };
+
+        // 2. Create and Wrap the Storage Backend
+        let storage_dir = PathBuf::from("/tmp/prolly_tree_storage");
+        let storage = FileNodeStorage::<32>::new(storage_dir.clone());
+
+        // 3. Create the Prolly Tree
+        let mut tree = ProllyTree::new(storage, config);
+
+        // 4. Insert New Key-Value Pairs
+        tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        tree.insert(b"key2".to_vec(), b"value2".to_vec());
+
+        // 5. Traverse the Tree with a Custom Formatter
+        let traversal = tree.formatted_traverse(|node| {
+            let keys_as_strings: Vec<String> =
+                node.keys.iter().map(|k| format!("{:?}", k)).collect();
+            format!("[L{}: {}]", node.level, keys_as_strings.join(", "))
+        });
+        println!("Traversal: {}", traversal);
+
+        // 6. Update the Value for an Existing Key
+        tree.update(b"key1".to_vec(), b"new_value1".to_vec());
+
+        // 7. Find or Search for a Key
+        if let Some(node) = tree.find(b"key1") {
+            println!("Found key1 with value: {:?}", node);
+        } else {
+            println!("key1 not found");
+        }
+
+        // 8. Delete a key-value pair
+        if tree.delete(b"key2") {
+            println!("key2 deleted");
+        } else {
+            println!("key2 not found");
+        }
+
+        // 9. Print tree stats
+        println!("Size: {}", tree.size());
+        println!("Depth: {}", tree.depth());
+        println!("Summary: {}", tree.summary());
+
+        // 10. Print Tree
+        println!("{:?}", tree.root.print_tree(&tree.storage));
+
+        // Clean up the storage directory
+        fs::remove_dir_all(storage_dir).unwrap();
     }
 
     #[test]
