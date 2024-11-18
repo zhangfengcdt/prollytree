@@ -15,6 +15,7 @@ limitations under the License.
 // TODO: fix this!!!
 #![allow(dead_code)]
 #![allow(unused_macros)]
+#![allow(unexpected_cfgs)]
 
 // Static variable for one-time initialization
 pub(crate) static LOGGING_INIT: std::sync::Once = std::sync::Once::new();
