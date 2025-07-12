@@ -15,7 +15,19 @@ limitations under the License.
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum Error {
+pub enum ProllyTreeError {
+    #[error("Arrow error: {0}")]
+    Arrow(#[from] arrow::error::ArrowError),
+
+    #[error("Parquet error: {0}")]
+    Parquet(#[from] parquet::errors::ParquetError),
+
+    #[error("Serde JSON error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
     #[error("Unsupported Value Type")]
     UnsupportedValueType,
 
@@ -30,4 +42,10 @@ pub enum Error {
 
     #[error("Serde Error")]
     Serde,
+
+    #[error("Schema not found")]
+    SchemaNotFound,
+
+    #[error("Invalid JSON value")]
+    InvalidJsonValue,
 }
