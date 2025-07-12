@@ -185,7 +185,7 @@ The following features are for Prolly tree library for Version 0.1.0:
 
 The following features are for Prolly tree library for Version 0.2.0:
 - [X] Arrow block encoding and decoding
-- [ ] Parquet/Avro block encoding and decoding
+- [X] Parquet/Avro block encoding and decoding
 - [ ] Advanced probabilistic tree balancing
 
 ## Contributing
