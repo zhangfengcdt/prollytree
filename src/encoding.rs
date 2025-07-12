@@ -14,6 +14,7 @@ limitations under the License.
 
 #![allow(unused_imports)]
 
+use crate::errors::ProllyTreeError;
 use crate::node::ProllyNode;
 use arrow::array::{Array, Float64Array};
 use arrow::array::{ArrayRef, BooleanArray, Int32Array, StringArray};
@@ -34,27 +35,28 @@ pub enum EncodingType {
 }
 
 impl<const N: usize> ProllyNode<N> {
-    pub fn encode_pairs(&mut self, encoding_index: usize) {
+    pub fn encode_pairs(&mut self, encoding_index: usize) -> Result<(), ProllyTreeError> {
         let encoded_value = match self.encode_types[encoding_index] {
-            EncodingType::Json => self.encode_json(),
-            EncodingType::Arrow => self.encode_arrow(),
-            EncodingType::Parquet => self.encode_parquet(),
+            EncodingType::Json => self.encode_json()?,
+            EncodingType::Arrow => self.encode_arrow()?,
+            EncodingType::Parquet => self.encode_parquet()?,
         };
         self.encode_values[encoding_index] = encoded_value;
+        Ok(())
     }
 
-    fn encode_json(&self) -> Vec<u8> {
+    fn encode_json(&self) -> Result<Vec<u8>, ProllyTreeError> {
         let pairs: Vec<(&Vec<u8>, &Vec<u8>)> = self.keys.iter().zip(self.values.iter()).collect();
-        serde_json::to_vec(&pairs).unwrap_or_else(|_| Vec::new())
+        Ok(serde_json::to_vec(&pairs)?)
     }
 
-    fn encode_arrow(&self) -> Vec<u8> {
+    fn encode_arrow(&self) -> Result<Vec<u8>, ProllyTreeError> {
         // Convert keys and values to arrays based on their schemas
-        let key_batch = self.convert_to_arrow_array(&self.keys, &self.key_schema);
-        let value_batch = self.convert_to_arrow_array(&self.values, &self.value_schema);
+        let key_batch = self.convert_to_arrow_array(&self.keys, &self.key_schema)?;
+        let value_batch = self.convert_to_arrow_array(&self.values, &self.value_schema)?;
 
         // Combine the two RecordBatches into one
-        let combined_batch = self.combine_record_batches(key_batch, value_batch);
+        let combined_batch = self.combine_record_batches(key_batch, value_batch)?;
 
         // Define the schema
         let schema = combined_batch.schema();
@@ -62,37 +64,37 @@ impl<const N: usize> ProllyNode<N> {
         // Encode to Arrow IPC format
         let mut encoded_data = Vec::new();
         {
-            let mut writer = StreamWriter::try_new(&mut encoded_data, &schema).unwrap();
-            writer.write(&combined_batch).unwrap();
-            writer.finish().unwrap();
+            let mut writer = StreamWriter::try_new(&mut encoded_data, &schema)?;
+            writer.write(&combined_batch)?;
+            writer.finish()?;
         }
 
-        encoded_data
+        Ok(encoded_data)
     }
 
-    fn encode_parquet(&self) -> Vec<u8> {
+    fn encode_parquet(&self) -> Result<Vec<u8>, ProllyTreeError> {
         // Convert keys and values to arrays based on their schemas
-        let key_batch = self.convert_to_arrow_array(&self.keys, &self.key_schema);
-        let value_batch = self.convert_to_arrow_array(&self.values, &self.value_schema);
+        let key_batch = self.convert_to_arrow_array(&self.keys, &self.key_schema)?;
+        let value_batch = self.convert_to_arrow_array(&self.values, &self.value_schema)?;
 
         // Combine the two RecordBatches into one
-        let combined_batch = self.combine_record_batches(key_batch, value_batch);
+        let combined_batch = self.combine_record_batches(key_batch, value_batch)?;
         let schema = combined_batch.schema();
 
         // Encode to Parquet format
         let mut encoded_data = Vec::new();
-        let mut writer = ArrowWriter::try_new(&mut encoded_data, schema, None).unwrap();
-        writer.write(&combined_batch).unwrap();
-        writer.close().unwrap();
+        let mut writer = ArrowWriter::try_new(&mut encoded_data, schema, None)?;
+        writer.write(&combined_batch)?;
+        writer.close()?;
 
-        encoded_data
+        Ok(encoded_data)
     }
 
     fn combine_record_batches(
         &self,
         key_batch: RecordBatch,
         value_batch: RecordBatch,
-    ) -> RecordBatch {
+    ) -> Result<RecordBatch, ProllyTreeError> {
         // Extract columns from both batches
         let mut columns = Vec::new();
         let mut fields = Vec::new();
@@ -117,11 +119,15 @@ impl<const N: usize> ProllyNode<N> {
         let schema = Arc::new(Schema::new(fields));
 
         // Create a new RecordBatch with combined columns and schema
-        RecordBatch::try_new(schema, columns).unwrap()
+        Ok(RecordBatch::try_new(schema, columns)?)
     }
 
-    fn convert_to_arrow_array(&self, data: &[Vec<u8>], schema: &Option<RootSchema>) -> RecordBatch {
-        let schema = schema.as_ref().unwrap();
+    fn convert_to_arrow_array(
+        &self,
+        data: &[Vec<u8>],
+        schema: &Option<RootSchema>,
+    ) -> Result<RecordBatch, ProllyTreeError> {
+        let schema = schema.as_ref().ok_or(ProllyTreeError::SchemaNotFound)?;
 
         if let Some(object) = &schema.schema.object {
             let fields: Vec<Field> = object
@@ -158,57 +164,87 @@ impl<const N: usize> ProllyNode<N> {
                 })
                 .collect();
 
-            let values: Vec<serde_json::Value> = data
+            let values: Result<Vec<serde_json::Value>, _> = data
                 .iter()
-                .map(|v| serde_json::from_slice(v).unwrap())
+                .map(|v| serde_json::from_slice(v))
                 .collect();
+            let values = values?;
 
-            let arrays: Vec<ArrayRef> = fields
+            let arrays: Result<Vec<ArrayRef>, _> = fields
                 .iter()
-                .map(|field| match field.data_type() {
-                    DataType::Utf8 => {
-                        let string_values: Vec<&str> = values
-                            .iter()
-                            .map(|value| value.get(field.name()).unwrap().as_str().unwrap())
-                            .collect();
-                        Arc::new(StringArray::from(string_values)) as ArrayRef
+                .map(|field| -> Result<ArrayRef, ProllyTreeError> {
+                    match field.data_type() {
+                        DataType::Utf8 => {
+                            let string_values: Result<Vec<&str>, _> = values
+                                .iter()
+                                .map(|value| {
+                                    value
+                                        .get(field.name())
+                                        .and_then(|v| v.as_str())
+                                        .ok_or(ProllyTreeError::InvalidJsonValue)
+                                })
+                                .collect();
+                            Ok(Arc::new(StringArray::from(string_values?)) as ArrayRef)
+                        }
+                        DataType::Int32 => {
+                            let int_values: Result<Vec<i32>, _> = values
+                                .iter()
+                                .map(|value| {
+                                    value
+                                        .get(field.name())
+                                        .and_then(|v| v.as_i64())
+                                        .map(|v| v as i32)
+                                        .ok_or(ProllyTreeError::InvalidJsonValue)
+                                })
+                                .collect();
+                            Ok(Arc::new(Int32Array::from(int_values?)) as ArrayRef)
+                        }
+                        DataType::Boolean => {
+                            let bool_values: Result<Vec<bool>, _> = values
+                                .iter()
+                                .map(|value| {
+                                    value
+                                        .get(field.name())
+                                        .and_then(|v| v.as_bool())
+                                        .ok_or(ProllyTreeError::InvalidJsonValue)
+                                })
+                                .collect();
+                            Ok(Arc::new(BooleanArray::from(bool_values?)) as ArrayRef)
+                        }
+                        DataType::Float64 => {
+                            let float_values: Result<Vec<f64>, _> = values
+                                .iter()
+                                .map(|value| {
+                                    value
+                                        .get(field.name())
+                                        .and_then(|v| v.as_f64())
+                                        .ok_or(ProllyTreeError::InvalidJsonValue)
+                                })
+                                .collect();
+                            Ok(Arc::new(Float64Array::from(float_values?)) as ArrayRef)
+                        }
+                        _ => panic!("Unsupported data type"),
                     }
-                    DataType::Int32 => {
-                        let int_values: Vec<i32> = values
-                            .iter()
-                            .map(|value| value.get(field.name()).unwrap().as_i64().unwrap() as i32)
-                            .collect();
-                        Arc::new(Int32Array::from(int_values)) as ArrayRef
-                    }
-                    DataType::Boolean => {
-                        let bool_values: Vec<bool> = values
-                            .iter()
-                            .map(|value| value.get(field.name()).unwrap().as_bool().unwrap())
-                            .collect();
-                        Arc::new(BooleanArray::from(bool_values)) as ArrayRef
-                    }
-                    DataType::Float64 => {
-                        let float_values: Vec<f64> = values
-                            .iter()
-                            .map(|value| value.get(field.name()).unwrap().as_f64().unwrap())
-                            .collect();
-                        Arc::new(Float64Array::from(float_values)) as ArrayRef
-                    }
-                    _ => panic!("Unsupported data type"),
                 })
                 .collect();
 
             // Create a RecordBatch to return
-            return RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).unwrap();
+            Ok(RecordBatch::try_new(
+                Arc::new(Schema::new(fields)),
+                arrays?,
+            )?)
         }
-        panic!("Unsupported schema");
+        else {
+            panic!("Unsupported schema")
+        }
     }
 
-    pub fn encode_all_pairs(&mut self) {
+    pub fn encode_all_pairs(&mut self) -> Result<(), ProllyTreeError> {
         self.encode_values = vec![Vec::new(); self.encode_types.len()];
         for i in 0..self.encode_types.len() {
-            self.encode_pairs(i);
+            self.encode_pairs(i)?;
         }
+        Ok(())
     }
 }
 
@@ -241,7 +277,7 @@ mod tests {
         node.values = vec![b"value1".to_vec(), b"value2".to_vec()];
         node.encode_types = vec![EncodingType::Json];
 
-        node.encode_all_pairs();
+        node.encode_all_pairs().unwrap();
 
         for encoded_value in &node.encode_values {
             let decoded: Vec<(Vec<u8>, Vec<u8>)> = serde_json::from_slice(encoded_value).unwrap();
@@ -293,7 +329,7 @@ mod tests {
             .collect();
         node.encode_types = vec![EncodingType::Json];
 
-        node.encode_all_pairs();
+        node.encode_all_pairs().unwrap();
 
         for encoded_value in &node.encode_values {
             let decoded: Vec<(Vec<u8>, Vec<u8>)> = serde_json::from_slice(encoded_value).unwrap();
@@ -352,7 +388,7 @@ mod tests {
         node.key_schema = Some(key_schema);
         node.value_schema = Some(value_schema);
 
-        node.encode_all_pairs();
+        node.encode_all_pairs().unwrap();
 
         for encoded_value in &node.encode_values {
             // Decode the Arrow IPC format
@@ -428,7 +464,7 @@ name: name1, name2
         node.key_schema = Some(key_schema);
         node.value_schema = Some(value_schema);
 
-        node.encode_all_pairs();
+        node.encode_all_pairs().unwrap();
 
         for encoded_value in &node.encode_values {
             // Decode the Parquet format
