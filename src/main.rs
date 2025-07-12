@@ -79,8 +79,8 @@ fn main() {
             "Proof for key \x1b[32m{:?}\x1b[0m in increasing order is valid: {}",
             keys[i], is_valid
         );
-        println!("Proof: {:#?}", proof); // Assuming Debug trait is implemented
-                                         // Sleep for 2 seconds
+        println!("Proof: {proof:#?}"); // Assuming Debug trait is implemented
+                                       // Sleep for 2 seconds
         sleep(Duration::from_millis(200));
     }
 
@@ -119,8 +119,8 @@ fn main() {
             "Proof for key \x1b[32m{:?}\x1b[0m in reverse order is valid: {}",
             keys[i], is_valid
         );
-        println!("Proof: {:#?}", proof); // Assuming Debug trait is implemented
-                                         // Sleep for 2 seconds
+        println!("Proof: {proof:#?}"); // Assuming Debug trait is implemented
+                                       // Sleep for 2 seconds
         sleep(Duration::from_millis(200));
     }
 }

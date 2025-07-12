@@ -593,18 +593,17 @@ mod tests {
 
         // 5. Traverse the Tree with a Custom Formatter
         let traversal = tree.formatted_traverse(|node| {
-            let keys_as_strings: Vec<String> =
-                node.keys.iter().map(|k| format!("{:?}", k)).collect();
+            let keys_as_strings: Vec<String> = node.keys.iter().map(|k| format!("{k:?}")).collect();
             format!("[L{}: {}]", node.level, keys_as_strings.join(", "))
         });
-        println!("Traversal: {}", traversal);
+        println!("Traversal: {traversal}");
 
         // 6. Update the Value for an Existing Key
         tree.update(b"key1".to_vec(), b"new_value1".to_vec());
 
         // 7. Find or Search for a Key
         if let Some(node) = tree.find(b"key1") {
-            println!("Found key1 with value: {:?}", node);
+            println!("Found key1 with value: {node:?}");
         } else {
             println!("key1 not found");
         }
@@ -657,18 +656,17 @@ mod tests {
 
         // 5. Traverse the Tree with a Custom Formatter
         let traversal = tree.formatted_traverse(|node| {
-            let keys_as_strings: Vec<String> =
-                node.keys.iter().map(|k| format!("{:?}", k)).collect();
+            let keys_as_strings: Vec<String> = node.keys.iter().map(|k| format!("{k:?}")).collect();
             format!("[L{}: {}]", node.level, keys_as_strings.join(", "))
         });
-        println!("Traversal: {}", traversal);
+        println!("Traversal: {traversal}");
 
         // 6. Update the Value for an Existing Key
         tree.update(b"key1".to_vec(), b"new_value1".to_vec());
 
         // 7. Find or Search for a Key
         if let Some(node) = tree.find(b"key1") {
-            println!("Found key1 with value: {:?}", node);
+            println!("Found key1 with value: {node:?}");
         } else {
             println!("key1 not found");
         }
@@ -775,8 +773,8 @@ mod tests {
         let traversal = tree.traverse();
 
         // Convert byte arrays to their binary representation strings for comparison
-        let expected_key1 = format!("{:?}", key1);
-        let expected_key2 = format!("{:?}", key2);
+        let expected_key1 = format!("{key1:?}");
+        let expected_key2 = format!("{key2:?}");
 
         // Check if the traversal contains the expected keys
         assert!(traversal.contains(&expected_key1.to_string()));
@@ -895,15 +893,14 @@ mod tests {
         for diff in &differences {
             match diff {
                 DiffResult::Added(key, value) => {
-                    println!("Added: key = {:?}, value = {:?}", key, value);
+                    println!("Added: key = {key:?}, value = {value:?}");
                 }
                 DiffResult::Removed(key, value) => {
-                    println!("Removed: key = {:?}, value = {:?}", key, value);
+                    println!("Removed: key = {key:?}, value = {value:?}");
                 }
                 DiffResult::Modified(key, old_value, new_value) => {
                     println!(
-                        "Modified: key = {:?}, old_value = {:?}, new_value = {:?}",
-                        key, old_value, new_value
+                        "Modified: key = {key:?}, old_value = {old_value:?}, new_value = {new_value:?}"
                     );
                 }
             }

@@ -261,56 +261,29 @@ impl<const N: usize> ProllyNodeBuilder<N> {
     }
 }
 
-impl<const N: usize> ProllyNode<N> {
-    pub fn init_root(key: Vec<u8>, value: Vec<u8>) -> Self {
-        ProllyNode {
-            keys: vec![key],
-            values: vec![value],
-            is_leaf: true,
-            level: INIT_LEVEL,
-            ..Default::default()
-        }
-    }
+/// Trait for balancing nodes in the tree.
+/// This trait provides methods for splitting and merging nodes to maintain tree balance.
+trait Balanced<const N: usize> {
+    /// Balances the node by splitting or merging it as needed.
+    fn balance<S: NodeStorage<N>>(
+        &mut self,
+        storage: &mut S,
+        is_root_node: bool,
+        path_hashes: &[ValueDigest<N>],
+    );
 
-    pub fn builder() -> ProllyNodeBuilder<N> {
-        ProllyNodeBuilder::default()
-    }
+    /// Gets the hash of the next sibling of the node.
+    fn get_next_sibling_hash<S: NodeStorage<N>>(
+        &self,
+        storage: &S,
+        path_hashes: &[ValueDigest<N>],
+    ) -> Option<Vec<u8>>;
 
-    pub fn formatted_traverse_3<F>(&self, storage: &impl NodeStorage<N>, formatter: F) -> String
-    where
-        F: Fn(&ProllyNode<N>, &str, bool) -> String,
-    {
-        fn traverse_node<const N: usize, S: NodeStorage<N>, F>(
-            node: &ProllyNode<N>,
-            storage: &S,
-            formatter: &F,
-            prefix: &str,
-            is_last: bool,
-            output: &mut String,
-        ) where
-            F: Fn(&ProllyNode<N>, &str, bool) -> String,
-        {
-            *output += &formatter(node, prefix, is_last);
+    /// Merges the node with its next sibling.
+    fn merge_with_next_sibling(&mut self, next_sibling: &mut ProllyNode<N>);
+}
 
-            let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
-            let children = node.children(storage);
-            for (i, child) in children.iter().enumerate() {
-                traverse_node(
-                    child,
-                    storage,
-                    formatter,
-                    &new_prefix,
-                    i == children.len() - 1,
-                    output,
-                );
-            }
-        }
-
-        let mut output = String::new();
-        traverse_node(self, storage, &formatter, "", true, &mut output);
-        output
-    }
-
+impl<const N: usize> Balanced<N> for ProllyNode<N> {
     /// Attempts to balance the node by merging the next (right) neighbor
     /// and then splitting it into smaller nodes if necessary.
     fn balance<S: NodeStorage<N>>(
@@ -338,6 +311,9 @@ impl<const N: usize> ProllyNode<N> {
         }
 
         // Use chunk_content to determine split points
+        if self.keys.len() < self.min_chunk_size {
+            return;
+        }
         let chunks = self.chunk_content();
         if chunks.len() <= 1 {
             // do not need to split the node
@@ -465,8 +441,62 @@ impl<const N: usize> ProllyNode<N> {
     }
 }
 
+impl<const N: usize> ProllyNode<N> {
+    pub fn init_root(key: Vec<u8>, value: Vec<u8>) -> Self {
+        ProllyNode {
+            keys: vec![key],
+            values: vec![value],
+            is_leaf: true,
+            level: INIT_LEVEL,
+            ..Default::default()
+        }
+    }
+
+    pub fn builder() -> ProllyNodeBuilder<N> {
+        ProllyNodeBuilder::default()
+    }
+
+    pub fn formatted_traverse_3<F>(&self, storage: &impl NodeStorage<N>, formatter: F) -> String
+    where
+        F: Fn(&ProllyNode<N>, &str, bool) -> String,
+    {
+        fn traverse_node<const N: usize, S: NodeStorage<N>, F>(
+            node: &ProllyNode<N>,
+            storage: &S,
+            formatter: &F,
+            prefix: &str,
+            is_last: bool,
+            output: &mut String,
+        ) where
+            F: Fn(&ProllyNode<N>, &str, bool) -> String,
+        {
+            *output += &formatter(node, prefix, is_last);
+
+            let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
+            let children = node.children(storage);
+            for (i, child) in children.iter().enumerate() {
+                traverse_node(
+                    child,
+                    storage,
+                    formatter,
+                    &new_prefix,
+                    i == children.len() - 1,
+                    output,
+                );
+            }
+        }
+
+        let mut output = String::new();
+        traverse_node(self, storage, &formatter, "", true, &mut output);
+        output
+    }
+}
+
 impl<const N: usize> NodeChunk for ProllyNode<N> {
     fn chunk_content(&self) -> Vec<(usize, usize)> {
+        if self.keys.len() < self.min_chunk_size {
+            return Vec::new();
+        }
         let mut chunks = Vec::new();
         let mut start = 0;
         let mut last_start = 0;
@@ -688,7 +718,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 }
             } else {
                 // Handle the case when the child node is not found
-                println!("Child node not found: {:?}", child_hash);
+                println!("Child node not found: {child_hash:?}");
             }
 
             // Sort the keys and balance the node
@@ -815,7 +845,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 true
             } else {
                 // Handle the case when the child node is not found
-                println!("Child node not found: {:?}", child_hash);
+                println!("Child node not found: {child_hash:?}");
                 false
             }
         }
@@ -869,7 +899,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 .iter()
                 .map(|key| {
                     key.iter()
-                        .map(|byte| format!("{:0}", byte))
+                        .map(|byte| format!("{byte:0}"))
                         .collect::<Vec<String>>()
                         .join(" ")
                 })
@@ -886,16 +916,15 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 )
             } else {
                 format!(
-                    "{}{}#({}\x1B[31m0x{:?}\x1B[0m)[{}]\n",
+                    "{}{}#({:?})[{}]\n",
                     prefix,
                     if is_last { "└── " } else { "├── " },
-                    "",
                     hash,
                     keys_str
                 )
             }
         });
-        println!("{}", output);
+        println!("{output}");
         println!("Note: #[keys] indicates internal node, [keys] indicates leaf node");
     }
 }
@@ -961,6 +990,7 @@ impl<const N: usize> ProllyNode<N> {
     /// # Arguments
     /// * `storage` - The storage implementation to retrieve child nodes.
     /// * `formatter` - A closure that takes a reference to a node and returns a string representation of the node.
+    ///
     ///
     /// # Returns
     /// A string representation of the tree nodes in a breadth-first order.
@@ -1470,5 +1500,44 @@ mod tests {
 
         // Print chunk content
         println!("{:?}", node.chunk_content());
+    }
+
+    /// This test verifies the balancing of the tree after multiple insertions.
+    /// The test checks the tree structure and ensures that the root node is split correctly
+    /// and the keys are promoted to the parent node.
+    #[test]
+    fn test_balance_after_insertions() {
+        let mut storage = InMemoryNodeStorage::<32>::default();
+        let value_for_all = vec![100];
+
+        // Initialize the prolly tree with a small chunk size to trigger splits
+        let mut node: ProllyNode<32> = ProllyNode::builder()
+            .pattern(0b1)
+            .min_chunk_size(4)
+            .max_chunk_size(8)
+            .build();
+
+        // Insert key-value pairs to trigger a split
+        for i in 0..=10 {
+            node.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
+            storage.insert_node(node.get_hash(), node.clone());
+        }
+
+        // After 11 insertions, the root should not be a leaf node
+        assert!(!node.is_leaf);
+
+        // Check that all keys can be found
+        for i in 0..=10 {
+            assert!(node.find(&[i], &storage).is_some());
+        }
+
+        // Insert one more key to trigger another split
+        node.insert(vec![11], value_for_all.clone(), &mut storage, Vec::new());
+        storage.insert_node(node.get_hash(), node.clone());
+
+        // Check that all keys can still be found
+        for i in 0..=11 {
+            assert!(node.find(&[i], &storage).is_some());
+        }
     }
 }

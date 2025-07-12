@@ -22,13 +22,13 @@ limitations under the License.
 //! ## Features
 //!
 //! - **Verifiability**: The cryptographic hashing in Prolly Trees ensures data integrity and allows for
-//! verifiable proofs of inclusion/exclusion.
+//!   verifiable proofs of inclusion/exclusion.
 //! - **Performance**: The balanced tree structure provides efficient data access patterns similar to
-//! B-trees, ensuring high performance for both random and sequential access.
+//!   B-trees, ensuring high performance for both random and sequential access.
 //! - **Scalability**: Prolly Trees are suitable for large-scale applications, providing efficient index maintenance
-//! and data distribution capabilities.
+//!   and data distribution capabilities.
 //! - **Flexibility**: The probabilistic balancing allows for handling various mutation patterns without degrading
-//! performance or structure.
+//!   performance or structure.
 //!
 //! ## Usage
 //!
