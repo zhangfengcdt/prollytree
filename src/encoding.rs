@@ -164,10 +164,8 @@ impl<const N: usize> ProllyNode<N> {
                 })
                 .collect();
 
-            let values: Result<Vec<serde_json::Value>, _> = data
-                .iter()
-                .map(|v| serde_json::from_slice(v))
-                .collect();
+            let values: Result<Vec<serde_json::Value>, _> =
+                data.iter().map(|v| serde_json::from_slice(v)).collect();
             let values = values?;
 
             let arrays: Result<Vec<ArrayRef>, _> = fields
@@ -233,8 +231,7 @@ impl<const N: usize> ProllyNode<N> {
                 Arc::new(Schema::new(fields)),
                 arrays?,
             )?)
-        }
-        else {
+        } else {
             panic!("Unsupported schema")
         }
     }
