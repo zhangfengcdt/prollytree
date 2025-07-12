@@ -432,7 +432,9 @@ name: name1, name2
 
         for encoded_value in &node.encode_values {
             // Decode the Parquet format
-            let builder = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(encoded_value.clone())).unwrap();
+            let builder =
+                ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(encoded_value.clone()))
+                    .unwrap();
             let mut reader = builder.build().unwrap();
             let batch = reader.next().unwrap().unwrap();
 
