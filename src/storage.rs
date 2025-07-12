@@ -15,7 +15,7 @@ limitations under the License.
 use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
 use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{Display, Formatter, LowerHex};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -131,9 +131,18 @@ impl<const N: usize> FileNodeStorage<N> {
     }
 }
 
-impl<const N: usize> fmt::LowerHex for ValueDigest<N> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in &self.0 {
+impl<const N: usize> Display for ValueDigest<N> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl<const N: usize> LowerHex for ValueDigest<N> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
             write!(f, "{:02x}", byte)?;
         }
         Ok(())

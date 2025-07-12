@@ -34,9 +34,9 @@ impl<const N: usize> fmt::Debug for Proof<N> {
                     .map(|digest| {
                         let bytes = digest.as_bytes();
                         if bytes.len() > 8 {
-                            format!("{:02x?}...", &bytes[..8])
+                            format!("{bytes:02x?}...")
                         } else {
-                            format!("{:02x?}", bytes)
+                            format!("{bytes:02x?}")
                         }
                     })
                     .collect::<Vec<_>>(),
@@ -46,9 +46,9 @@ impl<const N: usize> fmt::Debug for Proof<N> {
                 &self.target_hash.as_ref().map(|digest| {
                     let bytes = digest.as_bytes();
                     if bytes.len() > 8 {
-                        format!("{:02x?}...", &bytes[..8])
+                        format!("{bytes:02x?}...")
                     } else {
-                        format!("{:02x?}", bytes)
+                        format!("{bytes:02x?}")
                     }
                 }),
             )

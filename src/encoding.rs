@@ -395,7 +395,7 @@ mod tests {
             // Convert the RecordBatch to a string for comparison
             let batch_string = record_batch_to_string(&batch);
             assert_eq!(batch.num_rows(), 2);
-            println!("{}", batch_string);
+            println!("{batch_string}");
             // Define the expected output
             let expected_output = r#"id: 1, 2
 uuid: guid-key1, guid-key2
@@ -474,7 +474,7 @@ name: name1, name2
             // Convert the RecordBatch to a string for comparison
             let batch_string = record_batch_to_string(&batch);
             assert_eq!(batch.num_rows(), 2);
-            println!("{}", batch_string);
+            println!("{batch_string}");
             // Define the expected output
             let expected_output = r#"id: 1, 2
 uuid: guid-key1, guid-key2
