@@ -899,7 +899,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 .iter()
                 .map(|key| {
                     key.iter()
-                        .map(|byte| format!("{:0}", byte))
+                        .map(|byte| format!("{byte:0}"))
                         .collect::<Vec<String>>()
                         .join(" ")
                 })

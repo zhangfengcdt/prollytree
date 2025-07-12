@@ -123,18 +123,18 @@ impl<const N: usize> FileNodeStorage<N> {
     }
 
     fn node_path(&self, hash: &ValueDigest<N>) -> PathBuf {
-        self.storage_dir.join(format!("{:x}", hash))
+        self.storage_dir.join(format!("{hash:x}"))
     }
 
     fn config_path(&self, key: &str) -> PathBuf {
-        self.storage_dir.join(format!("config_{}", key))
+        self.storage_dir.join(format!("config_{key}"))
     }
 }
 
 impl<const N: usize> Display for ValueDigest<N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for byte in self.0 {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         Ok(())
     }
@@ -143,7 +143,7 @@ impl<const N: usize> Display for ValueDigest<N> {
 impl<const N: usize> LowerHex for ValueDigest<N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for byte in self.0 {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         Ok(())
     }
