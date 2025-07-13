@@ -72,6 +72,13 @@ fn main() {
 
         println!("\n");
 
+        // Demonstrate the new print_proof functionality
+        if i == 5 {
+            println!("\n🔍 === Proof Visualization Demo ===");
+            tree_increasing.print_proof(&keys[i]);
+            println!("=== End Proof Demo ===\n");
+        }
+
         // Find value and generate proof for increasing order
         let proof = tree_increasing.generate_proof(&keys[i]);
         let is_valid = tree_increasing.verify(proof.clone(), &keys[i], Some(&value_for_all));

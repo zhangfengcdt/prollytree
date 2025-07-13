@@ -15,6 +15,7 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use crate::encoding::EncodingType;
+use crate::proof::Proof;
 use crate::storage::NodeStorage;
 use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
@@ -128,6 +129,21 @@ pub trait Node<const N: usize> {
     ///
     /// * `storage` - A reference to the node storage containing the prolly tree nodes.
     fn print_tree<S: NodeStorage<N>>(&self, storage: &S);
+
+    /// Prints the tree structure with proof path highlighted for a given key.
+    /// This method visualizes the cryptographic proof path through the tree structure.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - A reference to the node storage containing the prolly tree nodes.
+    /// * `proof` - The proof object containing the path hashes.
+    /// * `target_key` - The key for which the proof was generated.
+    fn print_tree_with_proof<S: NodeStorage<N>>(
+        &self,
+        storage: &S,
+        proof: &Proof<N>,
+        target_key: &[u8],
+    );
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -929,6 +945,63 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         println!("{output}");
         println!("Note: #[keys] indicates internal node, [keys] indicates leaf node");
     }
+
+    fn print_tree_with_proof<S: NodeStorage<N>>(
+        &self,
+        storage: &S,
+        proof: &Proof<N>,
+        target_key: &[u8],
+    ) {
+        let output = self.formatted_traverse_with_proof(
+            storage,
+            proof,
+            target_key,
+            |node, prefix, is_last, is_in_proof_path, node_hash| {
+                let keys_str = node
+                    .keys
+                    .iter()
+                    .map(|key| {
+                        key.iter()
+                            .map(|byte| format!("{byte:0}"))
+                            .collect::<Vec<String>>()
+                            .join(" ")
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                let branch_symbol = if is_last { "└── " } else { "├── " };
+                let node_symbol = if node.is_leaf { "" } else { "*" };
+
+                if is_in_proof_path {
+                    // Color the proof path nodes in green with hash information
+                    let hash_str = format!("{:x}", node_hash)
+                        .chars()
+                        .take(16)
+                        .collect::<String>();
+                    if node.is_leaf {
+                        format!(
+                            "{}\x1b[32m{}{}[{}] (hash: {}...)\x1b[0m\n",
+                            prefix, branch_symbol, node_symbol, keys_str, hash_str
+                        )
+                    } else {
+                        format!(
+                            "{}\x1b[32m{}{}[{}] (hash: {}...)\x1b[0m\n",
+                            prefix, branch_symbol, node_symbol, keys_str, hash_str
+                        )
+                    }
+                } else {
+                    // Regular formatting for non-proof nodes
+                    if node.is_leaf {
+                        format!("{}{}{}[{}]\n", prefix, branch_symbol, node_symbol, keys_str)
+                    } else {
+                        format!("{}{}{}[{}]\n", prefix, branch_symbol, node_symbol, keys_str)
+                    }
+                }
+            },
+        );
+        println!("{output}");
+        println!("Note: \x1b[32mGreen nodes\x1b[0m are in the proof path, *[keys] indicates internal node, [keys] indicates leaf node");
+    }
 }
 
 // implement get hash function of the ProllyNode
@@ -1011,6 +1084,72 @@ impl<const N: usize> ProllyNode<N> {
                 queue.push_back(child.clone());
             }
         }
+
+        output
+    }
+
+    /// Traverse the tree in a depth-first manner with proof path highlighting.
+    /// This method is similar to formatted_traverse_3 but includes proof path information.
+    pub fn formatted_traverse_with_proof<F>(
+        &self,
+        storage: &impl NodeStorage<N>,
+        proof: &Proof<N>,
+        target_key: &[u8],
+        formatter: F,
+    ) -> String
+    where
+        F: Fn(&ProllyNode<N>, &str, bool, bool, ValueDigest<N>) -> String,
+    {
+        fn traverse_node<const N: usize, S: NodeStorage<N>, F>(
+            node: &ProllyNode<N>,
+            storage: &S,
+            proof: &Proof<N>,
+            target_key: &[u8],
+            formatter: &F,
+            prefix: &str,
+            is_last: bool,
+            output: &mut String,
+        ) where
+            F: Fn(&ProllyNode<N>, &str, bool, bool, ValueDigest<N>) -> String,
+        {
+            let node_hash = node.get_hash();
+
+            // Check if this node is in the proof path
+            let is_in_proof_path = proof.path.contains(&node_hash);
+
+            *output += &formatter(node, prefix, is_last, is_in_proof_path, node_hash);
+
+            let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
+            let children = node.children(storage);
+
+            for (i, child) in children.iter().enumerate() {
+                let is_last_child = i == children.len() - 1;
+
+                traverse_node(
+                    child,
+                    storage,
+                    proof,
+                    target_key,
+                    formatter,
+                    &new_prefix,
+                    is_last_child,
+                    output,
+                );
+            }
+        }
+
+        let mut output = String::new();
+
+        traverse_node(
+            self,
+            storage,
+            proof,
+            target_key,
+            &formatter,
+            "",
+            true,
+            &mut output,
+        );
 
         output
     }
@@ -1594,5 +1733,41 @@ mod tests {
             !de.split && !de.merged,
             "Split/merged flags should not be serialized"
         );
+    }
+
+    #[test]
+    fn test_print_tree_with_proof() {
+        use crate::config::TreeConfig;
+        use crate::tree::{ProllyTree, Tree};
+
+        // Test the new print_tree_with_proof functionality using ProllyTree
+        let storage = InMemoryNodeStorage::<32>::default();
+        let config = TreeConfig {
+            base: 131,
+            modulus: 1_000_000_009,
+            min_chunk_size: 2,
+            max_chunk_size: 8,
+            pattern: 0b11,
+            root_hash: None,
+            key_schema: None,
+            value_schema: None,
+            encode_types: vec![],
+        };
+
+        let mut tree = ProllyTree::new(storage, config);
+
+        // Insert some test data
+        for i in 0..10 {
+            tree.insert(vec![i], vec![i * 10]);
+        }
+
+        // Test proof visualization for an existing key
+        let test_key = vec![5];
+
+        println!("Testing print_proof for key {:?}:", test_key);
+        let is_valid = tree.print_proof(&test_key);
+
+        // The proof should be valid for an existing key
+        assert!(is_valid, "Proof should be valid for existing key");
     }
 }
