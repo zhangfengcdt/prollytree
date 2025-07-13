@@ -89,7 +89,11 @@ impl<const N: usize> InMemoryNodeStorage<N> {
 
 impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
-        self.map.get(hash).cloned()
+        self.map.get(hash).cloned().map(|mut node| {
+            node.split = false;
+            node.merged = false;
+            node
+        })
     }
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
@@ -156,7 +160,10 @@ impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
             let mut file = File::open(path).unwrap();
             let mut data = Vec::new();
             file.read_to_end(&mut data).unwrap();
-            Some(bincode::deserialize(&data).unwrap())
+            let mut node: ProllyNode<N> = bincode::deserialize(&data).unwrap();
+            node.split = false;
+            node.merged = false;
+            Some(node)
         } else {
             None
         }

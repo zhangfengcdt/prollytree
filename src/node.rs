@@ -143,7 +143,9 @@ pub struct ProllyNode<const N: usize> {
     pub min_chunk_size: usize,
     pub max_chunk_size: usize,
     pub pattern: u64,
+    #[serde(skip)]
     pub split: bool,
+    #[serde(skip)]
     pub merged: bool,
     pub encode_types: Vec<EncodingType>,
     pub encode_values: Vec<Vec<u8>>,
@@ -1539,5 +1541,58 @@ mod tests {
         for i in 0..=11 {
             assert!(node.find(&[i], &storage).is_some());
         }
+    }
+
+    #[test]
+    fn test_flags_reset_after_operations() {
+        // Test that split/merged flags are reset after insert/delete operations
+        let mut storage = InMemoryNodeStorage::<32>::default();
+        let mut node: ProllyNode<32> = ProllyNode::builder()
+            .pattern(0b1)
+            .min_chunk_size(2)
+            .max_chunk_size(4)
+            .build();
+
+        // Insert enough items to trigger splits
+        for i in 0..6 {
+            node.insert(vec![i], vec![i], &mut storage, Vec::new());
+            storage.insert_node(node.get_hash(), node.clone());
+            // Flags should be reset after each operation
+            assert!(
+                !node.split,
+                "Split flag should be reset after insert operation {}",
+                i
+            );
+            assert!(
+                !node.merged,
+                "Merged flag should be reset after insert operation {}",
+                i
+            );
+        }
+
+        // Test deletion as well
+        assert!(node.delete(&[0], &mut storage, Vec::new()));
+        assert!(
+            !node.split,
+            "Split flag should be reset after delete operation"
+        );
+        assert!(
+            !node.merged,
+            "Merged flag should be reset after delete operation"
+        );
+    }
+
+    #[test]
+    fn test_flags_not_serialized() {
+        // Test that split/merged flags are not serialized
+        let mut node = ProllyNode::<32>::default();
+        node.split = true;
+        node.merged = true;
+        let bytes = bincode::serialize(&node).unwrap();
+        let de: ProllyNode<32> = bincode::deserialize(&bytes).unwrap();
+        assert!(
+            !de.split && !de.merged,
+            "Split/merged flags should not be serialized"
+        );
     }
 }
