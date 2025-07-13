@@ -62,7 +62,6 @@ and data distribution capabilities.
 performance or structure.
 
 ## Use Cases:
-
 - AI Agent Memory & Long-Term Context: Serve as a structured, versioned memory store for AI agents, enabling efficient diffing, rollback, and verifiable state transitions.
 - Versioned Vector Indexes for GenAI: Manage evolving embedding databases in RAG systems or vector search pipelines with Git-like tracking and time-travel queries.
 - Prompt and Model Versioning: Track changes to prompts, fine-tuned adapters, or LoRA modules, supporting collaborative AI workflows with history and merge capabilities.
