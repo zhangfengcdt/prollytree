@@ -781,7 +781,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
 
                 // Sort the keys and balance the node
                 self.balance(storage, is_root_node, &path_hashes);
-                
+
                 true
             } else {
                 false
@@ -1552,20 +1552,34 @@ mod tests {
             .min_chunk_size(2)
             .max_chunk_size(4)
             .build();
-        
+
         // Insert enough items to trigger splits
         for i in 0..6 {
             node.insert(vec![i], vec![i], &mut storage, Vec::new());
             storage.insert_node(node.get_hash(), node.clone());
             // Flags should be reset after each operation
-            assert!(!node.split, "Split flag should be reset after insert operation {}", i);
-            assert!(!node.merged, "Merged flag should be reset after insert operation {}", i);
+            assert!(
+                !node.split,
+                "Split flag should be reset after insert operation {}",
+                i
+            );
+            assert!(
+                !node.merged,
+                "Merged flag should be reset after insert operation {}",
+                i
+            );
         }
 
         // Test deletion as well
         assert!(node.delete(&[0], &mut storage, Vec::new()));
-        assert!(!node.split, "Split flag should be reset after delete operation");
-        assert!(!node.merged, "Merged flag should be reset after delete operation");
+        assert!(
+            !node.split,
+            "Split flag should be reset after delete operation"
+        );
+        assert!(
+            !node.merged,
+            "Merged flag should be reset after delete operation"
+        );
     }
 
     #[test]
@@ -1576,6 +1590,9 @@ mod tests {
         node.merged = true;
         let bytes = bincode::serialize(&node).unwrap();
         let de: ProllyNode<32> = bincode::deserialize(&bytes).unwrap();
-        assert!(!de.split && !de.merged, "Split/merged flags should not be serialized");
+        assert!(
+            !de.split && !de.merged,
+            "Split/merged flags should not be serialized"
+        );
     }
 }
