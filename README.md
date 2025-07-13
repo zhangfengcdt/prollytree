@@ -62,8 +62,8 @@ and data distribution capabilities.
 performance or structure.
 
 ## Use Cases:
+- Version Control Databases: Enable verifiable diff, sync, and merge operations for large datasets.
 - Distributed Databases: Efficiently maintain and synchronize indexes across distributed systems.
-- Version Control Systems: Enable verifiable diff, sync, and merge operations for large datasets.
 - Blockchain and P2P Networks: Manage and synchronize data with verifiable integrity.
 - Real-time Collaborative Editing: Support multiple users making simultaneous changes with efficient merging.
 - Cloud Storage Services: Manage file versions and ensure efficient data retrieval and synchronization.
@@ -186,7 +186,21 @@ The following features are for Prolly tree library for Version 0.1.0:
 The following features are for Prolly tree library for Version 0.2.0:
 - [X] Arrow block encoding and decoding
 - [X] Parquet/Avro block encoding and decoding
-- [ ] Advanced probabilistic tree balancing
+
+The following features are for Prolly tree library for Version 0.2.1:
+- [ ] tree diffing and merging
+- [ ] show history of changes of the tree (git logs style) using `gitoxide` crate
+- [ ] support build database index using Prolly Tree
+
+The following features are for Prolly tree library for Version 0.2.2:
+- [ ] version-controlled databases
+  - [ ] prolly tree backend for git databases using `gitoxide` crate
+  - [ ] support for IPFS (InterPlanetary File System) for distributed storage
+  - [ ] advanced probabilistic splitting algorithms
+- [ ] decentralized databases
+  - [ ] add support for cryptographic hash functions like SHA-256, BLAKE3, etc.
+  - [ ] support ZK-friendly hashes such as Poseidon, MiMC, etc.
+  - [ ] supporting a rollup-style L2 for a decentralized database
 
 ## Contributing
 
