@@ -178,6 +178,19 @@ pub trait Tree<const N: usize, S: NodeStorage<N>> {
     /// Each node is printed with its keys and values, along with the hash of the node.
     ///
     fn print(&mut self);
+
+    /// Prints the tree structure with the proof path highlighted for a given key.
+    /// This function combines `generate_proof` and `print` to visualize the
+    /// cryptographic proof path through the tree structure with color coding.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key for which to generate and display the proof path.
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating whether the proof is valid.
+    fn print_proof(&self, key: &[u8]) -> bool;
 }
 
 pub struct TreeStats {
@@ -491,6 +504,24 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
     fn print(&mut self) {
         self.root.print_tree(&self.storage);
+    }
+
+    fn print_proof(&self, key: &[u8]) -> bool {
+        // Generate the proof for the given key
+        let proof = self.generate_proof(key);
+
+        // Verify the proof
+        let is_valid = self.verify(proof.clone(), key, None);
+
+        // Print the tree structure with proof path highlighted
+        println!("root:");
+        self.root.print_tree_with_proof(&self.storage, &proof, key);
+
+        // Print proof information
+        println!("\nProof for key {:?} is valid: {}", key, is_valid);
+        println!("Proof: {:#?}", proof);
+
+        is_valid
     }
 }
 
@@ -905,5 +936,36 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_print_proof_demo() {
+        let config = TreeConfig::default();
+        let storage = InMemoryNodeStorage::<32>::default();
+        let mut tree = ProllyTree::new(storage, config);
+
+        // Insert enough key-value pairs to create a multi-level tree
+        for i in 0..20 {
+            tree.insert(vec![i], vec![i * 10]);
+        }
+
+        println!("=== Prolly Tree with Proof Visualization Demo ===");
+
+        // Test with an existing key
+        let existing_key = vec![10];
+        println!("\n--- Testing with existing key {:?} ---", existing_key);
+        let is_valid = tree.print_proof(&existing_key);
+        assert!(is_valid, "Proof should be valid for existing key");
+
+        // Test with a non-existing key
+        let non_existing_key = vec![25];
+        println!(
+            "\n--- Testing with non-existing key {:?} ---",
+            non_existing_key
+        );
+        let is_valid = tree.print_proof(&non_existing_key);
+        assert!(!is_valid, "Proof should be invalid for non-existing key");
+
+        println!("\n=== Demo completed successfully ===");
     }
 }
