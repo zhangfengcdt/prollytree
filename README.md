@@ -62,11 +62,15 @@ and data distribution capabilities.
 performance or structure.
 
 ## Use Cases:
-- Version Control Databases: Enable verifiable diff, sync, and merge operations for large datasets.
-- Distributed Databases: Efficiently maintain and synchronize indexes across distributed systems.
-- Blockchain and P2P Networks: Manage and synchronize data with verifiable integrity.
-- Real-time Collaborative Editing: Support multiple users making simultaneous changes with efficient merging.
-- Cloud Storage Services: Manage file versions and ensure efficient data retrieval and synchronization.
+
+- AI Agent Memory & Long-Term Context: Serve as a structured, versioned memory store for AI agents, enabling efficient diffing, rollback, and verifiable state transitions.
+- Versioned Vector Indexes for GenAI: Manage evolving embedding databases in RAG systems or vector search pipelines with Git-like tracking and time-travel queries.
+- Prompt and Model Versioning: Track changes to prompts, fine-tuned adapters, or LoRA modules, supporting collaborative AI workflows with history and merge capabilities.
+- Real-time Collaborative Editing: Support multiple users or agents making simultaneous changes with efficient merging and conflict resolution.
+- Version Control Databases: Enable verifiable diff, sync, and merge operations for large structured datasets, similar to Git but for tabular or document-based data.
+- Distributed Databases: Maintain and synchronize ordered indexes efficiently across distributed nodes with structural consistency.
+- Blockchain and P2P Networks: Provide verifiable, tamper-proof data structures for syncing state and ensuring data integrity.
+- Cloud Storage Services: Manage file versions and enable efficient synchronization, deduplication, and data retrieval across clients.
 
 ## Usage
 
