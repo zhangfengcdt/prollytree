@@ -30,6 +30,7 @@ parquet = { version = "54.0.0", features = ["arrow"] }
 bytes = "1.10.1"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+criterion = "0.5"
 
 [features]
 default = ["digest_base64", "prolly_balance_max_nodes"]
@@ -37,3 +38,7 @@ tracing = ["dep:tracing"]
 digest_base64 = ["dep:base64"]
 prolly_balance_max_nodes = []
 prolly_balance_rolling_hash = []
+
+[[bench]]
+name = "prollytree_bench"
+harness = false

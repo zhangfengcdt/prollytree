@@ -974,28 +974,16 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
 
                 if is_in_proof_path {
                     // Color the proof path nodes in green with hash information
-                    let hash_str = format!("{:x}", node_hash)
+                    let hash_str = format!("{node_hash:x}")
                         .chars()
                         .take(16)
                         .collect::<String>();
-                    if node.is_leaf {
-                        format!(
-                            "{}\x1b[32m{}{}[{}] (hash: {}...)\x1b[0m\n",
-                            prefix, branch_symbol, node_symbol, keys_str, hash_str
-                        )
-                    } else {
-                        format!(
-                            "{}\x1b[32m{}{}[{}] (hash: {}...)\x1b[0m\n",
-                            prefix, branch_symbol, node_symbol, keys_str, hash_str
-                        )
-                    }
+                    format!(
+                        "{prefix}\x1b[32m{branch_symbol}{node_symbol}[{keys_str}] (hash: {hash_str}...)\x1b[0m\n"
+                    )
                 } else {
                     // Regular formatting for non-proof nodes
-                    if node.is_leaf {
-                        format!("{}{}{}[{}]\n", prefix, branch_symbol, node_symbol, keys_str)
-                    } else {
-                        format!("{}{}{}[{}]\n", prefix, branch_symbol, node_symbol, keys_str)
-                    }
+                    format!("{prefix}{branch_symbol}{node_symbol}[{keys_str}]\n")
                 }
             },
         );
@@ -1104,7 +1092,7 @@ impl<const N: usize> ProllyNode<N> {
             node: &ProllyNode<N>,
             storage: &S,
             proof: &Proof<N>,
-            target_key: &[u8],
+            _target_key: &[u8],
             formatter: &F,
             prefix: &str,
             is_last: bool,
@@ -1129,7 +1117,7 @@ impl<const N: usize> ProllyNode<N> {
                     child,
                     storage,
                     proof,
-                    target_key,
+                    _target_key,
                     formatter,
                     &new_prefix,
                     is_last_child,
