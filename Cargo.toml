@@ -23,7 +23,7 @@ thiserror = "1.0"
 twox-hash = "2.0"
 serde_json = "1.0.117"
 arrow = "54.2.1"
-schemars = "0.8"
+schemars = "1.0"
 parquet = { version = "54.0.0", features = ["arrow"] }
 
 [dev-dependencies]
