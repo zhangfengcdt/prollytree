@@ -518,8 +518,8 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         self.root.print_tree_with_proof(&self.storage, &proof, key);
 
         // Print proof information
-        println!("\nProof for key {:?} is valid: {}", key, is_valid);
-        println!("Proof: {:#?}", proof);
+        println!("\nProof for key {key:?} is valid: {is_valid}");
+        println!("Proof: {proof:#?}");
 
         is_valid
     }
