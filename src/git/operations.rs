@@ -56,7 +56,7 @@ impl<const N: usize> GitOperations<N> {
                 // The merge was successful, commit the result
                 let final_commit = self
                     .store
-                    .commit(&format!("Merge branch '{}'", other_branch))?;
+                    .commit(&format!("Merge branch '{other_branch}'"))?;
                 Ok(MergeResult::ThreeWay(final_commit))
             }
         }
@@ -277,7 +277,7 @@ impl<const N: usize> GitOperations<N> {
             _ => {
                 // Try to parse as hex string
                 gix::ObjectId::from_hex(commit.as_bytes())
-                    .map_err(|e| GitKvError::InvalidCommit(format!("Invalid commit ID: {}", e)))
+                    .map_err(|e| GitKvError::InvalidCommit(format!("Invalid commit ID: {e}")))
             }
         }
     }

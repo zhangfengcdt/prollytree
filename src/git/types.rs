@@ -17,8 +17,11 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum GitKvError {
-    #[error("Git repository error: {0}")]
-    GitError(#[from] gix::open::Error),
+    #[error("Git open error: {0}")]
+    GitOpenError(#[from] Box<gix::open::Error>),
+
+    #[error("Git init error: {0}")]
+    GitInitError(#[from] Box<gix::init::Error>),
 
     #[error("Git object error: {0}")]
     GitObjectError(String),

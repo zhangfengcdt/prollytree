@@ -63,17 +63,17 @@ impl<const N: usize> GitNodeStorage<N> {
     fn digest_to_object_id(&self, hash: &ValueDigest<N>) -> Result<gix::ObjectId, GitKvError> {
         // For now, we'll use a simple mapping. In a real implementation,
         // we might want to store a mapping between ProllyTree hashes and Git object IDs
-        let hex_string = format!("{:x}", hash);
+        let hex_string = format!("{hash:x}");
 
         // Pad or truncate to 40 characters (SHA-1 length)
         let padded_hex = if hex_string.len() < 40 {
-            format!("{:0<40}", hex_string)
+            format!("{hex_string:0<40}")
         } else {
             hex_string[..40].to_string()
         };
 
         gix::ObjectId::from_hex(padded_hex.as_bytes())
-            .map_err(|e| GitKvError::GitObjectError(format!("Invalid object ID: {}", e)))
+            .map_err(|e| GitKvError::GitObjectError(format!("Invalid object ID: {e}")))
     }
 
     /// Store a node as a Git blob
@@ -83,15 +83,15 @@ impl<const N: usize> GitNodeStorage<N> {
         // For now, create a mock blob ID based on the content hash
         // In a real implementation, this would write to the Git object database
         let hash = sha2::Sha256::digest(&serialized);
-        let hex_string = format!("{:x}", hash);
+        let hex_string = format!("{hash:x}");
         let padded_hex = if hex_string.len() < 40 {
-            format!("{:0<40}", hex_string)
+            format!("{hex_string:0<40}")
         } else {
             hex_string[..40].to_string()
         };
 
         let blob_id = gix::ObjectId::from_hex(padded_hex.as_bytes())
-            .map_err(|e| GitKvError::GitObjectError(format!("Invalid object ID: {}", e)))?;
+            .map_err(|e| GitKvError::GitObjectError(format!("Invalid object ID: {e}")))?;
 
         Ok(blob_id)
     }
@@ -115,10 +115,7 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 
         // Convert to Git object ID and load from Git
         match self.digest_to_object_id(hash) {
-            Ok(blob_id) => match self.load_node_from_blob(&blob_id) {
-                Ok(node) => Some(node),
-                Err(_) => None,
-            },
+            Ok(blob_id) => self.load_node_from_blob(&blob_id).ok(),
             Err(_) => None,
         }
     }
@@ -203,7 +200,7 @@ mod tests {
         let hash = node.get_hash();
 
         // Test insert
-        assert!(storage.insert_node(hash, node.clone()).is_some());
+        assert!(storage.insert_node(hash.clone(), node.clone()).is_some());
 
         // Test get
         let retrieved = storage.get_node_by_hash(&hash);
@@ -227,7 +224,7 @@ mod tests {
         let hash1 = node1.get_hash();
 
         // Insert and verify it's cached
-        storage.insert_node(hash1, node1.clone());
+        storage.insert_node(hash1.clone(), node1.clone());
         assert!(storage.cache.lock().unwrap().contains(&hash1));
 
         // Get from cache

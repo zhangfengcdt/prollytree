@@ -198,7 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn handle_init(path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let target_path = path.unwrap_or_else(|| env::current_dir().unwrap());
 
-    println!("Initializing ProllyTree KV store in {:?}...", target_path);
+    println!("Initializing ProllyTree KV store in {target_path:?}...");
 
     let _store = VersionedKvStore::<32>::init(&target_path)?;
 
@@ -219,7 +219,7 @@ fn handle_set(key: String, value: String) -> Result<(), Box<dyn std::error::Erro
 
     store.insert(key.into_bytes(), value.into_bytes())?;
 
-    println!("✓ Staged: {} = \"{}\"", key_display, value_display);
+    println!("✓ Staged: {key_display} = \"{value_display}\"");
     println!("  (Use 'git prolly commit' to save changes)");
 
     Ok(())
@@ -234,7 +234,7 @@ fn handle_get(key: String) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", String::from_utf8_lossy(&value));
         }
         None => {
-            eprintln!("Key '{}' not found", key);
+            eprintln!("Key '{key}' not found");
             std::process::exit(1);
         }
     }
@@ -247,10 +247,10 @@ fn handle_delete(key: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut store = VersionedKvStore::<32>::open(&current_dir)?;
 
     if store.delete(key.as_bytes())? {
-        println!("✓ Staged deletion: {}", key);
+        println!("✓ Staged deletion: {key}");
         println!("  (Use 'git prolly commit' to save changes)");
     } else {
-        eprintln!("Key '{}' not found", key);
+        eprintln!("Key '{key}' not found");
         std::process::exit(1);
     }
 
@@ -277,12 +277,12 @@ fn handle_list(show_values: bool) -> Result<(), Box<dyn std::error::Error>> {
         if show_values {
             if let Some(value) = store.get(&key) {
                 let value_str = String::from_utf8_lossy(&value);
-                println!("{} = \"{}\"", key_str, value_str);
+                println!("{key_str} = \"{value_str}\"");
             } else {
-                println!("{} = <deleted>", key_str);
+                println!("{key_str} = <deleted>");
             }
         } else {
-            println!("{}", key_str);
+            println!("{key_str}");
         }
     }
 
@@ -309,7 +309,7 @@ fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
             "deleted" => "\x1b[31m",  // Red
             _ => "",
         };
-        println!("  {}{}: {}\x1b[0m", color, status_type, key_str);
+        println!("  {color}{status_type}: {key_str}\x1b[0m");
     }
 
     Ok(())
@@ -327,8 +327,8 @@ fn handle_commit(message: String) -> Result<(), Box<dyn std::error::Error>> {
 
     let commit_id = store.commit(&message)?;
 
-    println!("✓ Committed: {}", commit_id);
-    println!("  Message: {}", message);
+    println!("✓ Committed: {commit_id}");
+    println!("  Message: {message}");
     println!("  Changes: {} operations", status.len());
 
     // Show summary of changes
@@ -340,7 +340,7 @@ fn handle_commit(message: String) -> Result<(), Box<dyn std::error::Error>> {
             "deleted" => "-",
             _ => "?",
         };
-        println!("    {} {}", symbol, key_str);
+        println!("    {symbol} {key_str}");
     }
 
     Ok(())
@@ -359,7 +359,7 @@ fn handle_diff(
     let diffs = ops.diff(&from, &to)?;
 
     if diffs.is_empty() {
-        println!("No differences found between {} and {}", from, to);
+        println!("No differences found between {from} and {to}");
         return Ok(());
     }
 
@@ -367,80 +367,76 @@ fn handle_diff(
 
     match format.as_str() {
         "compact" => {
-            println!("Key-Value Changes ({} -> {}):", from, to);
+            println!("Key-Value Changes ({from} -> {to}):");
             for diff in diffs {
                 let key_str = String::from_utf8_lossy(&diff.key);
                 match diff.operation {
                     DiffOperation::Added(value) => {
                         let value_str = String::from_utf8_lossy(&value);
-                        println!("  \x1b[32m+ {} = \"{}\"\x1b[0m", key_str, value_str);
+                        println!("  \x1b[32m+ {key_str} = \"{value_str}\"\x1b[0m");
                     }
                     DiffOperation::Removed(value) => {
                         let value_str = String::from_utf8_lossy(&value);
-                        println!("  \x1b[31m- {} = \"{}\"\x1b[0m", key_str, value_str);
+                        println!("  \x1b[31m- {key_str} = \"{value_str}\"\x1b[0m");
                     }
                     DiffOperation::Modified { old, new } => {
                         let old_str = String::from_utf8_lossy(&old);
                         let new_str = String::from_utf8_lossy(&new);
-                        println!(
-                            "  \x1b[33m~ {} = \"{}\" -> \"{}\"\x1b[0m",
-                            key_str, old_str, new_str
-                        );
+                        println!("  \x1b[33m~ {key_str} = \"{old_str}\" -> \"{new_str}\"\x1b[0m");
                     }
                 }
             }
         }
         "detailed" => {
-            println!("Detailed Key-Value Changes ({} -> {}):", from, to);
+            println!("Detailed Key-Value Changes ({from} -> {to}):");
             println!("═══════════════════════════════════════");
             for diff in diffs {
                 let key_str = String::from_utf8_lossy(&diff.key);
-                println!("\nKey: {}", key_str);
+                println!("\nKey: {key_str}");
                 match diff.operation {
                     DiffOperation::Added(value) => {
                         let value_str = String::from_utf8_lossy(&value);
                         println!("  Status: \x1b[32mAdded\x1b[0m");
-                        println!("  Value: \"{}\"", value_str);
+                        println!("  Value: \"{value_str}\"");
                     }
                     DiffOperation::Removed(value) => {
                         let value_str = String::from_utf8_lossy(&value);
                         println!("  Status: \x1b[31mRemoved\x1b[0m");
-                        println!("  Previous Value: \"{}\"", value_str);
+                        println!("  Previous Value: \"{value_str}\"");
                     }
                     DiffOperation::Modified { old, new } => {
                         let old_str = String::from_utf8_lossy(&old);
                         let new_str = String::from_utf8_lossy(&new);
                         println!("  Status: \x1b[33mModified\x1b[0m");
-                        println!("  Old Value: \"{}\"", old_str);
-                        println!("  New Value: \"{}\"", new_str);
+                        println!("  Old Value: \"{old_str}\"");
+                        println!("  New Value: \"{new_str}\"");
                     }
                 }
             }
         }
         "json" => {
             println!("{{");
-            println!("  \"from\": \"{}\",", from);
-            println!("  \"to\": \"{}\",", to);
+            println!("  \"from\": \"{from}\",");
+            println!("  \"to\": \"{to}\",");
             println!("  \"changes\": [");
             for (i, diff) in diffs.iter().enumerate() {
                 let key_str = String::from_utf8_lossy(&diff.key);
                 print!("    {{");
-                print!("\"key\": \"{}\", ", key_str);
+                print!("\"key\": \"{key_str}\", ");
                 match &diff.operation {
                     DiffOperation::Added(value) => {
                         let value_str = String::from_utf8_lossy(value);
-                        print!("\"operation\": \"added\", \"value\": \"{}\"", value_str);
+                        print!("\"operation\": \"added\", \"value\": \"{value_str}\"");
                     }
                     DiffOperation::Removed(value) => {
                         let value_str = String::from_utf8_lossy(value);
-                        print!("\"operation\": \"removed\", \"value\": \"{}\"", value_str);
+                        print!("\"operation\": \"removed\", \"value\": \"{value_str}\"");
                     }
                     DiffOperation::Modified { old, new } => {
                         let old_str = String::from_utf8_lossy(old);
                         let new_str = String::from_utf8_lossy(new);
                         print!(
-                            "\"operation\": \"modified\", \"old\": \"{}\", \"new\": \"{}\"",
-                            old_str, new_str
+                            "\"operation\": \"modified\", \"old\": \"{old_str}\", \"new\": \"{new_str}\""
                         );
                     }
                 }
@@ -454,10 +450,7 @@ fn handle_diff(
             println!("}}");
         }
         _ => {
-            eprintln!(
-                "Unknown format: {}. Use 'compact', 'detailed', or 'json'",
-                format
-            );
+            eprintln!("Unknown format: {format}. Use 'compact', 'detailed', or 'json'");
             std::process::exit(1);
         }
     }
@@ -473,10 +466,10 @@ fn handle_show(commit: String, keys_only: bool) -> Result<(), Box<dyn std::error
     let details = ops.show(&commit)?;
 
     if keys_only {
-        println!("Keys at commit {}:", commit);
+        println!("Keys at commit {commit}:");
         for change in details.changes {
             let key_str = String::from_utf8_lossy(&change.key);
-            println!("  {}", key_str);
+            println!("  {key_str}");
         }
     } else {
         println!("Commit: {} - {}", details.info.id, details.info.message);
@@ -496,19 +489,16 @@ fn handle_show(commit: String, keys_only: bool) -> Result<(), Box<dyn std::error
                 match change.operation {
                     DiffOperation::Added(value) => {
                         let value_str = String::from_utf8_lossy(&value);
-                        println!("  \x1b[32m+ {} = \"{}\"\x1b[0m", key_str, value_str);
+                        println!("  \x1b[32m+ {key_str} = \"{value_str}\"\x1b[0m");
                     }
                     DiffOperation::Removed(value) => {
                         let value_str = String::from_utf8_lossy(&value);
-                        println!("  \x1b[31m- {} = \"{}\"\x1b[0m", key_str, value_str);
+                        println!("  \x1b[31m- {key_str} = \"{value_str}\"\x1b[0m");
                     }
                     DiffOperation::Modified { old, new } => {
                         let old_str = String::from_utf8_lossy(&old);
                         let new_str = String::from_utf8_lossy(&new);
-                        println!(
-                            "  \x1b[33m~ {} = \"{}\" -> \"{}\"\x1b[0m",
-                            key_str, old_str, new_str
-                        );
+                        println!("  \x1b[33m~ {key_str} = \"{old_str}\" -> \"{new_str}\"\x1b[0m");
                     }
                 }
             }
@@ -561,7 +551,7 @@ fn handle_log(
 
             println!(
                 "{} - {} - {} (+{} ~{} -{})",
-                commit.id.to_string()[..8].to_string(),
+                &commit.id.to_string()[..8],
                 date,
                 commit.message,
                 added,
@@ -571,7 +561,7 @@ fn handle_log(
         } else {
             println!(
                 "{} - {} - {}",
-                commit.id.to_string()[..8].to_string(),
+                &commit.id.to_string()[..8],
                 date,
                 commit.message
             );
@@ -587,7 +577,7 @@ fn handle_branch(name: String) -> Result<(), Box<dyn std::error::Error>> {
 
     store.branch(&name)?;
 
-    println!("✓ Created branch: {}", name);
+    println!("✓ Created branch: {name}");
 
     Ok(())
 }
@@ -598,7 +588,7 @@ fn handle_checkout(target: String) -> Result<(), Box<dyn std::error::Error>> {
 
     store.checkout(&target)?;
 
-    println!("✓ Switched to: {}", target);
+    println!("✓ Switched to: {target}");
 
     Ok(())
 }
@@ -611,21 +601,21 @@ fn handle_merge(
     let store = VersionedKvStore::<32>::open(&current_dir)?;
     let mut ops = GitOperations::new(store);
 
-    println!("Merging branch '{}'...", branch);
+    println!("Merging branch '{branch}'...");
 
     match ops.merge(&branch)? {
         MergeResult::FastForward(commit_id) => {
             println!("✓ Fast-forward merge completed");
-            println!("  Updated to: {}", commit_id);
+            println!("  Updated to: {commit_id}");
         }
         MergeResult::ThreeWay(commit_id) => {
             println!("✓ Three-way merge completed");
-            println!("  Merge commit: {}", commit_id);
+            println!("  Merge commit: {commit_id}");
         }
         MergeResult::Conflict(conflicts) => {
             println!("⚠ Merge conflicts detected:");
             for conflict in conflicts {
-                println!("  {}", conflict);
+                println!("  {conflict}");
             }
             println!("\nResolve conflicts and run 'git prolly commit' to complete the merge");
         }
@@ -641,7 +631,7 @@ fn handle_revert(commit: String) -> Result<(), Box<dyn std::error::Error>> {
 
     ops.revert(&commit)?;
 
-    println!("✓ Reverted commit: {}", commit);
+    println!("✓ Reverted commit: {commit}");
 
     Ok(())
 }
@@ -652,7 +642,7 @@ fn handle_stats(commit: Option<String>) -> Result<(), Box<dyn std::error::Error>
 
     let target = commit.unwrap_or_else(|| "HEAD".to_string());
 
-    println!("ProllyTree Statistics for {}:", target);
+    println!("ProllyTree Statistics for {target}:");
     println!("═══════════════════════════════════");
 
     // Get basic stats
@@ -670,7 +660,7 @@ fn handle_stats(commit: Option<String>) -> Result<(), Box<dyn std::error::Error>
         let date = chrono::DateTime::from_timestamp(latest.timestamp, 0)
             .unwrap_or_default()
             .format("%Y-%m-%d %H:%M:%S");
-        println!("Latest Commit: {}", date);
+        println!("Latest Commit: {date}");
     }
 
     Ok(())
