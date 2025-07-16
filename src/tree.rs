@@ -586,9 +586,9 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     pub fn persist_root(&mut self) {
         // Store the root node in the storage
         let root_hash = self.root.get_hash();
-        if let Some(_) = self
+        if self
             .storage
-            .insert_node(root_hash.clone(), self.root.clone())
+            .insert_node(root_hash.clone(), self.root.clone()).is_some()
         {
             // Update the config with the new root hash
             self.config.root_hash = Some(root_hash);

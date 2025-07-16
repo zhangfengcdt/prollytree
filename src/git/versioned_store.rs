@@ -15,6 +15,7 @@ limitations under the License.
 use crate::config::TreeConfig;
 use crate::git::storage::GitNodeStorage;
 use crate::git::types::*;
+use crate::node::ProllyNode;
 use crate::tree::{ProllyTree, Tree};
 use gix::prelude::*;
 use std::collections::HashMap;
@@ -74,10 +75,7 @@ impl<const N: usize> VersionedKvStore<N> {
         let storage = GitNodeStorage::new(git_repo.clone())?;
 
         // Load tree configuration from storage
-        let config: TreeConfig<N> = match ProllyTree::load_config(&storage) {
-            Ok(config) => config,
-            Err(_) => TreeConfig::default(),
-        };
+        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
 
         // Try to load existing tree from storage, or create new one
         let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
@@ -334,14 +332,23 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Create a Git tree object from the current ProllyTree state
     fn create_git_tree(&self) -> Result<gix::ObjectId, GitKvError> {
-        // For now, create a simple tree with a placeholder entry
-        // In a real implementation, this would serialize the ProllyTree root
-        // and create a proper Git tree structure
+        // Serialize the ProllyTree root node
+        let root_node = &self.tree.root;
+        let serialized = bincode::serialize(root_node).map_err(GitKvError::SerializationError)?;
 
+        // Create a Git blob for the serialized root
+        let blob = gix::objs::Blob { data: serialized };
+        let blob_id = self
+            .git_repo
+            .objects
+            .write(&blob)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write blob: {e}")))?;
+
+        // Create a tree with the root blob
         let tree_entries = vec![gix::objs::tree::Entry {
             mode: gix::objs::tree::EntryMode(0o100644),
             filename: "prolly_tree_root".into(),
-            oid: gix::ObjectId::null(gix::hash::Kind::Sha1), // Placeholder
+            oid: blob_id,
         }];
 
         let tree = gix::objs::Tree {
@@ -424,7 +431,7 @@ impl<const N: usize> VersionedKvStore<N> {
 
         // Update HEAD to point to the branch
         let head_file = self.git_repo.path().join("HEAD");
-        std::fs::write(&head_file, format!("ref: {}\n", branch_ref)).map_err(|e| {
+        std::fs::write(&head_file, format!("ref: {branch_ref}\n")).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to write HEAD reference: {e}"))
         })?;
 
@@ -433,17 +440,73 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Reload the ProllyTree from the current HEAD
     fn reload_tree_from_head(&mut self) -> Result<(), GitKvError> {
-        // Load tree configuration from storage
-        let config: TreeConfig<N> = match ProllyTree::load_config(&self.tree.storage) {
-            Ok(config) => config,
-            Err(_) => TreeConfig::default(),
-        };
-
-        // Try to load existing tree from storage, or create new one
+        // Get the current HEAD commit
+        let head_ref = self.git_repo.head_ref().map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to get HEAD reference: {e}"))
+        })?;
+        
+        if let Some(head_ref) = head_ref {
+            if let Some(commit_id) = head_ref.target().try_id() {
+                // Load the commit object
+                let mut buffer = Vec::new();
+                let commit_obj = self.git_repo.objects.find(commit_id, &mut buffer).map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to find commit {commit_id}: {e}"))
+                })?;
+                
+                // Parse the commit object
+                let commit = match commit_obj.decode() {
+                    Ok(gix::objs::ObjectRef::Commit(commit)) => commit,
+                    _ => return Err(GitKvError::GitObjectError("Object is not a commit".to_string())),
+                };
+                
+                // Get the tree ID from the commit
+                let tree_id = commit.tree();
+                
+                // Load the tree object with a fresh buffer
+                let mut tree_buffer = Vec::new();
+                let tree_obj = self.git_repo.objects.find(&tree_id, &mut tree_buffer).map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to find tree {tree_id}: {e}"))
+                })?;
+                
+                // Parse the tree object
+                let tree = match tree_obj.decode() {
+                    Ok(gix::objs::ObjectRef::Tree(tree)) => tree,
+                    _ => return Err(GitKvError::GitObjectError("Object is not a tree".to_string())),
+                };
+                
+                // Find the prolly_tree_root entry in the tree
+                for entry in tree.entries {
+                    if entry.filename == "prolly_tree_root" {
+                        // Load the blob containing the serialized root with a fresh buffer
+                        let mut blob_buffer = Vec::new();
+                        let blob_obj = self.git_repo.objects.find(&entry.oid, &mut blob_buffer).map_err(|e| {
+                            GitKvError::GitObjectError(format!("Failed to find blob {}: {e}", entry.oid))
+                        })?;
+                        
+                        // Deserialize the root node
+                        let root_node: ProllyNode<N> = bincode::deserialize(blob_obj.data)
+                            .map_err(GitKvError::SerializationError)?;
+                        
+                        // Create a new tree with the loaded root
+                        let storage = self.tree.storage.clone();
+                        let config = TreeConfig::default();
+                        self.tree = ProllyTree {
+                            root: root_node,
+                            storage,
+                            config,
+                        };
+                        
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        
+        // If we can't load from HEAD, create a new tree
         let storage = self.tree.storage.clone();
-        self.tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
-            .unwrap_or_else(|| ProllyTree::new(storage, config));
-
+        let config = TreeConfig::default();
+        self.tree = ProllyTree::new(storage, config);
+        
         Ok(())
     }
 
@@ -453,7 +516,7 @@ impl<const N: usize> VersionedKvStore<N> {
 
         // Serialize the staging area
         let serialized = bincode::serialize(&self.staging_area)
-            .map_err(|e| GitKvError::SerializationError(e))?;
+            .map_err(GitKvError::SerializationError)?;
 
         std::fs::write(staging_file, serialized).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to write staging area: {e}"))
@@ -472,7 +535,7 @@ impl<const N: usize> VersionedKvStore<N> {
             })?;
 
             self.staging_area =
-                bincode::deserialize(&data).map_err(|e| GitKvError::SerializationError(e))?;
+                bincode::deserialize(&data).map_err(GitKvError::SerializationError)?;
         }
 
         Ok(())
