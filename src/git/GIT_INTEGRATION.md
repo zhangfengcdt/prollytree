@@ -1,4 +1,4 @@
-# Git-Integrated ProllyTree: End User Experience
+# Git-Integrated ProllyTree
 
 This document demonstrates the complete end-user experience for using ProllyTree with Git integration.
 

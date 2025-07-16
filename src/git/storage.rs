@@ -16,8 +16,8 @@ use crate::digest::ValueDigest;
 use crate::git::types::GitKvError;
 use crate::node::ProllyNode;
 use crate::storage::NodeStorage;
+use gix::prelude::*;
 use lru::LruCache;
-use sha2::Digest;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
@@ -31,6 +31,8 @@ pub struct GitNodeStorage<const N: usize> {
     _repository: Arc<Mutex<gix::Repository>>,
     cache: Mutex<LruCache<ValueDigest<N>, ProllyNode<N>>>,
     configs: Mutex<HashMap<String, Vec<u8>>>,
+    // Maps ProllyTree hashes to Git object IDs
+    hash_to_object_id: Mutex<HashMap<ValueDigest<N>, gix::ObjectId>>,
 }
 
 impl<const N: usize> GitNodeStorage<N> {
@@ -42,6 +44,7 @@ impl<const N: usize> GitNodeStorage<N> {
             _repository: Arc::new(Mutex::new(repository)),
             cache: Mutex::new(LruCache::new(cache_size)),
             configs: Mutex::new(HashMap::new()),
+            hash_to_object_id: Mutex::new(HashMap::new()),
         })
     }
 
@@ -56,55 +59,40 @@ impl<const N: usize> GitNodeStorage<N> {
             _repository: Arc::new(Mutex::new(repository)),
             cache: Mutex::new(LruCache::new(cache_size)),
             configs: Mutex::new(HashMap::new()),
+            hash_to_object_id: Mutex::new(HashMap::new()),
         })
-    }
-
-    /// Convert ValueDigest to git ObjectId
-    fn digest_to_object_id(&self, hash: &ValueDigest<N>) -> Result<gix::ObjectId, GitKvError> {
-        // For now, we'll use a simple mapping. In a real implementation,
-        // we might want to store a mapping between ProllyTree hashes and Git object IDs
-        let hex_string = format!("{hash:x}");
-
-        // Pad or truncate to 40 characters (SHA-1 length)
-        let padded_hex = if hex_string.len() < 40 {
-            format!("{hex_string:0<40}")
-        } else {
-            hex_string[..40].to_string()
-        };
-
-        gix::ObjectId::from_hex(padded_hex.as_bytes())
-            .map_err(|e| GitKvError::GitObjectError(format!("Invalid object ID: {e}")))
     }
 
     /// Store a node as a Git blob
     fn store_node_as_blob(&self, node: &ProllyNode<N>) -> Result<gix::ObjectId, GitKvError> {
         let serialized = bincode::serialize(node)?;
 
-        // TODO: implement proper Git operations
-        // For now, create a mock blob ID based on the content hash
-        // In a real implementation, this would write to the Git object database
-        let hash = sha2::Sha256::digest(&serialized);
-        let hex_string = format!("{hash:x}");
-        let padded_hex = if hex_string.len() < 40 {
-            format!("{hex_string:0<40}")
-        } else {
-            hex_string[..40].to_string()
-        };
-
-        let blob_id = gix::ObjectId::from_hex(padded_hex.as_bytes())
-            .map_err(|e| GitKvError::GitObjectError(format!("Invalid object ID: {e}")))?;
+        // Write the serialized node as a Git blob
+        let repo = self._repository.lock().unwrap();
+        let blob = gix::objs::Blob { data: serialized };
+        let blob_id = repo
+            .objects
+            .write(&blob)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write blob: {e}")))?;
 
         Ok(blob_id)
     }
 
     /// Load a node from a Git blob
-    fn load_node_from_blob(&self, _blob_id: &gix::ObjectId) -> Result<ProllyNode<N>, GitKvError> {
-        // TODO: implement proper Git operations
-        // For now, this is a mock implementation
-        // In a real implementation, this would read from the Git object database
-        Err(GitKvError::GitObjectError(
-            "Mock implementation - node not found".to_string(),
-        ))
+    fn load_node_from_blob(&self, blob_id: &gix::ObjectId) -> Result<ProllyNode<N>, GitKvError> {
+        let repo = self._repository.lock().unwrap();
+
+        // Find the blob object
+        let mut buffer = Vec::new();
+        let object = repo.objects.find(blob_id, &mut buffer).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to find blob {blob_id}: {e}"))
+        })?;
+
+        // Deserialize the blob data back to a ProllyNode
+        let node: ProllyNode<N> =
+            bincode::deserialize(&object.data).map_err(|e| GitKvError::SerializationError(e))?;
+
+        Ok(node)
     }
 }
 
@@ -115,22 +103,22 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
             return Some(node.clone());
         }
 
-        // Convert to Git object ID and load from Git
-        match self.digest_to_object_id(hash) {
-            Ok(blob_id) => self.load_node_from_blob(&blob_id).ok(),
-            Err(_) => None,
-        }
+        // Check if we have a mapping for this hash
+        let object_id = self.hash_to_object_id.lock().unwrap().get(hash).cloned()?;
+
+        // Load from Git blob
+        self.load_node_from_blob(&object_id).ok()
     }
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
         // Store in cache
-        self.cache.lock().unwrap().put(hash, node.clone());
+        self.cache.lock().unwrap().put(hash.clone(), node.clone());
 
         // Store as Git blob
         match self.store_node_as_blob(&node) {
-            Ok(_blob_id) => {
-                // In a real implementation, we'd maintain a mapping between
-                // the ValueDigest and the Git object ID
+            Ok(blob_id) => {
+                // Store the mapping between ProllyTree hash and Git object ID
+                self.hash_to_object_id.lock().unwrap().insert(hash, blob_id);
                 Some(())
             }
             Err(_) => None,
@@ -140,6 +128,9 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
     fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
         // Remove from cache
         self.cache.lock().unwrap().pop(hash);
+
+        // Remove from mapping
+        self.hash_to_object_id.lock().unwrap().remove(hash);
 
         // Note: Git doesn't really "delete" objects - they become unreachable
         // and will be garbage collected eventually. For now, we'll just consider

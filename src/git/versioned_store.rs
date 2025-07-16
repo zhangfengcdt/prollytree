@@ -16,6 +16,7 @@ use crate::config::TreeConfig;
 use crate::git::storage::GitNodeStorage;
 use crate::git::types::*;
 use crate::tree::{ProllyTree, Tree};
+use gix::prelude::*;
 use std::path::Path;
 
 /// A versioned key-value store backed by Git and ProllyTree
@@ -262,17 +263,42 @@ impl<const N: usize> VersionedKvStore<N> {
     pub fn log(&self) -> Result<Vec<CommitInfo>, GitKvError> {
         let mut history = Vec::new();
 
-        // Simplified implementation for now
-        // TODO: Properly implement git log traversal
-        let head_ref = self
-            .git_repo
-            .head_ref()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get head ref: {e}")))?;
+        // Get the current HEAD commit
+        let head_commit = match self.git_repo.head_commit() {
+            Ok(commit) => commit,
+            Err(_) => return Ok(history), // No commits yet
+        };
 
-        if let Some(head_ref) = head_ref {
-            if let Some(head_commit_id) = head_ref.target().try_id() {
+        // Use rev_walk to traverse the commit history
+        let rev_walk = self.git_repo.rev_walk([head_commit.id()]);
+
+        match rev_walk.all() {
+            Ok(walk) => {
+                for commit_info in walk.take(100) {
+                    // Limit to 100 commits
+                    if let Ok(info) = commit_info {
+                        if let Ok(commit_obj) = info.object() {
+                            if let Ok(commit_ref) = commit_obj.decode() {
+                                let commit_info = CommitInfo {
+                                    id: commit_obj.id().into(),
+                                    author: String::from_utf8_lossy(&commit_ref.author.name)
+                                        .to_string(),
+                                    committer: String::from_utf8_lossy(&commit_ref.committer.name)
+                                        .to_string(),
+                                    message: String::from_utf8_lossy(&commit_ref.message)
+                                        .to_string(),
+                                    timestamp: commit_ref.author.time.seconds,
+                                };
+                                history.push(commit_info);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // Fallback to single commit if rev_walk fails
                 let commit_info = CommitInfo {
-                    id: head_commit_id.to_owned(),
+                    id: head_commit.id().into(),
                     author: "Unknown".to_string(),
                     committer: "Unknown".to_string(),
                     message: "Commit".to_string(),
@@ -287,26 +313,90 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Create a Git tree object from the current ProllyTree state
     fn create_git_tree(&self) -> Result<gix::ObjectId, GitKvError> {
-        // Simplified implementation - just return a placeholder
-        // TODO: Properly implement tree creation from ProllyTree state
-        Ok(gix::ObjectId::null(gix::hash::Kind::Sha1))
+        // For now, create a simple tree with a placeholder entry
+        // In a real implementation, this would serialize the ProllyTree root
+        // and create a proper Git tree structure
+
+        let tree_entries = vec![gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryMode(0o100644),
+            filename: "prolly_tree_root".into(),
+            oid: gix::ObjectId::null(gix::hash::Kind::Sha1), // Placeholder
+        }];
+
+        let tree = gix::objs::Tree {
+            entries: tree_entries,
+        };
+
+        let tree_id = self
+            .git_repo
+            .objects
+            .write(&tree)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write tree: {e}")))?;
+
+        Ok(tree_id)
     }
 
     /// Create a Git commit object
     fn create_git_commit(
         &self,
-        _tree_id: gix::ObjectId,
-        _message: &str,
+        tree_id: gix::ObjectId,
+        message: &str,
     ) -> Result<gix::ObjectId, GitKvError> {
-        // Simplified implementation - just return a placeholder
-        // TODO: Properly implement commit creation
-        Ok(gix::ObjectId::null(gix::hash::Kind::Sha1))
+        // Get the current time
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Create author and committer signatures
+        let signature = gix::actor::Signature {
+            name: "git-prolly".into(),
+            email: "git-prolly@example.com".into(),
+            time: gix::date::Time {
+                seconds: now,
+                offset: 0,
+                sign: gix::date::time::Sign::Plus,
+            },
+        };
+
+        // Get parent commits (current HEAD if exists)
+        let parent_ids = match self.git_repo.head_commit() {
+            Ok(parent) => vec![parent.id().into()],
+            Err(_) => vec![], // No parent for initial commit
+        };
+
+        // Create commit object
+        let commit = gix::objs::Commit {
+            tree: tree_id,
+            parents: parent_ids.into(),
+            author: signature.clone(),
+            committer: signature,
+            encoding: None,
+            message: message.as_bytes().into(),
+            extra_headers: vec![],
+        };
+
+        let commit_id = self
+            .git_repo
+            .objects
+            .write(&commit)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write commit: {e}")))?;
+
+        Ok(commit_id)
     }
 
     /// Update HEAD to point to the new commit
     fn update_head(&mut self, _commit_id: gix::ObjectId) -> Result<(), GitKvError> {
-        // Simplified implementation - just return success
-        // TODO: Properly implement HEAD update
+        // Update the current branch reference to point to the new commit
+        let _branch_ref = format!("refs/heads/{}", self.current_branch);
+
+        // For now, we'll use a simplified approach
+        // In a real implementation, we'd use proper reference transactions
+        // This is a placeholder that would need proper gix reference handling
+
+        // TODO: Implement proper reference update using gix
+        // For now, just track that we've updated HEAD
+
         Ok(())
     }
 
@@ -365,9 +455,8 @@ mod tests {
 
         // Commit
         let commit_id = store.commit("Add initial data").unwrap();
-        // Note: This is a placeholder implementation that returns null
-        // In a real implementation, this would be a valid commit ID
-        assert!(commit_id.is_null());
+        // Now we have a real implementation that returns valid commit IDs
+        assert!(!commit_id.is_null());
 
         // Check that staging area is clear
         let status = store.status();
