@@ -14,6 +14,7 @@ limitations under the License.
 
 use crate::git::types::*;
 use crate::git::versioned_store::VersionedKvStore;
+use gix::prelude::*;
 use std::collections::HashMap;
 
 /// Git operations for versioned KV store
@@ -178,20 +179,124 @@ impl<const N: usize> GitOperations<N> {
 
     /// Find the merge base between two branches
     fn find_merge_base(&self, branch1: &str, branch2: &str) -> Result<gix::ObjectId, GitKvError> {
-        // Simplified implementation - just return the first common ancestor
-        // In a real implementation, you'd use proper merge base algorithms
         let commit1 = self.get_branch_commit(branch1)?;
-        let _commit2 = self.get_branch_commit(branch2)?;
+        let commit2 = self.get_branch_commit(branch2)?;
 
-        // TODO: Implement a proper merge base algorithm
-        // For now, just return the first commit as a placeholder
-        Ok(commit1)
+        // If the commits are the same, return it as the merge base
+        if commit1 == commit2 {
+            return Ok(commit1);
+        }
+
+        // Get all ancestors of commit1
+        let mut ancestors1 = std::collections::HashSet::new();
+        self.collect_ancestors(&commit1, &mut ancestors1)?;
+
+        // Walk through ancestors of commit2 to find the first common ancestor
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(commit2);
+
+        while let Some(current_commit) = queue.pop_front() {
+            if visited.contains(&current_commit) {
+                continue;
+            }
+            visited.insert(current_commit);
+
+            // If this commit is an ancestor of commit1, it's our merge base
+            if ancestors1.contains(&current_commit) {
+                return Ok(current_commit);
+            }
+
+            // Add parents to queue
+            let mut buffer = Vec::new();
+            if let Ok(commit_obj) = self
+                .store
+                .git_repo()
+                .objects
+                .find(&current_commit, &mut buffer)
+            {
+                if let Ok(gix::objs::ObjectRef::Commit(commit)) = commit_obj.decode() {
+                    for parent_id in commit.parents() {
+                        if !visited.contains(&parent_id) {
+                            queue.push_back(parent_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no common ancestor found, return an error
+        Err(GitKvError::GitObjectError(format!(
+            "No common ancestor found between {branch1} and {branch2}"
+        )))
+    }
+
+    /// Collect all ancestors of a commit
+    fn collect_ancestors(
+        &self,
+        start_commit: &gix::ObjectId,
+        ancestors: &mut std::collections::HashSet<gix::ObjectId>,
+    ) -> Result<(), GitKvError> {
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(*start_commit);
+
+        while let Some(current_commit) = queue.pop_front() {
+            if ancestors.contains(&current_commit) {
+                continue;
+            }
+            ancestors.insert(current_commit);
+
+            // Add parents to queue
+            let mut buffer = Vec::new();
+            if let Ok(commit_obj) = self
+                .store
+                .git_repo()
+                .objects
+                .find(&current_commit, &mut buffer)
+            {
+                if let Ok(gix::objs::ObjectRef::Commit(commit)) = commit_obj.decode() {
+                    for parent_id in commit.parents() {
+                        if !ancestors.contains(&parent_id) {
+                            queue.push_back(parent_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get the commit ID for a branch
-    fn get_branch_commit(&self, _branch: &str) -> Result<gix::ObjectId, GitKvError> {
-        // Simplified implementation
-        Ok(gix::ObjectId::null(gix::hash::Kind::Sha1))
+    fn get_branch_commit(&self, branch: &str) -> Result<gix::ObjectId, GitKvError> {
+        // Try to resolve the branch reference
+        let branch_ref = if branch.starts_with("refs/") {
+            branch.to_string()
+        } else {
+            format!("refs/heads/{branch}")
+        };
+
+        // Find the reference
+        match self.store.git_repo().refs.find(&branch_ref) {
+            Ok(reference) => {
+                // Get the target commit ID
+                match reference.target.try_id() {
+                    Some(commit_id) => Ok(commit_id.to_owned()),
+                    None => Err(GitKvError::GitObjectError(format!(
+                        "Branch {branch} does not point to a commit"
+                    ))),
+                }
+            }
+            Err(_) => {
+                // If branch not found, try to resolve as commit ID
+                match self.store.git_repo().rev_parse_single(branch) {
+                    Ok(object) => Ok(object.into()),
+                    Err(e) => Err(GitKvError::GitObjectError(format!(
+                        "Cannot resolve branch/commit {branch}: {e}"
+                    ))),
+                }
+            }
+        }
     }
 
     /// Get KV state at a specific commit
