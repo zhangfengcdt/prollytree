@@ -665,5 +665,3 @@ fn handle_stats(commit: Option<String>) -> Result<(), Box<dyn std::error::Error>
 
     Ok(())
 }
-
-// We need to add chrono for date formatting
