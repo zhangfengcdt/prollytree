@@ -183,6 +183,7 @@ impl<const N: usize> GitOperations<N> {
         let commit1 = self.get_branch_commit(branch1)?;
         let _commit2 = self.get_branch_commit(branch2)?;
 
+        // TODO: Implement a proper merge base algorithm
         // For now, just return the first commit as a placeholder
         Ok(commit1)
     }

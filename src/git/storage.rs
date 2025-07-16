@@ -80,6 +80,7 @@ impl<const N: usize> GitNodeStorage<N> {
     fn store_node_as_blob(&self, node: &ProllyNode<N>) -> Result<gix::ObjectId, GitKvError> {
         let serialized = bincode::serialize(node)?;
 
+        // TODO: implement proper Git operations
         // For now, create a mock blob ID based on the content hash
         // In a real implementation, this would write to the Git object database
         let hash = sha2::Sha256::digest(&serialized);
@@ -98,6 +99,7 @@ impl<const N: usize> GitNodeStorage<N> {
 
     /// Load a node from a Git blob
     fn load_node_from_blob(&self, _blob_id: &gix::ObjectId) -> Result<ProllyNode<N>, GitKvError> {
+        // TODO: implement proper Git operations
         // For now, this is a mock implementation
         // In a real implementation, this would read from the Git object database
         Err(GitKvError::GitObjectError(

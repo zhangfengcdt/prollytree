@@ -25,6 +25,8 @@ fn main() {
 
 #[cfg(feature = "git")]
 fn main() {
+    // TODO: Implement the actual git-prolly command with gix integration
+
     println!("🚀 Git-Integrated ProllyTree Demo");
     println!("================================");
     println!();
