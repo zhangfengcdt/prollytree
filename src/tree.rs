@@ -586,10 +586,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     pub fn persist_root(&mut self) {
         // Store the root node in the storage
         let root_hash = self.root.get_hash();
-        if self
-            .storage
-            .insert_node(root_hash.clone(), self.root.clone()).is_some()
-        {
+        if self.storage.insert_node(root_hash.clone(), self.root.clone()).is_some() {
             // Update the config with the new root hash
             self.config.root_hash = Some(root_hash);
 
@@ -610,6 +607,26 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
             }
         }
         None
+    }
+
+    /// Collect all keys from the tree
+    pub fn collect_keys(&self) -> Vec<Vec<u8>> {
+        let mut keys = Vec::new();
+        self.collect_keys_recursive(&self.root, &mut keys);
+        keys
+    }
+
+    /// Recursively collect keys from a node and its children
+    fn collect_keys_recursive(&self, node: &ProllyNode<N>, keys: &mut Vec<Vec<u8>>) {
+        // Add all keys from this node
+        for key in &node.keys {
+            keys.push(key.clone());
+        }
+
+        // Recursively collect keys from child nodes
+        for child_node in node.children(&self.storage) {
+            self.collect_keys_recursive(&child_node, keys);
+        }
     }
 }
 
