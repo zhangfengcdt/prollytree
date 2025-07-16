@@ -59,9 +59,11 @@ impl<const N: usize> VersionedKvStore<N> {
 
         // Create .gitignore to ignore prolly files
         let gitignore_path = path.join(".gitignore");
-        std::fs::write(&gitignore_path, "prolly_tree_root\nprolly_config_*\nprolly_hash_mappings\n").map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to create .gitignore: {e}"))
-        })?;
+        std::fs::write(
+            &gitignore_path,
+            "prolly_tree_root\nprolly_config_*\nprolly_hash_mappings\n",
+        )
+        .map_err(|e| GitKvError::GitObjectError(format!("Failed to create .gitignore: {e}")))?;
 
         // Create initial commit
         store.commit("Initial commit")?;
@@ -211,9 +213,10 @@ impl<const N: usize> VersionedKvStore<N> {
 
         // Persist the tree state
         self.tree.persist_root();
-        
+
         // Save the updated configuration with the new root hash
-        self.tree.save_config()
+        self.tree
+            .save_config()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
 
         // Create tree object in Git
@@ -438,7 +441,7 @@ impl<const N: usize> VersionedKvStore<N> {
     fn reload_tree_from_head(&mut self) -> Result<(), GitKvError> {
         // Since we're no longer storing prolly_tree_root in the Git tree,
         // we need to reload the tree state from the GitNodeStorage
-        
+
         // Load tree configuration from storage
         let config: TreeConfig<N> = ProllyTree::load_config(&self.tree.storage).unwrap_or_default();
 
@@ -455,8 +458,8 @@ impl<const N: usize> VersionedKvStore<N> {
         let staging_file = self.git_repo.path().join("PROLLY_STAGING");
 
         // Serialize the staging area
-        let serialized = bincode::serialize(&self.staging_area)
-            .map_err(GitKvError::SerializationError)?;
+        let serialized =
+            bincode::serialize(&self.staging_area).map_err(GitKvError::SerializationError)?;
 
         std::fs::write(staging_file, serialized).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to write staging area: {e}"))

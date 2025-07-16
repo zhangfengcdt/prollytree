@@ -116,7 +116,10 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     }
 
     fn save_config(&self, key: &str, config: &[u8]) {
-        self.configs.write().unwrap().insert(key.to_string(), config.to_vec());
+        self.configs
+            .write()
+            .unwrap()
+            .insert(key.to_string(), config.to_vec());
     }
 
     fn get_config(&self, key: &str) -> Option<Vec<u8>> {

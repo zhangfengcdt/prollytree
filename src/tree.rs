@@ -586,7 +586,11 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     pub fn persist_root(&mut self) {
         // Store the root node in the storage
         let root_hash = self.root.get_hash();
-        if self.storage.insert_node(root_hash.clone(), self.root.clone()).is_some() {
+        if self
+            .storage
+            .insert_node(root_hash.clone(), self.root.clone())
+            .is_some()
+        {
             // Update the config with the new root hash
             self.config.root_hash = Some(root_hash);
 
@@ -788,7 +792,7 @@ mod tests {
         tree.persist_root();
 
         // Load the tree from storage
-        let loaded_tree = ProllyTree::load_from_storage(storage, tree.config)
+        let loaded_tree = ProllyTree::load_from_storage(tree.storage, tree.config)
             .expect("Should be able to load tree from storage");
 
         // Verify data is preserved

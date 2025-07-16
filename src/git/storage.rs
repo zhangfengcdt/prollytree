@@ -43,10 +43,10 @@ impl<const N: usize> Clone for GitNodeStorage<N> {
             configs: Mutex::new(HashMap::new()),
             hash_to_object_id: Mutex::new(HashMap::new()),
         };
-        
+
         // Load the hash mappings for the cloned instance
         cloned.load_hash_mappings();
-        
+
         cloned
     }
 }
@@ -62,10 +62,10 @@ impl<const N: usize> GitNodeStorage<N> {
             configs: Mutex::new(HashMap::new()),
             hash_to_object_id: Mutex::new(HashMap::new()),
         };
-        
+
         // Load existing hash mappings
         storage.load_hash_mappings();
-        
+
         Ok(storage)
     }
 
@@ -82,10 +82,10 @@ impl<const N: usize> GitNodeStorage<N> {
             configs: Mutex::new(HashMap::new()),
             hash_to_object_id: Mutex::new(HashMap::new()),
         };
-        
+
         // Load existing hash mappings
         storage.load_hash_mappings();
-        
+
         Ok(storage)
     }
 
@@ -144,11 +144,14 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         match self.store_node_as_blob(&node) {
             Ok(blob_id) => {
                 // Store the mapping between ProllyTree hash and Git object ID
-                self.hash_to_object_id.lock().unwrap().insert(hash.clone(), blob_id);
-                
+                self.hash_to_object_id
+                    .lock()
+                    .unwrap()
+                    .insert(hash.clone(), blob_id);
+
                 // Persist the mapping to filesystem
                 self.save_hash_mapping(&hash, &blob_id);
-                
+
                 Some(())
             }
             Err(_) => None,
@@ -172,10 +175,10 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         // Store config in memory
         let mut configs = self.configs.lock().unwrap();
         configs.insert(key.to_string(), config.to_vec());
-        
+
         // Also persist to filesystem for durability
         let repo = self._repository.lock().unwrap();
-        let config_path = repo.path().join(format!("prolly_config_{}", key));
+        let config_path = repo.path().join(format!("prolly_config_{key}"));
         let _ = std::fs::write(config_path, config);
     }
 
@@ -184,17 +187,20 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         if let Some(config) = self.configs.lock().unwrap().get(key).cloned() {
             return Some(config);
         }
-        
+
         // If not in memory, try to load from filesystem
         let repo = self._repository.lock().unwrap();
-        let config_path = repo.path().join(format!("prolly_config_{}", key));
+        let config_path = repo.path().join(format!("prolly_config_{key}"));
         if let Ok(config) = std::fs::read(config_path) {
             // Cache in memory for future use
             drop(repo);
-            self.configs.lock().unwrap().insert(key.to_string(), config.clone());
+            self.configs
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), config.clone());
             return Some(config);
         }
-        
+
         None
     }
 }
@@ -204,20 +210,20 @@ impl<const N: usize> GitNodeStorage<N> {
     fn save_hash_mapping(&self, hash: &ValueDigest<N>, object_id: &gix::ObjectId) {
         let repo = self._repository.lock().unwrap();
         let mapping_path = repo.path().join("prolly_hash_mappings");
-        
+
         // Read existing mappings
         let mut mappings = if mapping_path.exists() {
             std::fs::read_to_string(&mapping_path).unwrap_or_default()
         } else {
             String::new()
         };
-        
+
         // Add new mapping - use simple format for now without hex dependency
-        let hash_bytes: Vec<String> = hash.0.iter().map(|b| format!("{:02x}", b)).collect();
+        let hash_bytes: Vec<String> = hash.0.iter().map(|b| format!("{b:02x}")).collect();
         let hash_hex = hash_bytes.join("");
         let object_hex = object_id.to_hex().to_string();
-        mappings.push_str(&format!("{}:{}\n", hash_hex, object_hex));
-        
+        mappings.push_str(&format!("{hash_hex}:{object_hex}\n"));
+
         // Write back
         let _ = std::fs::write(mapping_path, mappings);
     }
@@ -226,23 +232,23 @@ impl<const N: usize> GitNodeStorage<N> {
     fn load_hash_mappings(&self) {
         let repo = self._repository.lock().unwrap();
         let mapping_path = repo.path().join("prolly_hash_mappings");
-        
+
         if let Ok(mappings) = std::fs::read_to_string(mapping_path) {
             let mut hash_map = self.hash_to_object_id.lock().unwrap();
-            
+
             for line in mappings.lines() {
                 if let Some((hash_hex, object_hex)) = line.split_once(':') {
                     // Parse hex string manually
                     if hash_hex.len() == N * 2 {
                         let mut hash_bytes = Vec::new();
                         for i in 0..N {
-                            if let Ok(byte) = u8::from_str_radix(&hash_hex[i*2..i*2+2], 16) {
+                            if let Ok(byte) = u8::from_str_radix(&hash_hex[i * 2..i * 2 + 2], 16) {
                                 hash_bytes.push(byte);
                             } else {
                                 break;
                             }
                         }
-                        
+
                         if hash_bytes.len() == N {
                             if let Ok(object_id) = gix::ObjectId::from_hex(object_hex.as_bytes()) {
                                 let mut hash_array = [0u8; N];
