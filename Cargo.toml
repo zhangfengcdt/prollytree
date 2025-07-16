@@ -25,19 +25,31 @@ serde_json = "1.0.117"
 arrow = "54.2.1"
 schemars = "0.8"
 parquet = { version = "54.0.0", features = ["arrow"] }
+gix = { version = "0.66", features = ["blocking-network-client"], optional = true }
+clap = { version = "4.0", features = ["derive"], optional = true }
+lru = { version = "0.12", optional = true }
+hex = { version = "0.4", optional = true }
+chrono = { version = "0.4", optional = true }
 
 [dev-dependencies]
 bytes = "1.10.1"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 criterion = "0.5"
+tempfile = "3.0"
 
 [features]
-default = ["digest_base64", "prolly_balance_max_nodes"]
+default = ["digest_base64", "prolly_balance_max_nodes", "git"]
 tracing = ["dep:tracing"]
 digest_base64 = ["dep:base64"]
 prolly_balance_max_nodes = []
 prolly_balance_rolling_hash = []
+git = ["dep:gix", "dep:clap", "dep:lru", "dep:hex", "dep:chrono"]
+
+[[bin]]
+name = "git-prolly"
+path = "src/bin/git-prolly.rs"
+required-features = ["git"]
 
 [[bench]]
 name = "prollytree_bench"

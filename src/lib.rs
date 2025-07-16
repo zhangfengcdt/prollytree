@@ -48,6 +48,8 @@ pub mod config;
 pub mod diff;
 mod encoding;
 pub mod errors;
+#[cfg(feature = "git")]
+pub mod git;
 pub mod node;
 pub mod proof;
 pub mod storage;
