@@ -17,6 +17,7 @@ use crate::git::storage::GitNodeStorage;
 use crate::git::types::*;
 use crate::tree::{ProllyTree, Tree};
 use gix::prelude::*;
+use std::collections::HashMap;
 use std::path::Path;
 
 /// A versioned key-value store backed by Git and ProllyTree
@@ -27,7 +28,7 @@ use std::path::Path;
 pub struct VersionedKvStore<const N: usize> {
     tree: ProllyTree<N, GitNodeStorage<N>>,
     git_repo: gix::Repository,
-    staging_area: std::collections::HashMap<Vec<u8>, Option<Vec<u8>>>, // None = deleted
+    staging_area: HashMap<Vec<u8>, Option<Vec<u8>>>, // None = deleted
     current_branch: String,
 }
 
@@ -49,7 +50,7 @@ impl<const N: usize> VersionedKvStore<N> {
         let mut store = VersionedKvStore {
             tree,
             git_repo,
-            staging_area: std::collections::HashMap::new(),
+            staging_area: HashMap::new(),
             current_branch: "main".to_string(),
         };
 
@@ -80,17 +81,23 @@ impl<const N: usize> VersionedKvStore<N> {
             .map(|r| r.name().shorten().to_string())
             .unwrap_or_else(|| "main".to_string());
 
-        Ok(VersionedKvStore {
+        let mut store = VersionedKvStore {
             tree,
             git_repo,
-            staging_area: std::collections::HashMap::new(),
+            staging_area: HashMap::new(),
             current_branch,
-        })
+        };
+
+        // Load staging area from file if it exists
+        store.load_staging_area()?;
+
+        Ok(store)
     }
 
     /// Insert a key-value pair (stages the change)
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
         self.staging_area.insert(key, Some(value));
+        self.save_staging_area()?;
         Ok(())
     }
 
@@ -99,6 +106,7 @@ impl<const N: usize> VersionedKvStore<N> {
         let exists = self.get(&key).is_some();
         if exists {
             self.staging_area.insert(key, Some(value));
+            self.save_staging_area()?;
         }
         Ok(exists)
     }
@@ -108,6 +116,7 @@ impl<const N: usize> VersionedKvStore<N> {
         let exists = self.get(key).is_some();
         if exists {
             self.staging_area.insert(key.to_vec(), None);
+            self.save_staging_area()?;
         }
         Ok(exists)
     }
@@ -193,6 +202,9 @@ impl<const N: usize> VersionedKvStore<N> {
         // Update HEAD
         self.update_head(commit_id)?;
 
+        // Clear staging area file since we've committed
+        self.save_staging_area()?;
+
         Ok(commit_id)
     }
 
@@ -220,6 +232,7 @@ impl<const N: usize> VersionedKvStore<N> {
     pub fn checkout(&mut self, branch_or_commit: &str) -> Result<(), GitKvError> {
         // Clear staging area
         self.staging_area.clear();
+        self.save_staging_area()?;
 
         // Update HEAD to point to the new branch/commit
         let target_ref = if branch_or_commit.starts_with("refs/") {
@@ -379,13 +392,26 @@ impl<const N: usize> VersionedKvStore<N> {
     }
 
     /// Update HEAD to point to the new commit
-    fn update_head(&mut self, _commit_id: gix::ObjectId) -> Result<(), GitKvError> {
+    fn update_head(&mut self, commit_id: gix::ObjectId) -> Result<(), GitKvError> {
         // Update the current branch reference to point to the new commit
-        let _branch_ref = format!("refs/heads/{}", self.current_branch);
+        let branch_ref = format!("refs/heads/{}", self.current_branch);
 
-        // Note: This is a simplified implementation
-        // A full implementation would use gix reference transactions to properly update
-        // the branch reference to point to the new commit
+        // For now, use a simple implementation that writes directly to the file
+        let refs_dir = self.git_repo.path().join("refs").join("heads");
+        std::fs::create_dir_all(&refs_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create refs directory: {e}"))
+        })?;
+
+        let branch_file = refs_dir.join(&self.current_branch);
+        std::fs::write(&branch_file, commit_id.to_hex().to_string()).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write branch reference: {e}"))
+        })?;
+
+        // Update HEAD to point to the branch
+        let head_file = self.git_repo.path().join("HEAD");
+        std::fs::write(&head_file, format!("ref: {}\n", branch_ref)).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write HEAD reference: {e}"))
+        })?;
 
         Ok(())
     }
@@ -394,6 +420,35 @@ impl<const N: usize> VersionedKvStore<N> {
     fn reload_tree_from_head(&mut self) -> Result<(), GitKvError> {
         // This is a simplified implementation
         // In reality, we'd need to reconstruct the ProllyTree from Git objects
+        Ok(())
+    }
+
+    /// Save the staging area to a file
+    fn save_staging_area(&self) -> Result<(), GitKvError> {
+        let staging_file = self.git_repo.path().join("PROLLY_STAGING");
+        
+        // Serialize the staging area
+        let serialized = bincode::serialize(&self.staging_area)
+            .map_err(|e| GitKvError::SerializationError(e))?;
+        
+        std::fs::write(staging_file, serialized)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write staging area: {e}")))?;
+        
+        Ok(())
+    }
+
+    /// Load the staging area from a file
+    fn load_staging_area(&mut self) -> Result<(), GitKvError> {
+        let staging_file = self.git_repo.path().join("PROLLY_STAGING");
+        
+        if staging_file.exists() {
+            let data = std::fs::read(staging_file)
+                .map_err(|e| GitKvError::GitObjectError(format!("Failed to read staging area: {e}")))?;
+            
+            self.staging_area = bincode::deserialize(&data)
+                .map_err(|e| GitKvError::SerializationError(e))?;
+        }
+        
         Ok(())
     }
 }
