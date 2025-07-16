@@ -35,6 +35,17 @@ pub struct GitNodeStorage<const N: usize> {
     hash_to_object_id: Mutex<HashMap<ValueDigest<N>, gix::ObjectId>>,
 }
 
+impl<const N: usize> Clone for GitNodeStorage<N> {
+    fn clone(&self) -> Self {
+        Self {
+            _repository: self._repository.clone(),
+            cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
+            configs: Mutex::new(HashMap::new()),
+            hash_to_object_id: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
 impl<const N: usize> GitNodeStorage<N> {
     /// Create a new GitNodeStorage instance
     pub fn new(repository: gix::Repository) -> Result<Self, GitKvError> {

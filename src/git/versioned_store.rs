@@ -54,6 +54,9 @@ impl<const N: usize> VersionedKvStore<N> {
             current_branch: "main".to_string(),
         };
 
+        // Save initial configuration
+        let _ = store.tree.save_config();
+
         // Create initial commit
         store.commit("Initial commit")?;
 
@@ -70,9 +73,15 @@ impl<const N: usize> VersionedKvStore<N> {
         // Create GitNodeStorage
         let storage = GitNodeStorage::new(git_repo.clone())?;
 
-        // Load tree configuration (using default for now)
-        let config: TreeConfig<N> = TreeConfig::default();
-        let tree = ProllyTree::new(storage, config);
+        // Load tree configuration from storage
+        let config: TreeConfig<N> = match ProllyTree::load_config(&storage) {
+            Ok(config) => config,
+            Err(_) => TreeConfig::default(),
+        };
+
+        // Try to load existing tree from storage, or create new one
+        let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
+            .unwrap_or_else(|| ProllyTree::new(storage, config));
 
         // Get current branch
         let current_branch = git_repo
@@ -90,6 +99,9 @@ impl<const N: usize> VersionedKvStore<N> {
 
         // Load staging area from file if it exists
         store.load_staging_area()?;
+
+        // Reload the tree from the current HEAD
+        store.reload_tree_from_head()?;
 
         Ok(store)
     }
@@ -192,6 +204,9 @@ impl<const N: usize> VersionedKvStore<N> {
                 }
             }
         }
+
+        // Persist the tree state
+        self.tree.persist_root();
 
         // Create tree object in Git
         let tree_id = self.create_git_tree()?;
@@ -418,37 +433,48 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Reload the ProllyTree from the current HEAD
     fn reload_tree_from_head(&mut self) -> Result<(), GitKvError> {
-        // This is a simplified implementation
-        // In reality, we'd need to reconstruct the ProllyTree from Git objects
+        // Load tree configuration from storage
+        let config: TreeConfig<N> = match ProllyTree::load_config(&self.tree.storage) {
+            Ok(config) => config,
+            Err(_) => TreeConfig::default(),
+        };
+
+        // Try to load existing tree from storage, or create new one
+        let storage = self.tree.storage.clone();
+        self.tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
+            .unwrap_or_else(|| ProllyTree::new(storage, config));
+
         Ok(())
     }
 
     /// Save the staging area to a file
     fn save_staging_area(&self) -> Result<(), GitKvError> {
         let staging_file = self.git_repo.path().join("PROLLY_STAGING");
-        
+
         // Serialize the staging area
         let serialized = bincode::serialize(&self.staging_area)
             .map_err(|e| GitKvError::SerializationError(e))?;
-        
-        std::fs::write(staging_file, serialized)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write staging area: {e}")))?;
-        
+
+        std::fs::write(staging_file, serialized).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write staging area: {e}"))
+        })?;
+
         Ok(())
     }
 
     /// Load the staging area from a file
     fn load_staging_area(&mut self) -> Result<(), GitKvError> {
         let staging_file = self.git_repo.path().join("PROLLY_STAGING");
-        
+
         if staging_file.exists() {
-            let data = std::fs::read(staging_file)
-                .map_err(|e| GitKvError::GitObjectError(format!("Failed to read staging area: {e}")))?;
-            
-            self.staging_area = bincode::deserialize(&data)
-                .map_err(|e| GitKvError::SerializationError(e))?;
+            let data = std::fs::read(staging_file).map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to read staging area: {e}"))
+            })?;
+
+            self.staging_area =
+                bincode::deserialize(&data).map_err(|e| GitKvError::SerializationError(e))?;
         }
-        
+
         Ok(())
     }
 }
