@@ -274,23 +274,19 @@ impl<const N: usize> VersionedKvStore<N> {
 
         match rev_walk.all() {
             Ok(walk) => {
-                for commit_info in walk.take(100) {
+                for info in walk.take(100).flatten() {
                     // Limit to 100 commits
-                    if let Ok(info) = commit_info {
-                        if let Ok(commit_obj) = info.object() {
-                            if let Ok(commit_ref) = commit_obj.decode() {
-                                let commit_info = CommitInfo {
-                                    id: commit_obj.id().into(),
-                                    author: String::from_utf8_lossy(&commit_ref.author.name)
-                                        .to_string(),
-                                    committer: String::from_utf8_lossy(&commit_ref.committer.name)
-                                        .to_string(),
-                                    message: String::from_utf8_lossy(&commit_ref.message)
-                                        .to_string(),
-                                    timestamp: commit_ref.author.time.seconds,
-                                };
-                                history.push(commit_info);
-                            }
+                    if let Ok(commit_obj) = info.object() {
+                        if let Ok(commit_ref) = commit_obj.decode() {
+                            let commit_info = CommitInfo {
+                                id: commit_obj.id().into(),
+                                author: String::from_utf8_lossy(commit_ref.author.name).to_string(),
+                                committer: String::from_utf8_lossy(commit_ref.committer.name)
+                                    .to_string(),
+                                message: String::from_utf8_lossy(commit_ref.message).to_string(),
+                                timestamp: commit_ref.author.time.seconds,
+                            };
+                            history.push(commit_info);
                         }
                     }
                 }

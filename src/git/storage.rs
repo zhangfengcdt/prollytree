@@ -90,7 +90,7 @@ impl<const N: usize> GitNodeStorage<N> {
 
         // Deserialize the blob data back to a ProllyNode
         let node: ProllyNode<N> =
-            bincode::deserialize(&object.data).map_err(|e| GitKvError::SerializationError(e))?;
+            bincode::deserialize(object.data).map_err(GitKvError::SerializationError)?;
 
         Ok(node)
     }
