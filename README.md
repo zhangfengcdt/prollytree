@@ -191,9 +191,9 @@ The following features are for Prolly tree library for Version 0.2.0:
 - [X] Parquet/Avro block encoding and decoding
 
 The following features are for Prolly tree library for Version 0.2.1:
-- [ ] tree diffing and merging
-- [ ] show history of changes of the tree (git logs style) using `gitoxide` crate
-- [ ] support build database index using Prolly Tree
+- [X] tree diffing and merging examples
+- [ ] show history of changes of the Prolly tree (git logs style) using `gitoxide` crate
+- [ ] build database index using Prolly Tree
 
 The following features are for Prolly tree library for Version 0.2.2:
 - [ ] version-controlled databases
