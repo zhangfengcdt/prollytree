@@ -133,10 +133,7 @@ impl<'de, const N: usize> Deserialize<'de> for ValueDigest<N> {
         // Try to deserialize as a sequence of bytes (for JSON format)
         let bytes: Vec<u8> = serde::de::Deserialize::deserialize(deserializer)?;
         let array = <[u8; N]>::try_from(bytes.as_slice()).map_err(|_| {
-            serde::de::Error::invalid_length(
-                bytes.len(),
-                &format!("array of length {N}").as_str(),
-            )
+            serde::de::Error::invalid_length(bytes.len(), &format!("array of length {N}").as_str())
         })?;
         Ok(ValueDigest(array))
     }

@@ -57,14 +57,6 @@ impl<const N: usize> VersionedKvStore<N> {
         // Save initial configuration
         let _ = store.tree.save_config();
 
-        // Create .gitignore to ignore prolly files
-        let gitignore_path = path.join(".gitignore");
-        std::fs::write(
-            &gitignore_path,
-            "prolly_tree_root\nprolly_config_*\nprolly_hash_mappings\n",
-        )
-        .map_err(|e| GitKvError::GitObjectError(format!("Failed to create .gitignore: {e}")))?;
-
         // Create initial commit
         store.commit("Initial commit")?;
 
