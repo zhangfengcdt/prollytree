@@ -49,16 +49,19 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Check if we're running in the git repository root directory
     fn is_in_git_root<P: AsRef<Path>>(path: P) -> Result<bool, GitKvError> {
-        let path = path.as_ref().canonicalize()
+        let path = path
+            .as_ref()
+            .canonicalize()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve path: {e}")))?;
-        
+
         if let Some(git_root) = Self::find_git_root(&path) {
-            let git_root = git_root.canonicalize()
-                .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve git root: {e}")))?;
+            let git_root = git_root.canonicalize().map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to resolve git root: {e}"))
+            })?;
             Ok(path == git_root)
         } else {
             Err(GitKvError::GitObjectError(
-                "Not inside a git repository. Please run from within a git repository.".to_string()
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
             ))
         }
     }
@@ -77,7 +80,7 @@ impl<const N: usize> VersionedKvStore<N> {
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
-                "Not inside a git repository. Please run from within a git repository.".to_string()
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
             )
         })?;
 
@@ -124,7 +127,7 @@ impl<const N: usize> VersionedKvStore<N> {
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
-                "Not inside a git repository. Please run from within a git repository.".to_string()
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
             )
         })?;
 
@@ -285,7 +288,7 @@ impl<const N: usize> VersionedKvStore<N> {
         self.save_staging_area()?;
 
         // Auto-commit prolly metadata files to git
-        self.commit_prolly_metadata(&format!(" after commit: {}", message))?;
+        self.commit_prolly_metadata(&format!(" after commit: {message}"))?;
 
         Ok(commit_id)
     }
@@ -547,37 +550,38 @@ impl<const N: usize> VersionedKvStore<N> {
     /// Stage and commit prolly metadata files to git
     fn commit_prolly_metadata(&self, additional_message: &str) -> Result<(), GitKvError> {
         // Get relative paths to the prolly files from git root
-        let git_root = Self::find_git_root(&self.git_repo.path().parent().unwrap()).unwrap();
-        let current_dir = std::env::current_dir()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get current directory: {e}")))?;
-        
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        let current_dir = std::env::current_dir().map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
+        })?;
+
         let config_file = "prolly_config_tree_config";
         let mapping_file = "prolly_hash_mappings";
-        
+
         // Check if files exist before trying to stage them
         let config_path = current_dir.join(config_file);
         let mapping_path = current_dir.join(mapping_file);
-        
+
         let mut files_to_stage = Vec::new();
-        
+
         if config_path.exists() {
             // Get relative path from git root
             if let Ok(relative_path) = config_path.strip_prefix(&git_root) {
                 files_to_stage.push(relative_path.to_string_lossy().to_string());
             }
         }
-        
+
         if mapping_path.exists() {
             // Get relative path from git root
             if let Ok(relative_path) = mapping_path.strip_prefix(&git_root) {
                 files_to_stage.push(relative_path.to_string_lossy().to_string());
             }
         }
-        
+
         if files_to_stage.is_empty() {
             return Ok(()); // Nothing to commit
         }
-        
+
         // Stage the files using git add
         for file in &files_to_stage {
             let add_cmd = std::process::Command::new("git")
@@ -585,29 +589,33 @@ impl<const N: usize> VersionedKvStore<N> {
                 .current_dir(&git_root)
                 .output()
                 .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
-                
+
             if !add_cmd.status.success() {
                 let stderr = String::from_utf8_lossy(&add_cmd.stderr);
-                return Err(GitKvError::GitObjectError(format!("git add failed: {stderr}")));
+                return Err(GitKvError::GitObjectError(format!(
+                    "git add failed: {stderr}"
+                )));
             }
         }
-        
+
         // Commit the staged files
-        let commit_message = format!("Update prolly metadata{}", additional_message);
+        let commit_message = format!("Update prolly metadata{additional_message}");
         let commit_cmd = std::process::Command::new("git")
             .args(["commit", "-m", &commit_message])
             .current_dir(&git_root)
             .output()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git commit: {e}")))?;
-            
+
         if !commit_cmd.status.success() {
             let stderr = String::from_utf8_lossy(&commit_cmd.stderr);
             // It's okay if there's nothing to commit
             if !stderr.is_empty() && !stderr.contains("nothing to commit") {
-                return Err(GitKvError::GitObjectError(format!("git commit failed: {stderr}")));
+                return Err(GitKvError::GitObjectError(format!(
+                    "git commit failed: {stderr}"
+                )));
             }
         }
-        
+
         Ok(())
     }
 

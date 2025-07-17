@@ -56,7 +56,10 @@ impl<const N: usize> Clone for GitNodeStorage<N> {
 
 impl<const N: usize> GitNodeStorage<N> {
     /// Create a new GitNodeStorage instance
-    pub fn new(repository: gix::Repository, dataset_dir: std::path::PathBuf) -> Result<Self, GitKvError> {
+    pub fn new(
+        repository: gix::Repository,
+        dataset_dir: std::path::PathBuf,
+    ) -> Result<Self, GitKvError> {
         let cache_size = NonZeroUsize::new(1000).unwrap(); // Default cache size
 
         let storage = GitNodeStorage {
