@@ -534,7 +534,7 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Save the staging area to a file
     fn save_staging_area(&self) -> Result<(), GitKvError> {
-        let staging_file = self.git_repo.path().join("PROLLY_STAGING");
+        let staging_file = self.get_staging_file_path()?;
 
         // Serialize the staging area
         let serialized =
@@ -621,7 +621,7 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Load the staging area from a file
     fn load_staging_area(&mut self) -> Result<(), GitKvError> {
-        let staging_file = self.git_repo.path().join("PROLLY_STAGING");
+        let staging_file = self.get_staging_file_path()?;
 
         if staging_file.exists() {
             let data = std::fs::read(staging_file).map_err(|e| {
@@ -633,6 +633,32 @@ impl<const N: usize> VersionedKvStore<N> {
         }
 
         Ok(())
+    }
+
+    /// Get the dataset-specific staging file path
+    fn get_staging_file_path(&self) -> Result<std::path::PathBuf, GitKvError> {
+        // Get the current directory relative to git root
+        let current_dir = std::env::current_dir().map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
+        })?;
+
+        let git_root = Self::find_git_root(&current_dir)
+            .ok_or_else(|| GitKvError::GitObjectError("Not in a git repository".to_string()))?;
+
+        // Create a dataset-specific identifier from the relative path
+        let relative_path = current_dir
+            .strip_prefix(&git_root)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get relative path: {e}")))?;
+
+        // Use the relative path to create a unique staging file name
+        let path_str = relative_path.to_string_lossy().replace(['/', '\\'], "_");
+        let staging_filename = if path_str.is_empty() {
+            "PROLLY_STAGING_root".to_string()
+        } else {
+            format!("PROLLY_STAGING_{path_str}")
+        };
+
+        Ok(self.git_repo.path().join(staging_filename))
     }
 }
 
