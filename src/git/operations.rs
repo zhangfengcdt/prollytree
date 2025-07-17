@@ -397,14 +397,24 @@ mod tests {
     #[test]
     fn test_git_operations_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let store = VersionedKvStore::<32>::init(temp_dir.path()).unwrap();
+        // Initialize git repository (regular, not bare)
+        gix::init(temp_dir.path()).unwrap();
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
         let _ops = GitOperations::new(store);
     }
 
     #[test]
     fn test_parse_commit_id() {
         let temp_dir = TempDir::new().unwrap();
-        let store = VersionedKvStore::<32>::init(temp_dir.path()).unwrap();
+        // Initialize git repository (regular, not bare)
+        gix::init(temp_dir.path()).unwrap();
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
         let ops = GitOperations::new(store);
 
         // Test HEAD parsing

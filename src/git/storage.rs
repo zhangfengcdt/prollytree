@@ -33,6 +33,8 @@ pub struct GitNodeStorage<const N: usize> {
     configs: Mutex<HashMap<String, Vec<u8>>>,
     // Maps ProllyTree hashes to Git object IDs
     hash_to_object_id: Mutex<HashMap<ValueDigest<N>, gix::ObjectId>>,
+    // Directory where this dataset's config and mapping files are stored
+    dataset_dir: std::path::PathBuf,
 }
 
 impl<const N: usize> Clone for GitNodeStorage<N> {
@@ -42,6 +44,7 @@ impl<const N: usize> Clone for GitNodeStorage<N> {
             cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
             configs: Mutex::new(HashMap::new()),
             hash_to_object_id: Mutex::new(HashMap::new()),
+            dataset_dir: self.dataset_dir.clone(),
         };
 
         // Load the hash mappings for the cloned instance
@@ -53,7 +56,7 @@ impl<const N: usize> Clone for GitNodeStorage<N> {
 
 impl<const N: usize> GitNodeStorage<N> {
     /// Create a new GitNodeStorage instance
-    pub fn new(repository: gix::Repository) -> Result<Self, GitKvError> {
+    pub fn new(repository: gix::Repository, dataset_dir: std::path::PathBuf) -> Result<Self, GitKvError> {
         let cache_size = NonZeroUsize::new(1000).unwrap(); // Default cache size
 
         let storage = GitNodeStorage {
@@ -61,6 +64,7 @@ impl<const N: usize> GitNodeStorage<N> {
             cache: Mutex::new(LruCache::new(cache_size)),
             configs: Mutex::new(HashMap::new()),
             hash_to_object_id: Mutex::new(HashMap::new()),
+            dataset_dir,
         };
 
         // Load existing hash mappings
@@ -72,6 +76,7 @@ impl<const N: usize> GitNodeStorage<N> {
     /// Create GitNodeStorage with custom cache size
     pub fn with_cache_size(
         repository: gix::Repository,
+        dataset_dir: std::path::PathBuf,
         cache_size: usize,
     ) -> Result<Self, GitKvError> {
         let cache_size = NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::new(1000).unwrap());
@@ -81,6 +86,7 @@ impl<const N: usize> GitNodeStorage<N> {
             cache: Mutex::new(LruCache::new(cache_size)),
             configs: Mutex::new(HashMap::new()),
             hash_to_object_id: Mutex::new(HashMap::new()),
+            dataset_dir,
         };
 
         // Load existing hash mappings
@@ -176,9 +182,8 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         let mut configs = self.configs.lock().unwrap();
         configs.insert(key.to_string(), config.to_vec());
 
-        // Also persist to filesystem for durability
-        let repo = self._repository.lock().unwrap();
-        let config_path = repo.path().join(format!("prolly_config_{key}"));
+        // Also persist to filesystem for durability in the dataset directory
+        let config_path = self.dataset_dir.join(format!("prolly_config_{key}"));
         let _ = std::fs::write(config_path, config);
     }
 
@@ -189,11 +194,9 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         }
 
         // If not in memory, try to load from filesystem
-        let repo = self._repository.lock().unwrap();
-        let config_path = repo.path().join(format!("prolly_config_{key}"));
+        let config_path = self.dataset_dir.join(format!("prolly_config_{key}"));
         if let Ok(config) = std::fs::read(config_path) {
             // Cache in memory for future use
-            drop(repo);
             self.configs
                 .lock()
                 .unwrap()
@@ -208,8 +211,7 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 impl<const N: usize> GitNodeStorage<N> {
     /// Save hash mapping to filesystem
     fn save_hash_mapping(&self, hash: &ValueDigest<N>, object_id: &gix::ObjectId) {
-        let repo = self._repository.lock().unwrap();
-        let mapping_path = repo.path().join("prolly_hash_mappings");
+        let mapping_path = self.dataset_dir.join("prolly_hash_mappings");
 
         // Read existing mappings
         let mut mappings = if mapping_path.exists() {
@@ -230,8 +232,7 @@ impl<const N: usize> GitNodeStorage<N> {
 
     /// Load hash mappings from filesystem
     fn load_hash_mappings(&self) {
-        let repo = self._repository.lock().unwrap();
-        let mapping_path = repo.path().join("prolly_hash_mappings");
+        let mapping_path = self.dataset_dir.join("prolly_hash_mappings");
 
         if let Ok(mappings) = std::fs::read_to_string(mapping_path) {
             let mut hash_map = self.hash_to_object_id.lock().unwrap();
@@ -300,8 +301,8 @@ mod tests {
 
     #[test]
     fn test_git_node_storage_basic_operations() {
-        let (_temp_dir, repo) = create_test_repo();
-        let mut storage = GitNodeStorage::<32>::new(repo).unwrap();
+        let (temp_dir, repo) = create_test_repo();
+        let mut storage = GitNodeStorage::<32>::new(repo, temp_dir.path().to_path_buf()).unwrap();
 
         let node = create_test_node();
         let hash = node.get_hash();
@@ -324,8 +325,10 @@ mod tests {
 
     #[test]
     fn test_cache_functionality() {
-        let (_temp_dir, repo) = create_test_repo();
-        let mut storage = GitNodeStorage::<32>::with_cache_size(repo, 2).unwrap();
+        let (temp_dir, repo) = create_test_repo();
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let mut storage = GitNodeStorage::<32>::with_cache_size(repo, dataset_dir, 2).unwrap();
 
         let node1 = create_test_node();
         let hash1 = node1.get_hash();

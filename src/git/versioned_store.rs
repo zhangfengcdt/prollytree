@@ -33,15 +33,59 @@ pub struct VersionedKvStore<const N: usize> {
 }
 
 impl<const N: usize> VersionedKvStore<N> {
+    /// Find the git repository root by walking up the directory tree
+    fn find_git_root<P: AsRef<Path>>(start_path: P) -> Option<std::path::PathBuf> {
+        let mut current = start_path.as_ref().to_path_buf();
+        loop {
+            if current.join(".git").exists() {
+                return Some(current);
+            }
+            if !current.pop() {
+                break;
+            }
+        }
+        None
+    }
+
+    /// Check if we're running in the git repository root directory
+    fn is_in_git_root<P: AsRef<Path>>(path: P) -> Result<bool, GitKvError> {
+        let path = path.as_ref().canonicalize()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve path: {e}")))?;
+        
+        if let Some(git_root) = Self::find_git_root(&path) {
+            let git_root = git_root.canonicalize()
+                .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve git root: {e}")))?;
+            Ok(path == git_root)
+        } else {
+            Err(GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string()
+            ))
+        }
+    }
+
     /// Initialize a new versioned KV store at the given path
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Initialize Git repository
-        let git_repo = gix::init(path).map_err(|e| GitKvError::GitInitError(Box::new(e)))?;
+        // Reject if trying to initialize in git root directory
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize git-prolly in git root directory. Please run from a subdirectory to create a dataset.".to_string()
+            ));
+        }
 
-        // Create GitNodeStorage
-        let storage = GitNodeStorage::new(git_repo.clone())?;
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string()
+            )
+        })?;
+
+        // Open the existing git repository instead of initializing a new one
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create GitNodeStorage with the current directory as dataset directory
+        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
 
         // Create ProllyTree with default config
         let config: TreeConfig<N> = TreeConfig::default();
@@ -60,6 +104,9 @@ impl<const N: usize> VersionedKvStore<N> {
         // Create initial commit
         store.commit("Initial commit")?;
 
+        // Auto-commit prolly metadata files after initialization
+        store.commit_prolly_metadata(" after init")?;
+
         Ok(store)
     }
 
@@ -67,11 +114,25 @@ impl<const N: usize> VersionedKvStore<N> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Open existing Git repository
-        let git_repo = gix::open(path).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+        // Reject if trying to open in git root directory
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot run git-prolly in git root directory. Please run from a subdirectory containing a dataset.".to_string()
+            ));
+        }
 
-        // Create GitNodeStorage
-        let storage = GitNodeStorage::new(git_repo.clone())?;
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string()
+            )
+        })?;
+
+        // Open existing Git repository
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create GitNodeStorage with the current directory as dataset directory
+        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
 
         // Load tree configuration from storage
         let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
@@ -223,6 +284,9 @@ impl<const N: usize> VersionedKvStore<N> {
         // Clear staging area file since we've committed
         self.save_staging_area()?;
 
+        // Auto-commit prolly metadata files to git
+        self.commit_prolly_metadata(&format!(" after commit: {}", message))?;
+
         Ok(commit_id)
     }
 
@@ -355,6 +419,23 @@ impl<const N: usize> VersionedKvStore<N> {
         Ok(tree_id)
     }
 
+    /// Get git user configuration (name and email)
+    fn get_git_user_config(&self) -> Result<(String, String), GitKvError> {
+        let config = self.git_repo.config_snapshot();
+
+        let name = config
+            .string("user.name")
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "git-prolly".to_string());
+
+        let email = config
+            .string("user.email")
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "git-prolly@example.com".to_string());
+
+        Ok((name, email))
+    }
+
     /// Create a Git commit object
     fn create_git_commit(
         &self,
@@ -367,10 +448,13 @@ impl<const N: usize> VersionedKvStore<N> {
             .unwrap()
             .as_secs() as i64;
 
+        // Get git user configuration
+        let (name, email) = self.get_git_user_config()?;
+
         // Create author and committer signatures
         let signature = gix::actor::Signature {
-            name: "git-prolly".into(),
-            email: "git-prolly@example.com".into(),
+            name: name.into(),
+            email: email.into(),
             time: gix::date::Time {
                 seconds: now,
                 offset: 0,
@@ -460,6 +544,73 @@ impl<const N: usize> VersionedKvStore<N> {
         Ok(())
     }
 
+    /// Stage and commit prolly metadata files to git
+    fn commit_prolly_metadata(&self, additional_message: &str) -> Result<(), GitKvError> {
+        // Get relative paths to the prolly files from git root
+        let git_root = Self::find_git_root(&self.git_repo.path().parent().unwrap()).unwrap();
+        let current_dir = std::env::current_dir()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get current directory: {e}")))?;
+        
+        let config_file = "prolly_config_tree_config";
+        let mapping_file = "prolly_hash_mappings";
+        
+        // Check if files exist before trying to stage them
+        let config_path = current_dir.join(config_file);
+        let mapping_path = current_dir.join(mapping_file);
+        
+        let mut files_to_stage = Vec::new();
+        
+        if config_path.exists() {
+            // Get relative path from git root
+            if let Ok(relative_path) = config_path.strip_prefix(&git_root) {
+                files_to_stage.push(relative_path.to_string_lossy().to_string());
+            }
+        }
+        
+        if mapping_path.exists() {
+            // Get relative path from git root
+            if let Ok(relative_path) = mapping_path.strip_prefix(&git_root) {
+                files_to_stage.push(relative_path.to_string_lossy().to_string());
+            }
+        }
+        
+        if files_to_stage.is_empty() {
+            return Ok(()); // Nothing to commit
+        }
+        
+        // Stage the files using git add
+        for file in &files_to_stage {
+            let add_cmd = std::process::Command::new("git")
+                .args(["add", file])
+                .current_dir(&git_root)
+                .output()
+                .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
+                
+            if !add_cmd.status.success() {
+                let stderr = String::from_utf8_lossy(&add_cmd.stderr);
+                return Err(GitKvError::GitObjectError(format!("git add failed: {stderr}")));
+            }
+        }
+        
+        // Commit the staged files
+        let commit_message = format!("Update prolly metadata{}", additional_message);
+        let commit_cmd = std::process::Command::new("git")
+            .args(["commit", "-m", &commit_message])
+            .current_dir(&git_root)
+            .output()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git commit: {e}")))?;
+            
+        if !commit_cmd.status.success() {
+            let stderr = String::from_utf8_lossy(&commit_cmd.stderr);
+            // It's okay if there's nothing to commit
+            if !stderr.is_empty() && !stderr.contains("nothing to commit") {
+                return Err(GitKvError::GitObjectError(format!("git commit failed: {stderr}")));
+            }
+        }
+        
+        Ok(())
+    }
+
     /// Load the staging area from a file
     fn load_staging_area(&mut self) -> Result<(), GitKvError> {
         let staging_file = self.git_repo.path().join("PROLLY_STAGING");
@@ -485,14 +636,24 @@ mod tests {
     #[test]
     fn test_versioned_store_init() {
         let temp_dir = TempDir::new().unwrap();
-        let store = VersionedKvStore::<32>::init(temp_dir.path());
+        // Initialize git repository (regular, not bare)
+        gix::init(temp_dir.path()).unwrap();
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let store = VersionedKvStore::<32>::init(&dataset_dir);
         assert!(store.is_ok());
     }
 
     #[test]
     fn test_basic_kv_operations() {
         let temp_dir = TempDir::new().unwrap();
-        let mut store = VersionedKvStore::<32>::init(temp_dir.path()).unwrap();
+        // Initialize git repository (regular, not bare)
+        gix::init(temp_dir.path()).unwrap();
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let mut store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
         // Test insert and get
         store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
@@ -512,7 +673,12 @@ mod tests {
     #[test]
     fn test_commit_workflow() {
         let temp_dir = TempDir::new().unwrap();
-        let mut store = VersionedKvStore::<32>::init(temp_dir.path()).unwrap();
+        // Initialize git repository (regular, not bare)
+        gix::init(temp_dir.path()).unwrap();
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let mut store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
         // Stage changes
         store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
