@@ -220,9 +220,9 @@ impl Default for TreeStats {
 }
 
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
-    root: ProllyNode<N>,
-    storage: S,
-    config: TreeConfig<N>,
+    pub root: ProllyNode<N>,
+    pub storage: S,
+    pub config: TreeConfig<N>,
 }
 
 impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
@@ -525,14 +525,6 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 }
 
-impl<S: NodeStorage<N>, const N: usize> ProllyTree<N, S> {
-    fn persist_root(&mut self) {
-        // Save the updated child node back to the storage
-        self.storage
-            .insert_node(self.root.get_hash(), self.root.clone());
-    }
-}
-
 impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// Recursively computes the differences between two Prolly Nodes.
     ///
@@ -587,6 +579,57 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
 
         for (new_key, new_value) in new_iter {
             diffs.push(DiffResult::Added(new_key.clone(), new_value.clone()));
+        }
+    }
+
+    /// Persist the root node to storage and save configuration
+    pub fn persist_root(&mut self) {
+        // Store the root node in the storage
+        let root_hash = self.root.get_hash();
+        if self
+            .storage
+            .insert_node(root_hash.clone(), self.root.clone())
+            .is_some()
+        {
+            // Update the config with the new root hash
+            self.config.root_hash = Some(root_hash);
+
+            // Save the configuration
+            let _ = self.save_config();
+        }
+    }
+
+    /// Load a ProllyTree from an existing root hash in storage
+    pub fn load_from_storage(storage: S, config: TreeConfig<N>) -> Option<Self> {
+        if let Some(ref root_hash) = config.root_hash {
+            if let Some(root_node) = storage.get_node_by_hash(root_hash) {
+                return Some(ProllyTree {
+                    root: root_node,
+                    storage,
+                    config,
+                });
+            }
+        }
+        None
+    }
+
+    /// Collect all keys from the tree
+    pub fn collect_keys(&self) -> Vec<Vec<u8>> {
+        let mut keys = Vec::new();
+        self.collect_keys_recursive(&self.root, &mut keys);
+        keys
+    }
+
+    /// Recursively collect keys from a node and its children
+    fn collect_keys_recursive(&self, node: &ProllyNode<N>, keys: &mut Vec<Vec<u8>>) {
+        // Add all keys from this node
+        for key in &node.keys {
+            keys.push(key.clone());
+        }
+
+        // Recursively collect keys from child nodes
+        for child_node in node.children(&self.storage) {
+            self.collect_keys_recursive(&child_node, keys);
         }
     }
 }
@@ -733,6 +776,29 @@ mod tests {
         assert!(tree.find(b"key1").is_some());
         assert!(tree.find(b"key2").is_some());
         assert!(tree.find(b"key3").is_none());
+    }
+
+    #[test]
+    fn test_persist_and_load() {
+        let storage = InMemoryNodeStorage::<32>::default();
+        let config = TreeConfig::default();
+
+        // Create tree and add data
+        let mut tree = ProllyTree::new(storage.clone(), config.clone());
+        tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        tree.insert(b"key2".to_vec(), b"value2".to_vec());
+
+        // Persist the tree
+        tree.persist_root();
+
+        // Load the tree from storage
+        let loaded_tree = ProllyTree::load_from_storage(tree.storage, tree.config)
+            .expect("Should be able to load tree from storage");
+
+        // Verify data is preserved
+        assert!(loaded_tree.find(b"key1").is_some());
+        assert!(loaded_tree.find(b"key2").is_some());
+        assert!(loaded_tree.find(b"key3").is_none());
     }
 
     #[test]
