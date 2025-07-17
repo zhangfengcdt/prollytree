@@ -27,7 +27,7 @@ schemars = "0.8"
 parquet = { version = "54.0.0", features = ["arrow"] }
 gix = { version = "0.66", features = ["blocking-network-client"], optional = true }
 clap = { version = "4.0", features = ["derive"], optional = true }
-lru = { version = "0.12", optional = true }
+lru = { version = "0.16", optional = true }
 hex = { version = "0.4", optional = true }
 chrono = { version = "0.4", optional = true }
 
