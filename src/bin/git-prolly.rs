@@ -14,13 +14,14 @@ limitations under the License.
 
 use clap::{Parser, Subcommand};
 use prollytree::git::{DiffOperation, GitOperations, MergeResult, VersionedKvStore};
+use prollytree::tree::Tree;
 use std::env;
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "git-prolly")]
 #[command(about = "KV-aware Git operations for ProllyTree")]
-#[command(version = "1.0.0")]
+#[command(version = "0.2.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -58,6 +59,8 @@ enum Commands {
     List {
         #[arg(long, help = "Show values as well")]
         values: bool,
+        #[arg(long, help = "Show prolly tree structure")]
+        graph: bool,
     },
 
     /// Show staging area status
@@ -99,11 +102,8 @@ enum Commands {
         limit: Option<usize>,
     },
 
-    /// Create a new branch
-    Branch {
-        #[arg(help = "Branch name")]
-        name: String,
-    },
+    /// List all branches
+    Branch,
 
     /// Switch to a branch or commit
     Checkout {
@@ -148,8 +148,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Delete { key } => {
             handle_delete(key)?;
         }
-        Commands::List { values } => {
-            handle_list(values)?;
+        Commands::List { values, graph } => {
+            handle_list(values, graph)?;
         }
         Commands::Status => {
             handle_status()?;
@@ -175,8 +175,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             handle_log(kv_summary, keys, limit)?;
         }
-        Commands::Branch { name } => {
-            handle_branch(name)?;
+        Commands::Branch => {
+            handle_branch()?;
         }
         Commands::Checkout { target } => {
             handle_checkout(target)?;
@@ -257,9 +257,15 @@ fn handle_delete(key: String) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn handle_list(show_values: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_list(show_values: bool, show_graph: bool) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
+    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+
+    if show_graph {
+        // Show the prolly tree structure
+        store.tree_mut().print();
+        return Ok(());
+    }
 
     let keys = store.list_keys();
 
@@ -294,9 +300,12 @@ fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
     let store = VersionedKvStore::<32>::open(&current_dir)?;
 
     let status = store.status();
+    let current_branch = store.current_branch();
+
+    println!("On branch {current_branch}");
 
     if status.is_empty() {
-        println!("No staged changes");
+        println!("nothing to commit, working tree clean");
         return Ok(());
     }
 
@@ -522,10 +531,24 @@ fn handle_log(
         history.truncate(limit);
     }
 
-    for commit in history {
-        let date = chrono::DateTime::from_timestamp(commit.timestamp, 0)
-            .unwrap_or_default()
-            .format("%Y-%m-%d %H:%M:%S");
+    // Check current branch for the first commit (HEAD)
+    let current_branch = store.current_branch();
+    let head_commit_id = store.git_repo().head_id().ok();
+
+    for (index, commit) in history.iter().enumerate() {
+        let date = chrono::DateTime::from_timestamp(commit.timestamp, 0).unwrap_or_default();
+
+        // Format like git log: "Wed Jul 16 22:27:36 2025 -0700"
+        let formatted_date = date.format("%a %b %d %H:%M:%S %Y %z");
+
+        // Add branch reference for HEAD commit
+        let branch_ref = if index == 0
+            && head_commit_id.as_ref().map(|id| id.as_ref()) == Some(commit.id.as_ref())
+        {
+            format!(" (HEAD -> {current_branch})")
+        } else {
+            String::new()
+        };
 
         if kv_summary {
             // Get changes for this commit - create a new store instance
@@ -549,35 +572,47 @@ fn handle_log(
                 .filter(|c| matches!(c.operation, DiffOperation::Modified { .. }))
                 .count();
 
+            println!("commit {}{}", commit.id, branch_ref);
+            println!("Author: {}", commit.author);
+            println!("Date:   {formatted_date}");
+            println!();
             println!(
-                "{} - {} - {} (+{} ~{} -{})",
-                &commit.id.to_string()[..8],
-                date,
-                commit.message,
-                added,
-                modified,
-                removed
+                "    {} (+{} ~{} -{})",
+                commit.message, added, modified, removed
             );
+            println!();
         } else {
-            println!(
-                "{} - {} - {}",
-                &commit.id.to_string()[..8],
-                date,
-                commit.message
-            );
+            println!("commit {}{}", commit.id, branch_ref);
+            println!("Author: {}", commit.author);
+            println!("Date:   {formatted_date}");
+            println!();
+            println!("    {}", commit.message);
+            println!();
         }
     }
 
     Ok(())
 }
 
-fn handle_branch(name: String) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_branch() -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+    let store = VersionedKvStore::<32>::open(&current_dir)?;
 
-    store.branch(&name)?;
+    let branches = store.list_branches()?;
+    let current_branch = store.current_branch();
 
-    println!("✓ Created branch: {name}");
+    if branches.is_empty() {
+        println!("No branches found");
+        return Ok(());
+    }
+
+    for branch in branches {
+        if branch == current_branch {
+            println!("* {branch}");
+        } else {
+            println!("  {branch}");
+        }
+    }
 
     Ok(())
 }
@@ -644,6 +679,18 @@ fn handle_stats(commit: Option<String>) -> Result<(), Box<dyn std::error::Error>
 
     println!("ProllyTree Statistics for {target}:");
     println!("═══════════════════════════════════");
+
+    // Get dataset path (name)
+    let dataset_path = current_dir.display().to_string();
+    let dataset_name = current_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown");
+    println!("Dataset: {dataset_name} ({dataset_path})");
+
+    // Get prolly tree depth
+    let tree_depth = store.tree().depth();
+    println!("Tree Depth: {tree_depth}");
 
     // Get basic stats
     let keys = store.list_keys();

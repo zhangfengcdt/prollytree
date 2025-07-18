@@ -111,21 +111,39 @@ impl<const N: usize> GitOperations<N> {
         // Parse commit ID
         let commit_id = self.parse_commit_id(commit)?;
 
-        // Get commit info (simplified)
-        let info = CommitInfo {
-            id: commit_id,
-            author: "Unknown".to_string(),
-            committer: "Unknown".to_string(),
-            message: "Commit".to_string(),
-            timestamp: 0,
+        // Get commit object from git
+        let mut buffer = Vec::new();
+        let commit_obj = self
+            .store
+            .git_repo()
+            .objects
+            .find(&commit_id, &mut buffer)
+            .map_err(|e| GitKvError::GitObjectError(format!("Commit not found: {e}")))?;
+
+        let commit = match commit_obj.decode() {
+            Ok(gix::objs::ObjectRef::Commit(commit)) => commit,
+            _ => {
+                return Err(GitKvError::GitObjectError(
+                    "Object is not a commit".to_string(),
+                ))
+            }
         };
 
-        // Get parent commits (simplified)
-        let parent_ids: Vec<gix::ObjectId> = vec![];
+        // Extract commit info
+        let info = CommitInfo {
+            id: commit_id,
+            author: commit.author().name.to_string(),
+            committer: commit.committer().name.to_string(),
+            message: commit.message().title.to_string(),
+            timestamp: commit.time().seconds,
+        };
+
+        // Get parent commits
+        let parent_ids: Vec<gix::ObjectId> = commit.parents().collect();
 
         // Generate diff from parent (if exists)
         let changes = if let Some(parent_id) = parent_ids.first() {
-            self.diff(&parent_id.to_string(), commit)?
+            self.diff(&parent_id.to_string(), &commit_id.to_string())?
         } else {
             // Root commit - show all keys as added
             let state = self.get_kv_state_at_commit(&commit_id)?;
@@ -302,10 +320,27 @@ impl<const N: usize> GitOperations<N> {
     /// Get KV state at a specific commit
     fn get_kv_state_at_commit(
         &self,
-        _commit_id: &gix::ObjectId,
+        commit_id: &gix::ObjectId,
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
-        // This is a simplified implementation
-        // In reality, we'd need to reconstruct the ProllyTree from the Git objects
+        // Check if we're asking for the current HEAD
+        let current_head = self
+            .store
+            .git_repo()
+            .head_id()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
+
+        if *commit_id == current_head {
+            // For current HEAD, use the current state
+            return self.get_current_kv_state();
+        }
+
+        // For now, return empty state for non-HEAD commits
+        // This is a limitation - in a full implementation, we would need to:
+        // 1. Parse the commit object to get the tree
+        // 2. Reconstruct the ProllyTree from the Git objects
+        // 3. Extract key-value pairs from the reconstructed tree
+        //
+        // For the purpose of fixing the immediate issue, we'll focus on HEAD commits
         Ok(HashMap::new())
     }
 
@@ -320,8 +355,27 @@ impl<const N: usize> GitOperations<N> {
 
     /// Get current KV state
     fn get_current_kv_state(&self) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
-        // This would collect all current KV pairs
-        Ok(HashMap::new())
+        self.get_current_kv_state_from_store(&self.store)
+    }
+
+    /// Get current KV state from a specific store
+    fn get_current_kv_state_from_store(
+        &self,
+        store: &VersionedKvStore<N>,
+    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        let mut state = HashMap::new();
+
+        // Get all keys from the store
+        let keys = store.list_keys();
+
+        // For each key, get its value
+        for key in keys {
+            if let Some(value) = store.get(&key) {
+                state.insert(key, value);
+            }
+        }
+
+        Ok(state)
     }
 
     /// Perform a three-way merge
@@ -374,17 +428,12 @@ impl<const N: usize> GitOperations<N> {
 
     /// Parse a commit ID from a string
     fn parse_commit_id(&self, commit: &str) -> Result<gix::ObjectId, GitKvError> {
-        // Handle special cases (simplified)
-        match commit {
-            "HEAD" => {
-                // Return a placeholder for HEAD
-                Ok(gix::ObjectId::null(gix::hash::Kind::Sha1))
-            }
-            _ => {
-                // Try to parse as hex string
-                gix::ObjectId::from_hex(commit.as_bytes())
-                    .map_err(|e| GitKvError::InvalidCommit(format!("Invalid commit ID: {e}")))
-            }
+        // Try to resolve using git's rev-parse functionality
+        match self.store.git_repo().rev_parse_single(commit) {
+            Ok(object) => Ok(object.into()),
+            Err(e) => Err(GitKvError::GitObjectError(format!(
+                "Cannot resolve commit {commit}: {e}"
+            ))),
         }
     }
 }
