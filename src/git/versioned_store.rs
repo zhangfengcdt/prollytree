@@ -349,6 +349,16 @@ impl<const N: usize> VersionedKvStore<N> {
         &self.current_branch
     }
 
+    /// Get a reference to the underlying ProllyTree
+    pub fn tree(&self) -> &ProllyTree<N, GitNodeStorage<N>> {
+        &self.tree
+    }
+
+    /// Get a mutable reference to the underlying ProllyTree
+    pub fn tree_mut(&mut self) -> &mut ProllyTree<N, GitNodeStorage<N>> {
+        &mut self.tree
+    }
+
     /// Get access to the git repository (for internal use)
     pub fn git_repo(&self) -> &gix::Repository {
         &self.git_repo

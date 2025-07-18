@@ -14,6 +14,7 @@ limitations under the License.
 
 use clap::{Parser, Subcommand};
 use prollytree::git::{DiffOperation, GitOperations, MergeResult, VersionedKvStore};
+use prollytree::tree::Tree;
 use std::env;
 use std::path::PathBuf;
 
@@ -58,6 +59,8 @@ enum Commands {
     List {
         #[arg(long, help = "Show values as well")]
         values: bool,
+        #[arg(long, help = "Show prolly tree structure")]
+        graph: bool,
     },
 
     /// Show staging area status
@@ -148,8 +151,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Delete { key } => {
             handle_delete(key)?;
         }
-        Commands::List { values } => {
-            handle_list(values)?;
+        Commands::List { values, graph } => {
+            handle_list(values, graph)?;
         }
         Commands::Status => {
             handle_status()?;
@@ -257,9 +260,15 @@ fn handle_delete(key: String) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn handle_list(show_values: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_list(show_values: bool, show_graph: bool) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
+    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+
+    if show_graph {
+        // Show the prolly tree structure
+        store.tree_mut().print();
+        return Ok(());
+    }
 
     let keys = store.list_keys();
 
