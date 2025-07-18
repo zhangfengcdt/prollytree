@@ -295,21 +295,53 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Create a new branch
     pub fn branch(&mut self, name: &str) -> Result<(), GitKvError> {
-        // Get the current HEAD commit - simplified approach
+        // Get the current HEAD commit
         let head = self
             .git_repo
             .head()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
 
-        let _head_commit_id = head.id().ok_or_else(|| {
+        let head_commit_id = head.id().ok_or_else(|| {
             GitKvError::GitObjectError("HEAD does not point to a commit".to_string())
         })?;
 
-        let _branch_ref = format!("refs/heads/{name}");
+        // Create the branch reference to point to the current HEAD
+        let refs_dir = self.git_repo.path().join("refs").join("heads");
+        std::fs::create_dir_all(&refs_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create refs directory: {e}"))
+        })?;
+        
+        let branch_file = refs_dir.join(name);
+        std::fs::write(&branch_file, head_commit_id.to_hex().to_string()).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write branch reference: {e}"))
+        })?;
+        
+        Ok(())
+    }
 
-        // Note: This is a simplified implementation
-        // A full implementation would use gix transaction API to properly create branch references
-        // For now, we return success as branch operations are handled at a higher level
+    /// Create a new branch from the current branch and switch to it
+    pub fn create_branch(&mut self, name: &str) -> Result<(), GitKvError> {
+        // First create the branch
+        self.branch(name)?;
+        
+        // Then switch to it
+        // Clear staging area
+        self.staging_area.clear();
+        self.save_staging_area()?;
+        
+        // Update our internal tracking to the new branch
+        self.current_branch = name.to_string();
+        
+        // Update HEAD to point to the new branch
+        let head_file = self.git_repo.path().join("HEAD");
+        let head_content = format!("ref: refs/heads/{name}");
+        std::fs::write(&head_file, head_content).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to update HEAD: {e}"))
+        })?;
+        
+        // Reload tree state from the current HEAD (same as current branch)
+        self.reload_tree_from_head()?;
+        
         Ok(())
     }
 
@@ -330,8 +362,14 @@ impl<const N: usize> VersionedKvStore<N> {
         match self.git_repo.refs.find(&target_ref) {
             Ok(_reference) => {
                 // Update our internal tracking
-                // Note: A full implementation would use gix transaction API to update HEAD
                 self.current_branch = branch_or_commit.to_string();
+                
+                // Update HEAD to point to the new branch
+                let head_file = self.git_repo.path().join("HEAD");
+                let head_content = format!("ref: refs/heads/{branch_or_commit}");
+                std::fs::write(&head_file, head_content).map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to update HEAD: {e}"))
+                })?;
             }
             Err(_) => {
                 return Err(GitKvError::BranchNotFound(branch_or_commit.to_string()));

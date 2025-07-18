@@ -109,6 +109,8 @@ enum Commands {
     Checkout {
         #[arg(help = "Branch or commit to checkout")]
         target: String,
+        #[arg(short = 'b', long = "branch", help = "Create a new branch from current branch")]
+        create_branch: bool,
     },
 
     /// Merge another branch
@@ -178,8 +180,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Branch => {
             handle_branch()?;
         }
-        Commands::Checkout { target } => {
-            handle_checkout(target)?;
+        Commands::Checkout { target, create_branch } => {
+            handle_checkout(target, create_branch)?;
         }
         Commands::Merge { branch, strategy } => {
             handle_merge(branch, strategy)?;
@@ -617,13 +619,17 @@ fn handle_branch() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn handle_checkout(target: String) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_checkout(target: String, create_branch: bool) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
     let mut store = VersionedKvStore::<32>::open(&current_dir)?;
 
-    store.checkout(&target)?;
-
-    println!("✓ Switched to: {target}");
+    if create_branch {
+        store.create_branch(&target)?;
+        println!("✓ Created and switched to new branch: {target}");
+    } else {
+        store.checkout(&target)?;
+        println!("✓ Switched to: {target}");
+    }
 
     Ok(())
 }
