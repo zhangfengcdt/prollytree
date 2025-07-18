@@ -20,7 +20,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "git-prolly")]
 #[command(about = "KV-aware Git operations for ProllyTree")]
-#[command(version = "1.0.0")]
+#[command(version = "0.2.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -294,9 +294,12 @@ fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
     let store = VersionedKvStore::<32>::open(&current_dir)?;
 
     let status = store.status();
+    let current_branch = store.current_branch();
+
+    println!("On branch {}", current_branch);
 
     if status.is_empty() {
-        println!("No staged changes");
+        println!("nothing to commit, working tree clean");
         return Ok(());
     }
 
@@ -522,10 +525,23 @@ fn handle_log(
         history.truncate(limit);
     }
 
-    for commit in history {
+    // Check current branch for the first commit (HEAD)
+    let current_branch = store.current_branch();
+    let head_commit_id = store.git_repo().head_id().ok();
+    
+    for (index, commit) in history.iter().enumerate() {
         let date = chrono::DateTime::from_timestamp(commit.timestamp, 0)
-            .unwrap_or_default()
-            .format("%Y-%m-%d %H:%M:%S");
+            .unwrap_or_default();
+        
+        // Format like git log: "Wed Jul 16 22:27:36 2025 -0700"
+        let formatted_date = date.format("%a %b %d %H:%M:%S %Y %z");
+
+        // Add branch reference for HEAD commit
+        let branch_ref = if index == 0 && head_commit_id.as_ref().map(|id| id.as_ref()) == Some(commit.id.as_ref()) {
+            format!(" (HEAD -> {})", current_branch)
+        } else {
+            String::new()
+        };
 
         if kv_summary {
             // Get changes for this commit - create a new store instance
@@ -549,22 +565,19 @@ fn handle_log(
                 .filter(|c| matches!(c.operation, DiffOperation::Modified { .. }))
                 .count();
 
-            println!(
-                "{} - {} - {} (+{} ~{} -{})",
-                &commit.id.to_string()[..8],
-                date,
-                commit.message,
-                added,
-                modified,
-                removed
-            );
+            println!("commit {}{}", commit.id, branch_ref);
+            println!("Author: {}", commit.author);
+            println!("Date:   {}", formatted_date);
+            println!();
+            println!("    {} (+{} ~{} -{})", commit.message, added, modified, removed);
+            println!();
         } else {
-            println!(
-                "{} - {} - {}",
-                &commit.id.to_string()[..8],
-                date,
-                commit.message
-            );
+            println!("commit {}{}", commit.id, branch_ref);
+            println!("Author: {}", commit.author);
+            println!("Date:   {}", formatted_date);
+            println!();
+            println!("    {}", commit.message);
+            println!();
         }
     }
 

@@ -375,9 +375,14 @@ impl<const N: usize> VersionedKvStore<N> {
                         if let Ok(commit_ref) = commit_obj.decode() {
                             let commit_info = CommitInfo {
                                 id: commit_obj.id().into(),
-                                author: String::from_utf8_lossy(commit_ref.author.name).to_string(),
-                                committer: String::from_utf8_lossy(commit_ref.committer.name)
-                                    .to_string(),
+                                author: format!("{} <{}>", 
+                                    String::from_utf8_lossy(commit_ref.author.name),
+                                    String::from_utf8_lossy(commit_ref.author.email)
+                                ),
+                                committer: format!("{} <{}>", 
+                                    String::from_utf8_lossy(commit_ref.committer.name),
+                                    String::from_utf8_lossy(commit_ref.committer.email)
+                                ),
                                 message: String::from_utf8_lossy(commit_ref.message).to_string(),
                                 timestamp: commit_ref.author.time.seconds,
                             };
