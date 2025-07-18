@@ -27,40 +27,66 @@ impl<const N: usize> GitOperations<N> {
         GitOperations { store }
     }
 
-    /// Perform a three-way merge between two branches
+    /// Perform a merge between two branches, focusing on fast-forward merges
     pub fn merge(&mut self, other_branch: &str) -> Result<MergeResult, GitKvError> {
         // Get the current branch state
         let current_branch = self.store.current_branch().to_string();
 
-        // Find the common ancestor (merge base)
-        let merge_base = self.find_merge_base(&current_branch, other_branch)?;
+        // Get the commit IDs for both branches
+        let current_commit = self.get_branch_commit(&current_branch)?;
+        let other_commit = self.get_branch_commit(other_branch)?;
 
-        // Get the states at each commit
-        let base_state = self.get_kv_state_at_commit(&merge_base)?;
-        let our_state = self.get_current_kv_state()?;
-        let their_state = self.get_kv_state_at_branch(other_branch)?;
-
-        // Perform three-way merge
-        let merge_result = self.perform_three_way_merge(&base_state, &our_state, &their_state)?;
-
-        match merge_result {
-            MergeResult::Conflict(conflicts) => {
-                // Return conflicts for user resolution
-                Ok(MergeResult::Conflict(conflicts))
-            }
-            MergeResult::FastForward(commit_id) => {
-                // Update HEAD to the target commit
-                self.store.checkout(&commit_id.to_string())?;
-                Ok(MergeResult::FastForward(commit_id))
-            }
-            MergeResult::ThreeWay(_commit_id) => {
-                // The merge was successful, commit the result
-                let final_commit = self
-                    .store
-                    .commit(&format!("Merge branch '{other_branch}'"))?;
-                Ok(MergeResult::ThreeWay(final_commit))
-            }
+        // Check if they're the same (nothing to merge)
+        if current_commit == other_commit {
+            return Ok(MergeResult::FastForward(current_commit));
         }
+
+        // Check if we can do a fast-forward merge
+        if self.is_fast_forward_possible(&current_commit, &other_commit)? {
+            // Fast-forward merge: just update HEAD to the other branch
+            self.store.checkout(other_branch)?;
+            return Ok(MergeResult::FastForward(other_commit));
+        }
+
+        // For now, we don't support three-way merges
+        // Return a conflict indicating manual merge is needed
+        let conflicts = vec![crate::git::types::KvConflict {
+            key: b"<merge>".to_vec(),
+            base_value: None,
+            our_value: Some(b"Cannot automatically merge - manual merge required".to_vec()),
+            their_value: Some(b"Use 'git merge' or resolve conflicts manually".to_vec()),
+        }];
+        
+        Ok(MergeResult::Conflict(conflicts))
+    }
+
+    /// Check if a fast-forward merge is possible
+    fn is_fast_forward_possible(
+        &self,
+        current_commit: &gix::ObjectId,
+        other_commit: &gix::ObjectId,
+    ) -> Result<bool, GitKvError> {
+        // Fast-forward is possible if the other commit is a descendant of the current commit
+        // This means the current commit should be an ancestor of the other commit
+        self.is_ancestor(current_commit, other_commit)
+    }
+
+    /// Check if commit A is an ancestor of commit B
+    fn is_ancestor(
+        &self,
+        ancestor: &gix::ObjectId,
+        descendant: &gix::ObjectId,
+    ) -> Result<bool, GitKvError> {
+        // If they're the same, ancestor relationship is true
+        if ancestor == descendant {
+            return Ok(true);
+        }
+
+        // Walk through the parents of the descendant commit
+        let mut ancestors = std::collections::HashSet::new();
+        self.collect_ancestors(descendant, &mut ancestors)?;
+        
+        Ok(ancestors.contains(ancestor))
     }
 
     /// Generate a diff between two branches or commits
@@ -334,14 +360,98 @@ impl<const N: usize> GitOperations<N> {
             return self.get_current_kv_state();
         }
 
-        // For now, return empty state for non-HEAD commits
-        // This is a limitation - in a full implementation, we would need to:
-        // 1. Parse the commit object to get the tree
-        // 2. Reconstruct the ProllyTree from the Git objects
-        // 3. Extract key-value pairs from the reconstructed tree
-        //
-        // For the purpose of fixing the immediate issue, we'll focus on HEAD commits
-        Ok(HashMap::new())
+        // Reconstruct the ProllyTree state from the specific commit
+        self.reconstruct_kv_state_from_commit(commit_id)
+    }
+
+    /// Reconstruct KV state from a specific commit by temporarily switching to it
+    fn reconstruct_kv_state_from_commit(
+        &self,
+        commit_id: &gix::ObjectId,
+    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        // Create a temporary store to reconstruct the state
+        let current_dir = std::env::current_dir()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get current dir: {e}")))?;
+        
+        // Create a temporary clone of the versioned store
+        let mut temp_store = VersionedKvStore::<N>::open(&current_dir)?;
+        
+        // Save current state
+        let original_branch = temp_store.current_branch().to_string();
+        
+        // Switch to the target commit temporarily
+        let result = self.checkout_commit_temporarily(&mut temp_store, commit_id);
+        
+        // Restore original state
+        if let Err(e) = temp_store.checkout(&original_branch) {
+            // Log error but continue with the result we got
+            eprintln!("Warning: Failed to restore original branch {}: {}", original_branch, e);
+        }
+        
+        result
+    }
+
+    /// Temporarily checkout a commit and extract its KV state
+    fn checkout_commit_temporarily(
+        &self,
+        store: &mut VersionedKvStore<N>,
+        commit_id: &gix::ObjectId,
+    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        // Update the store to point to the specific commit
+        // This is a simplified approach - we'll try to reconstruct from the commit
+        
+        // For now, we'll create a temporary directory and checkout the commit there
+        // This is a workaround until we implement full historical state reconstruction
+        let temp_dir = std::env::temp_dir().join(format!("prolly_temp_{}", commit_id.to_hex()));
+        
+        // Create temporary directory
+        std::fs::create_dir_all(&temp_dir)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to create temp dir: {e}")))?;
+        
+        // Use git to checkout the specific commit in the temp directory
+        let output = std::process::Command::new("git")
+            .args(&["clone", "--quiet", store.git_repo().path().to_str().unwrap_or("."), temp_dir.to_str().unwrap()])
+            .output()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to clone repo: {e}")))?;
+        
+        if !output.status.success() {
+            return Err(GitKvError::GitObjectError(format!("Git clone failed: {}", 
+                String::from_utf8_lossy(&output.stderr))));
+        }
+        
+        // Checkout the specific commit
+        let output = std::process::Command::new("git")
+            .args(&["checkout", "--quiet", &commit_id.to_hex().to_string()])
+            .current_dir(&temp_dir)
+            .output()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to checkout commit: {e}")))?;
+        
+        if !output.status.success() {
+            // Clean up temp directory
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err(GitKvError::GitObjectError(format!("Git checkout failed: {}", 
+                String::from_utf8_lossy(&output.stderr))));
+        }
+        
+        // Try to open the store at the temp location
+        let dataset_dir = temp_dir.join("dataset");
+        let result = if dataset_dir.exists() {
+            match VersionedKvStore::<N>::open(&dataset_dir) {
+                Ok(temp_store) => self.get_current_kv_state_from_store(&temp_store),
+                Err(_) => {
+                    // If we can't open the store, return empty state
+                    Ok(HashMap::new())
+                }
+            }
+        } else {
+            // No dataset directory, return empty state
+            Ok(HashMap::new())
+        };
+        
+        // Clean up temp directory
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        
+        result
     }
 
     /// Get KV state at a specific branch

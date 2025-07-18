@@ -654,11 +654,18 @@ fn handle_merge(
             println!("  Merge commit: {commit_id}");
         }
         MergeResult::Conflict(conflicts) => {
-            println!("⚠ Merge conflicts detected:");
-            for conflict in conflicts {
-                println!("  {conflict}");
+            // Check if this is our "manual merge needed" indicator
+            if conflicts.len() == 1 && conflicts[0].key == b"<merge>" {
+                println!("⚠ Cannot automatically merge branches");
+                println!("  The branches have diverged and require manual merging");
+                println!("  Use 'git merge {}' to perform a manual merge", branch);
+            } else {
+                println!("⚠ Merge conflicts detected:");
+                for conflict in conflicts {
+                    println!("  {conflict}");
+                }
+                println!("\nResolve conflicts and run 'git prolly commit' to complete the merge");
             }
-            println!("\nResolve conflicts and run 'git prolly commit' to complete the merge");
         }
     }
 
