@@ -30,37 +30,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Initialize a new git-backed KV store
-    ///
-    /// Basic Usage:
-    ///   git-prolly init [path]
-    ///
-    /// Description:
-    ///   Creates a new ProllyTree versioned key-value store in the specified directory.
-    ///   This must be run from within a Git repository, and will create a 'dataset'
-    ///   subdirectory if none is specified.
-    ///
-    /// Examples:
-    ///   git-prolly init                    # Initialize in current directory
-    ///   git-prolly init ./my-dataset       # Initialize in specific directory
     Init {
         #[arg(help = "Directory to initialize (defaults to current directory)")]
         path: Option<PathBuf>,
     },
 
     /// Set a key-value pair (stages the change)
-    ///
-    /// Basic Usage:
-    ///   git-prolly set <key> <value>
-    ///
-    /// Description:
-    ///   Stages a key-value pair for the next commit. The change is not permanent
-    ///   until you run 'git-prolly commit'. If the key already exists, it will be
-    ///   updated with the new value.
-    ///
-    /// Examples:
-    ///   git-prolly set name "Alice"        # Set a string value
-    ///   git-prolly set age "25"            # Set a numeric value as string
-    ///   git-prolly set config.debug "true" # Set a configuration value
     Set {
         #[arg(help = "Key to set")]
         key: String,
@@ -69,57 +44,18 @@ enum Commands {
     },
 
     /// Get a value by key
-    ///
-    /// Basic Usage:
-    ///   git-prolly get <key>
-    ///
-    /// Description:
-    ///   Retrieves the current value for the specified key. Shows the value from
-    ///   the current working tree, including any staged changes.
-    ///
-    /// Examples:
-    ///   git-prolly get name               # Get value for 'name' key
-    ///   git-prolly get config.debug       # Get nested configuration value
     Get {
         #[arg(help = "Key to get")]
         key: String,
     },
 
     /// Delete a key (stages the change)
-    ///
-    /// Basic Usage:
-    ///   git-prolly delete <key>
-    ///
-    /// Description:
-    ///   Stages a key for deletion in the next commit. The key will be removed
-    ///   from the store when you run 'git-prolly commit'.
-    ///
-    /// Examples:
-    ///   git-prolly delete name            # Delete the 'name' key
-    ///   git-prolly delete temp.*          # Delete keys matching pattern
     Delete {
         #[arg(help = "Key to delete")]
         key: String,
     },
 
     /// List all keys
-    ///
-    /// Basic Usage:
-    ///   git-prolly list [--values] [--graph]
-    ///
-    /// Description:
-    ///   Lists all keys in the current state of the store. Can optionally show
-    ///   values and/or the internal ProllyTree structure.
-    ///
-    /// Options:
-    ///   --values  Show key-value pairs instead of just keys
-    ///   --graph   Show the internal ProllyTree structure
-    ///
-    /// Examples:
-    ///   git-prolly list                   # List all keys
-    ///   git-prolly list --values          # List keys with values
-    ///   git-prolly list --graph           # Show tree structure
-    ///   git-prolly list --values --graph  # Show both values and structure
     List {
         #[arg(long, help = "Show values as well")]
         values: bool,
@@ -128,74 +64,15 @@ enum Commands {
     },
 
     /// Show staging area status
-    ///
-    /// Basic Usage:
-    ///   git-prolly status
-    ///
-    /// Description:
-    ///   Shows the current status of the staging area, including what changes
-    ///   are staged for the next commit. Similar to 'git status' but for KV pairs.
-    ///
-    /// Examples:
-    ///   git-prolly status                 # Show staging area status
     Status,
 
     /// Commit staged changes
-    ///
-    /// Basic Usage:
-    ///   git-prolly commit -m "message"
-    ///
-    /// Description:
-    ///   Commits all staged changes to the repository with the provided message.
-    ///   This creates a new commit in the current branch and clears the staging area.
-    ///
-    /// Examples:
-    ///   git-prolly commit -m "Add user data"      # Commit with message
-    ///   git-prolly commit --message "Update config"  # Long form
     Commit {
         #[arg(short, long, help = "Commit message")]
         message: String,
     },
 
-    #[command(about = r#"Show KV-aware diff between commits
-
-Basic Usage:
-  git-prolly diff <from> <to>
-
-Description:
-  Shows the differences in key-value pairs between two commits, branches,
-  or references. Supports multiple output formats for different use cases.
-
-Arguments:
-  from: Source commit/branch reference
-  to: Target commit/branch reference
-  --format: Output format (compact, detailed, json)
-  --keys: Filter by key pattern (not fully implemented)
-
-Output Formats:
-  1. Compact Format (default):
-     - Shows changes with color coding
-     - + key = "value" (green) for additions
-     - - key = "value" (red) for deletions
-     - ~ key = "old" -> "new" (yellow) for modifications
-  2. Detailed Format:
-     - Expanded view with clear sections
-     - Shows operation type and values separately
-     - Better for analysis of individual changes
-  3. JSON Format:
-     - Machine-readable output
-     - Structured data for programmatic use
-
-Supported References:
-  - Commit hashes: abc123, def456
-  - Branch names: main, feature-branch
-  - Git references: HEAD, HEAD~1, HEAD~2
-
-Examples:
-  git-prolly diff abc123 def456               # Diff between commits
-  git-prolly diff main feature-branch        # Diff between branches
-  git-prolly diff HEAD~1 HEAD --format detailed  # Detailed format
-  git-prolly diff main feature-branch --format json  # JSON output"#)]
+    /// Show KV-aware diff between commits
     Diff {
         #[arg(help = "From commit/branch")]
         from: String,
@@ -207,54 +84,15 @@ Examples:
         keys: Option<String>,
     },
 
-    #[command(about = r#"Show KV state at specific commit
-
-Basic Usage:
-  git-prolly show <commit> [--keys-only]
-
-Description:
-  Shows the complete key-value state at a specific commit. This reconstructs
-  the ProllyTree state from the given commit and displays all key-value pairs
-  that existed at that point in time.
-
-Arguments:
-  commit: The commit hash, branch name, or reference to show
-  --keys-only: Show only keys without values
-
-Examples:
-  git-prolly show HEAD                     # Show current state
-  git-prolly show abc123                   # Show state at commit
-  git-prolly show main                     # Show state at branch
-  git-prolly show HEAD~2 --keys-only      # Show only keys from 2 commits ago"#)]
+    /// Show KV state at specific commit
     Show {
-        #[arg(help = "Commit to show")]
-        commit: String,
+        #[arg(help = "Commit to show (defaults to HEAD)")]
+        commit: Option<String>,
         #[arg(long, help = "Show only keys")]
         keys_only: bool,
     },
 
-    #[command(about = r#"Merge another branch
-
-Basic Usage:
-  git-prolly merge <branch>
-
-Description:
-  Merges another branch into the current branch. Currently supports
-  fast-forward merges only. For complex merges, use standard git merge.
-
-Arguments:
-  branch: The branch to merge
-  --strategy: Merge strategy (not implemented)
-
-Merge Types:
-  1. Fast-forward: When the target branch is a direct descendant
-  2. Manual merge needed: When branches have diverged
-
-Examples:
-  git-prolly merge feature-branch         # Merge feature branch
-  git-prolly merge hotfix                 # Merge hotfix branch
-
-Note: For complex merges, use 'git merge' instead."#)]
+    /// Merge another branch
     Merge {
         #[arg(help = "Branch to merge")]
         branch: String,
@@ -262,29 +100,7 @@ Note: For complex merges, use 'git merge' instead."#)]
         strategy: Option<String>,
     },
 
-    /// Show repository statistics
-    ///
-    /// Basic Usage:
-    ///   git-prolly stats [commit]
-    ///
-    /// Description:
-    ///   Shows detailed statistics about the ProllyTree repository, including
-    ///   tree depth, node count, key count, and storage efficiency metrics.
-    ///
-    /// Arguments:
-    ///   commit: Commit to analyze (defaults to HEAD)
-    ///
-    /// Statistics Include:
-    ///   - Dataset information
-    ///   - Tree structure metrics
-    ///   - Key-value counts
-    ///   - Storage efficiency
-    ///   - Branching factor
-    ///
-    /// Examples:
-    ///   git-prolly stats                        # Stats for current HEAD
-    ///   git-prolly stats abc123                 # Stats for specific commit
-    ///   git-prolly stats main                   # Stats for branch
+    /// Show KV store statistics
     Stats {
         #[arg(help = "Commit to analyze (defaults to HEAD)")]
         commit: Option<String>,
@@ -607,15 +423,16 @@ fn handle_diff(
     Ok(())
 }
 
-fn handle_show(commit: String, keys_only: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_show(commit: Option<String>, keys_only: bool) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
     let store = VersionedKvStore::<32>::open(&current_dir)?;
     let ops = GitOperations::new(store);
 
-    let details = ops.show(&commit)?;
+    let commit_ref = commit.unwrap_or_else(|| "HEAD".to_string());
+    let details = ops.show(&commit_ref)?;
 
     if keys_only {
-        println!("Keys at commit {commit}:");
+        println!("Keys at commit {commit_ref}:");
         for change in details.changes {
             let key_str = String::from_utf8_lossy(&change.key);
             println!("  {key_str}");
