@@ -372,7 +372,8 @@ impl<const N: usize> VersionedKvStore<N> {
 
         for reference in (refs
             .all()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get refs: {e}")))?).flatten()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get refs: {e}")))?)
+        .flatten()
         {
             if let Some(name) = reference.name.as_bstr().strip_prefix(b"refs/heads/") {
                 let branch_name = String::from_utf8_lossy(name).to_string();

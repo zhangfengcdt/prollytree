@@ -680,6 +680,18 @@ fn handle_stats(commit: Option<String>) -> Result<(), Box<dyn std::error::Error>
     println!("ProllyTree Statistics for {target}:");
     println!("═══════════════════════════════════");
 
+    // Get dataset path (name)
+    let dataset_path = current_dir.display().to_string();
+    let dataset_name = current_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown");
+    println!("Dataset: {dataset_name} ({dataset_path})");
+
+    // Get prolly tree depth
+    let tree_depth = store.tree().depth();
+    println!("Tree Depth: {tree_depth}");
+
     // Get basic stats
     let keys = store.list_keys();
     println!("Total Keys: {}", keys.len());
