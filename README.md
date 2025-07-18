@@ -192,12 +192,11 @@ The following features are for Prolly tree library for Version 0.2.0:
 
 The following features are for Prolly tree library for Version 0.2.1:
 - [X] tree diffing and merging examples
-- [ ] show history of changes of the Prolly tree (git logs style) using `gitoxide` crate
-- [ ] build database index using Prolly Tree
+- [X] show history of changes of the Prolly tree (git logs style) using `gitoxide` crate
+- [ ] support gluesql as a kv store
 
 The following features are for Prolly tree library for Version 0.2.2:
 - [ ] version-controlled databases
-  - [ ] prolly tree backend for git databases using `gitoxide` crate
   - [ ] support for IPFS (InterPlanetary File System) for distributed storage
   - [ ] advanced probabilistic splitting algorithms
 - [ ] decentralized databases
