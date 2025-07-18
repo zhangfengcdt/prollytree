@@ -30,10 +30,10 @@ impl<const N: usize> GitOperations<N> {
     /// Perform a merge between two branches, focusing on fast-forward merges
     pub fn merge(&mut self, other_branch: &str) -> Result<MergeResult, GitKvError> {
         // Get the current branch state
-        let current_branch = self.store.current_branch().to_string();
+        let current_branch = self.store.current_branch();
 
         // Get the commit IDs for both branches
-        let current_commit = self.get_branch_commit(&current_branch)?;
+        let current_commit = self.get_branch_commit(current_branch)?;
         let other_commit = self.get_branch_commit(other_branch)?;
 
         // Check if they're the same (nothing to merge)
@@ -56,7 +56,7 @@ impl<const N: usize> GitOperations<N> {
             our_value: Some(b"Cannot automatically merge - manual merge required".to_vec()),
             their_value: Some(b"Use 'git merge' or resolve conflicts manually".to_vec()),
         }];
-        
+
         Ok(MergeResult::Conflict(conflicts))
     }
 
@@ -83,10 +83,41 @@ impl<const N: usize> GitOperations<N> {
         }
 
         // Walk through the parents of the descendant commit
-        let mut ancestors = std::collections::HashSet::new();
-        self.collect_ancestors(descendant, &mut ancestors)?;
-        
-        Ok(ancestors.contains(ancestor))
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(*descendant);
+
+        while let Some(current_commit) = queue.pop_front() {
+            if visited.contains(&current_commit) {
+                continue;
+            }
+            visited.insert(current_commit);
+
+            // If we found the ancestor, return true
+            if current_commit == *ancestor {
+                return Ok(true);
+            }
+
+            // Add parents to queue
+            let mut buffer = Vec::new();
+            if let Ok(commit_obj) = self
+                .store
+                .git_repo()
+                .objects
+                .find(&current_commit, &mut buffer)
+            {
+                if let Ok(gix::objs::ObjectRef::Commit(commit)) = commit_obj.decode() {
+                    for parent_id in commit.parents() {
+                        if !visited.contains(&parent_id) {
+                            queue.push_back(parent_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we didn't find the ancestor, return false
+        Ok(false)
     }
 
     /// Generate a diff between two branches or commits
@@ -221,96 +252,6 @@ impl<const N: usize> GitOperations<N> {
         Ok(())
     }
 
-    /// Find the merge base between two branches
-    fn find_merge_base(&self, branch1: &str, branch2: &str) -> Result<gix::ObjectId, GitKvError> {
-        let commit1 = self.get_branch_commit(branch1)?;
-        let commit2 = self.get_branch_commit(branch2)?;
-
-        // If the commits are the same, return it as the merge base
-        if commit1 == commit2 {
-            return Ok(commit1);
-        }
-
-        // Get all ancestors of commit1
-        let mut ancestors1 = std::collections::HashSet::new();
-        self.collect_ancestors(&commit1, &mut ancestors1)?;
-
-        // Walk through ancestors of commit2 to find the first common ancestor
-        let mut visited = std::collections::HashSet::new();
-        let mut queue = std::collections::VecDeque::new();
-        queue.push_back(commit2);
-
-        while let Some(current_commit) = queue.pop_front() {
-            if visited.contains(&current_commit) {
-                continue;
-            }
-            visited.insert(current_commit);
-
-            // If this commit is an ancestor of commit1, it's our merge base
-            if ancestors1.contains(&current_commit) {
-                return Ok(current_commit);
-            }
-
-            // Add parents to queue
-            let mut buffer = Vec::new();
-            if let Ok(commit_obj) = self
-                .store
-                .git_repo()
-                .objects
-                .find(&current_commit, &mut buffer)
-            {
-                if let Ok(gix::objs::ObjectRef::Commit(commit)) = commit_obj.decode() {
-                    for parent_id in commit.parents() {
-                        if !visited.contains(&parent_id) {
-                            queue.push_back(parent_id);
-                        }
-                    }
-                }
-            }
-        }
-
-        // If no common ancestor found, return an error
-        Err(GitKvError::GitObjectError(format!(
-            "No common ancestor found between {branch1} and {branch2}"
-        )))
-    }
-
-    /// Collect all ancestors of a commit
-    fn collect_ancestors(
-        &self,
-        start_commit: &gix::ObjectId,
-        ancestors: &mut std::collections::HashSet<gix::ObjectId>,
-    ) -> Result<(), GitKvError> {
-        let mut queue = std::collections::VecDeque::new();
-        queue.push_back(*start_commit);
-
-        while let Some(current_commit) = queue.pop_front() {
-            if ancestors.contains(&current_commit) {
-                continue;
-            }
-            ancestors.insert(current_commit);
-
-            // Add parents to queue
-            let mut buffer = Vec::new();
-            if let Ok(commit_obj) = self
-                .store
-                .git_repo()
-                .objects
-                .find(&current_commit, &mut buffer)
-            {
-                if let Ok(gix::objs::ObjectRef::Commit(commit)) = commit_obj.decode() {
-                    for parent_id in commit.parents() {
-                        if !ancestors.contains(&parent_id) {
-                            queue.push_back(parent_id);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Get the commit ID for a branch
     fn get_branch_commit(&self, branch: &str) -> Result<gix::ObjectId, GitKvError> {
         // Try to resolve the branch reference
@@ -372,22 +313,22 @@ impl<const N: usize> GitOperations<N> {
         // Create a temporary store to reconstruct the state
         let current_dir = std::env::current_dir()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get current dir: {e}")))?;
-        
+
         // Create a temporary clone of the versioned store
         let mut temp_store = VersionedKvStore::<N>::open(&current_dir)?;
-        
+
         // Save current state
         let original_branch = temp_store.current_branch().to_string();
-        
+
         // Switch to the target commit temporarily
         let result = self.checkout_commit_temporarily(&mut temp_store, commit_id);
-        
+
         // Restore original state
         if let Err(e) = temp_store.checkout(&original_branch) {
             // Log error but continue with the result we got
-            eprintln!("Warning: Failed to restore original branch {}: {}", original_branch, e);
+            eprintln!("Warning: Failed to restore original branch {original_branch}: {e}");
         }
-        
+
         result
     }
 
@@ -399,40 +340,49 @@ impl<const N: usize> GitOperations<N> {
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         // Update the store to point to the specific commit
         // This is a simplified approach - we'll try to reconstruct from the commit
-        
+
         // For now, we'll create a temporary directory and checkout the commit there
         // This is a workaround until we implement full historical state reconstruction
         let temp_dir = std::env::temp_dir().join(format!("prolly_temp_{}", commit_id.to_hex()));
-        
+
         // Create temporary directory
         std::fs::create_dir_all(&temp_dir)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to create temp dir: {e}")))?;
-        
+
         // Use git to checkout the specific commit in the temp directory
         let output = std::process::Command::new("git")
-            .args(&["clone", "--quiet", store.git_repo().path().to_str().unwrap_or("."), temp_dir.to_str().unwrap()])
+            .args([
+                "clone",
+                "--quiet",
+                store.git_repo().path().to_str().unwrap_or("."),
+                temp_dir.to_str().unwrap_or("."),
+            ])
             .output()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to clone repo: {e}")))?;
-        
+
         if !output.status.success() {
-            return Err(GitKvError::GitObjectError(format!("Git clone failed: {}", 
-                String::from_utf8_lossy(&output.stderr))));
+            return Err(GitKvError::GitObjectError(format!(
+                "Git clone failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
-        
+
         // Checkout the specific commit
         let output = std::process::Command::new("git")
-            .args(&["checkout", "--quiet", &commit_id.to_hex().to_string()])
+            .args(["checkout", "--quiet", &commit_id.to_hex().to_string()])
             .current_dir(&temp_dir)
             .output()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to checkout commit: {e}")))?;
-        
+
         if !output.status.success() {
             // Clean up temp directory
             let _ = std::fs::remove_dir_all(&temp_dir);
-            return Err(GitKvError::GitObjectError(format!("Git checkout failed: {}", 
-                String::from_utf8_lossy(&output.stderr))));
+            return Err(GitKvError::GitObjectError(format!(
+                "Git checkout failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
-        
+
         // Try to open the store at the temp location
         let dataset_dir = temp_dir.join("dataset");
         let result = if dataset_dir.exists() {
@@ -447,10 +397,10 @@ impl<const N: usize> GitOperations<N> {
             // No dataset directory, return empty state
             Ok(HashMap::new())
         };
-        
+
         // Clean up temp directory
         let _ = std::fs::remove_dir_all(&temp_dir);
-        
+
         result
     }
 
@@ -486,54 +436,6 @@ impl<const N: usize> GitOperations<N> {
         }
 
         Ok(state)
-    }
-
-    /// Perform a three-way merge
-    fn perform_three_way_merge(
-        &self,
-        base: &HashMap<Vec<u8>, Vec<u8>>,
-        ours: &HashMap<Vec<u8>, Vec<u8>>,
-        theirs: &HashMap<Vec<u8>, Vec<u8>>,
-    ) -> Result<MergeResult, GitKvError> {
-        let mut conflicts = Vec::new();
-
-        // Collect all keys
-        let mut all_keys = std::collections::HashSet::new();
-        for key in base.keys() {
-            all_keys.insert(key.clone());
-        }
-        for key in ours.keys() {
-            all_keys.insert(key.clone());
-        }
-        for key in theirs.keys() {
-            all_keys.insert(key.clone());
-        }
-
-        // Check for conflicts
-        for key in all_keys {
-            let base_value = base.get(&key);
-            let our_value = ours.get(&key);
-            let their_value = theirs.get(&key);
-
-            // Detect conflicts
-            if base_value != our_value && base_value != their_value && our_value != their_value {
-                conflicts.push(KvConflict {
-                    key: key.clone(),
-                    base_value: base_value.cloned(),
-                    our_value: our_value.cloned(),
-                    their_value: their_value.cloned(),
-                });
-            }
-        }
-
-        if conflicts.is_empty() {
-            // No conflicts, create merge commit
-            Ok(MergeResult::ThreeWay(gix::ObjectId::null(
-                gix::hash::Kind::Sha1,
-            )))
-        } else {
-            Ok(MergeResult::Conflict(conflicts))
-        }
     }
 
     /// Parse a commit ID from a string

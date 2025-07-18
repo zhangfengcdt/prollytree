@@ -310,12 +310,12 @@ impl<const N: usize> VersionedKvStore<N> {
         std::fs::create_dir_all(&refs_dir).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to create refs directory: {e}"))
         })?;
-        
+
         let branch_file = refs_dir.join(name);
         std::fs::write(&branch_file, head_commit_id.to_hex().to_string()).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to write branch reference: {e}"))
         })?;
-        
+
         Ok(())
     }
 
@@ -323,25 +323,24 @@ impl<const N: usize> VersionedKvStore<N> {
     pub fn create_branch(&mut self, name: &str) -> Result<(), GitKvError> {
         // First create the branch
         self.branch(name)?;
-        
+
         // Then switch to it
         // Clear staging area
         self.staging_area.clear();
         self.save_staging_area()?;
-        
+
         // Update our internal tracking to the new branch
         self.current_branch = name.to_string();
-        
+
         // Update HEAD to point to the new branch
         let head_file = self.git_repo.path().join("HEAD");
         let head_content = format!("ref: refs/heads/{name}");
-        std::fs::write(&head_file, head_content).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to update HEAD: {e}"))
-        })?;
-        
+        std::fs::write(&head_file, head_content)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to update HEAD: {e}")))?;
+
         // Reload tree state from the current HEAD (same as current branch)
         self.reload_tree_from_head()?;
-        
+
         Ok(())
     }
 
@@ -363,7 +362,7 @@ impl<const N: usize> VersionedKvStore<N> {
             Ok(_reference) => {
                 // Update our internal tracking
                 self.current_branch = branch_or_commit.to_string();
-                
+
                 // Update HEAD to point to the new branch
                 let head_file = self.git_repo.path().join("HEAD");
                 let head_content = format!("ref: refs/heads/{branch_or_commit}");

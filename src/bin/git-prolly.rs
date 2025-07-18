@@ -92,39 +92,12 @@ enum Commands {
         keys_only: bool,
     },
 
-    /// KV-aware log with summaries
-    Log {
-        #[arg(long, help = "Show KV change summary")]
-        kv_summary: bool,
-        #[arg(long, help = "Filter by key pattern")]
-        keys: Option<String>,
-        #[arg(long, help = "Limit number of commits")]
-        limit: Option<usize>,
-    },
-
-    /// List all branches
-    Branch,
-
-    /// Switch to a branch or commit
-    Checkout {
-        #[arg(help = "Branch or commit to checkout")]
-        target: String,
-        #[arg(short = 'b', long = "branch", help = "Create a new branch from current branch")]
-        create_branch: bool,
-    },
-
     /// Merge another branch
     Merge {
         #[arg(help = "Branch to merge")]
         branch: String,
         #[arg(long, help = "Merge strategy")]
         strategy: Option<String>,
-    },
-
-    /// Revert a commit
-    Revert {
-        #[arg(help = "Commit to revert")]
-        commit: String,
     },
 
     /// Show repository statistics
@@ -170,24 +143,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Show { commit, keys_only } => {
             handle_show(commit, keys_only)?;
         }
-        Commands::Log {
-            kv_summary,
-            keys,
-            limit,
-        } => {
-            handle_log(kv_summary, keys, limit)?;
-        }
-        Commands::Branch => {
-            handle_branch()?;
-        }
-        Commands::Checkout { target, create_branch } => {
-            handle_checkout(target, create_branch)?;
-        }
         Commands::Merge { branch, strategy } => {
             handle_merge(branch, strategy)?;
-        }
-        Commands::Revert { commit } => {
-            handle_revert(commit)?;
         }
         Commands::Stats { commit } => {
             handle_stats(commit)?;
@@ -198,7 +155,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn handle_init(path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
-    let target_path = path.unwrap_or_else(|| env::current_dir().unwrap());
+    let target_path =
+        path.unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     println!("Initializing ProllyTree KV store in {target_path:?}...");
 
@@ -215,13 +173,9 @@ fn handle_set(key: String, value: String) -> Result<(), Box<dyn std::error::Erro
     let current_dir = env::current_dir()?;
     let mut store = VersionedKvStore::<32>::open(&current_dir)?;
 
-    // Clone the strings before moving them into insert
-    let key_display = key.clone();
-    let value_display = value.clone();
+    store.insert(key.as_bytes().to_vec(), value.as_bytes().to_vec())?;
 
-    store.insert(key.into_bytes(), value.into_bytes())?;
-
-    println!("✓ Staged: {key_display} = \"{value_display}\"");
+    println!("✓ Staged: {key} = \"{value}\"");
     println!("  (Use 'git prolly commit' to save changes)");
 
     Ok(())
@@ -519,121 +473,6 @@ fn handle_show(commit: String, keys_only: bool) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn handle_log(
-    kv_summary: bool,
-    _keys: Option<String>,
-    limit: Option<usize>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
-
-    let mut history = store.log()?;
-
-    if let Some(limit) = limit {
-        history.truncate(limit);
-    }
-
-    // Check current branch for the first commit (HEAD)
-    let current_branch = store.current_branch();
-    let head_commit_id = store.git_repo().head_id().ok();
-
-    for (index, commit) in history.iter().enumerate() {
-        let date = chrono::DateTime::from_timestamp(commit.timestamp, 0).unwrap_or_default();
-
-        // Format like git log: "Wed Jul 16 22:27:36 2025 -0700"
-        let formatted_date = date.format("%a %b %d %H:%M:%S %Y %z");
-
-        // Add branch reference for HEAD commit
-        let branch_ref = if index == 0
-            && head_commit_id.as_ref().map(|id| id.as_ref()) == Some(commit.id.as_ref())
-        {
-            format!(" (HEAD -> {current_branch})")
-        } else {
-            String::new()
-        };
-
-        if kv_summary {
-            // Get changes for this commit - create a new store instance
-            let ops_store = VersionedKvStore::<32>::open(&current_dir)?;
-            let ops = GitOperations::new(ops_store);
-            let changes = match ops.show(&commit.id.to_string()) {
-                Ok(details) => details.changes,
-                Err(_) => vec![],
-            };
-
-            let added = changes
-                .iter()
-                .filter(|c| matches!(c.operation, DiffOperation::Added(_)))
-                .count();
-            let removed = changes
-                .iter()
-                .filter(|c| matches!(c.operation, DiffOperation::Removed(_)))
-                .count();
-            let modified = changes
-                .iter()
-                .filter(|c| matches!(c.operation, DiffOperation::Modified { .. }))
-                .count();
-
-            println!("commit {}{}", commit.id, branch_ref);
-            println!("Author: {}", commit.author);
-            println!("Date:   {formatted_date}");
-            println!();
-            println!(
-                "    {} (+{} ~{} -{})",
-                commit.message, added, modified, removed
-            );
-            println!();
-        } else {
-            println!("commit {}{}", commit.id, branch_ref);
-            println!("Author: {}", commit.author);
-            println!("Date:   {formatted_date}");
-            println!();
-            println!("    {}", commit.message);
-            println!();
-        }
-    }
-
-    Ok(())
-}
-
-fn handle_branch() -> Result<(), Box<dyn std::error::Error>> {
-    let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
-
-    let branches = store.list_branches()?;
-    let current_branch = store.current_branch();
-
-    if branches.is_empty() {
-        println!("No branches found");
-        return Ok(());
-    }
-
-    for branch in branches {
-        if branch == current_branch {
-            println!("* {branch}");
-        } else {
-            println!("  {branch}");
-        }
-    }
-
-    Ok(())
-}
-
-fn handle_checkout(target: String, create_branch: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let current_dir = env::current_dir()?;
-    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
-
-    if create_branch {
-        store.create_branch(&target)?;
-        println!("✓ Created and switched to new branch: {target}");
-    } else {
-        store.checkout(&target)?;
-        println!("✓ Switched to: {target}");
-    }
-
-    Ok(())
-}
-
 fn handle_merge(
     branch: String,
     _strategy: Option<String>,
@@ -658,7 +497,7 @@ fn handle_merge(
             if conflicts.len() == 1 && conflicts[0].key == b"<merge>" {
                 println!("⚠ Cannot automatically merge branches");
                 println!("  The branches have diverged and require manual merging");
-                println!("  Use 'git merge {}' to perform a manual merge", branch);
+                println!("  Use 'git merge {branch}' to perform a manual merge");
             } else {
                 println!("⚠ Merge conflicts detected:");
                 for conflict in conflicts {
@@ -668,18 +507,6 @@ fn handle_merge(
             }
         }
     }
-
-    Ok(())
-}
-
-fn handle_revert(commit: String) -> Result<(), Box<dyn std::error::Error>> {
-    let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
-    let mut ops = GitOperations::new(store);
-
-    ops.revert(&commit)?;
-
-    println!("✓ Reverted commit: {commit}");
 
     Ok(())
 }
