@@ -113,12 +113,20 @@ impl<const N: usize> GitOperations<N> {
 
         // Get commit object from git
         let mut buffer = Vec::new();
-        let commit_obj = self.store.git_repo().objects.find(&commit_id, &mut buffer)
+        let commit_obj = self
+            .store
+            .git_repo()
+            .objects
+            .find(&commit_id, &mut buffer)
             .map_err(|e| GitKvError::GitObjectError(format!("Commit not found: {e}")))?;
 
         let commit = match commit_obj.decode() {
             Ok(gix::objs::ObjectRef::Commit(commit)) => commit,
-            _ => return Err(GitKvError::GitObjectError("Object is not a commit".to_string())),
+            _ => {
+                return Err(GitKvError::GitObjectError(
+                    "Object is not a commit".to_string(),
+                ))
+            }
         };
 
         // Extract commit info
@@ -315,20 +323,23 @@ impl<const N: usize> GitOperations<N> {
         commit_id: &gix::ObjectId,
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         // Check if we're asking for the current HEAD
-        let current_head = self.store.git_repo().head_id()
+        let current_head = self
+            .store
+            .git_repo()
+            .head_id()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
-        
+
         if *commit_id == current_head {
             // For current HEAD, use the current state
             return self.get_current_kv_state();
         }
-        
+
         // For now, return empty state for non-HEAD commits
         // This is a limitation - in a full implementation, we would need to:
         // 1. Parse the commit object to get the tree
         // 2. Reconstruct the ProllyTree from the Git objects
         // 3. Extract key-value pairs from the reconstructed tree
-        // 
+        //
         // For the purpose of fixing the immediate issue, we'll focus on HEAD commits
         Ok(HashMap::new())
     }
@@ -346,21 +357,24 @@ impl<const N: usize> GitOperations<N> {
     fn get_current_kv_state(&self) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         self.get_current_kv_state_from_store(&self.store)
     }
-    
+
     /// Get current KV state from a specific store
-    fn get_current_kv_state_from_store(&self, store: &VersionedKvStore<N>) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+    fn get_current_kv_state_from_store(
+        &self,
+        store: &VersionedKvStore<N>,
+    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         let mut state = HashMap::new();
-        
+
         // Get all keys from the store
         let keys = store.list_keys();
-        
+
         // For each key, get its value
         for key in keys {
             if let Some(value) = store.get(&key) {
                 state.insert(key, value);
             }
         }
-        
+
         Ok(state)
     }
 

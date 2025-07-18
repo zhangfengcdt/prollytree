@@ -359,6 +359,31 @@ impl<const N: usize> VersionedKvStore<N> {
         &mut self.tree
     }
 
+    /// List all branches in the repository
+    pub fn list_branches(&self) -> Result<Vec<String>, GitKvError> {
+        let mut branches = Vec::new();
+
+        // Get all refs under refs/heads/
+        let refs = self
+            .git_repo
+            .refs
+            .iter()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to iterate refs: {e}")))?;
+
+        for reference in (refs
+            .all()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get refs: {e}")))?).flatten()
+        {
+            if let Some(name) = reference.name.as_bstr().strip_prefix(b"refs/heads/") {
+                let branch_name = String::from_utf8_lossy(name).to_string();
+                branches.push(branch_name);
+            }
+        }
+
+        branches.sort();
+        Ok(branches)
+    }
+
     /// Get access to the git repository (for internal use)
     pub fn git_repo(&self) -> &gix::Repository {
         &self.git_repo
@@ -385,11 +410,13 @@ impl<const N: usize> VersionedKvStore<N> {
                         if let Ok(commit_ref) = commit_obj.decode() {
                             let commit_info = CommitInfo {
                                 id: commit_obj.id().into(),
-                                author: format!("{} <{}>", 
+                                author: format!(
+                                    "{} <{}>",
                                     String::from_utf8_lossy(commit_ref.author.name),
                                     String::from_utf8_lossy(commit_ref.author.email)
                                 ),
-                                committer: format!("{} <{}>", 
+                                committer: format!(
+                                    "{} <{}>",
                                     String::from_utf8_lossy(commit_ref.committer.name),
                                     String::from_utf8_lossy(commit_ref.committer.email)
                                 ),

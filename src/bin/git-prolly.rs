@@ -102,11 +102,8 @@ enum Commands {
         limit: Option<usize>,
     },
 
-    /// Create a new branch
-    Branch {
-        #[arg(help = "Branch name")]
-        name: String,
-    },
+    /// List all branches
+    Branch,
 
     /// Switch to a branch or commit
     Checkout {
@@ -178,8 +175,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             handle_log(kv_summary, keys, limit)?;
         }
-        Commands::Branch { name } => {
-            handle_branch(name)?;
+        Commands::Branch => {
+            handle_branch()?;
         }
         Commands::Checkout { target } => {
             handle_checkout(target)?;
@@ -305,7 +302,7 @@ fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
     let status = store.status();
     let current_branch = store.current_branch();
 
-    println!("On branch {}", current_branch);
+    println!("On branch {current_branch}");
 
     if status.is_empty() {
         println!("nothing to commit, working tree clean");
@@ -537,17 +534,18 @@ fn handle_log(
     // Check current branch for the first commit (HEAD)
     let current_branch = store.current_branch();
     let head_commit_id = store.git_repo().head_id().ok();
-    
+
     for (index, commit) in history.iter().enumerate() {
-        let date = chrono::DateTime::from_timestamp(commit.timestamp, 0)
-            .unwrap_or_default();
-        
+        let date = chrono::DateTime::from_timestamp(commit.timestamp, 0).unwrap_or_default();
+
         // Format like git log: "Wed Jul 16 22:27:36 2025 -0700"
         let formatted_date = date.format("%a %b %d %H:%M:%S %Y %z");
 
         // Add branch reference for HEAD commit
-        let branch_ref = if index == 0 && head_commit_id.as_ref().map(|id| id.as_ref()) == Some(commit.id.as_ref()) {
-            format!(" (HEAD -> {})", current_branch)
+        let branch_ref = if index == 0
+            && head_commit_id.as_ref().map(|id| id.as_ref()) == Some(commit.id.as_ref())
+        {
+            format!(" (HEAD -> {current_branch})")
         } else {
             String::new()
         };
@@ -576,14 +574,17 @@ fn handle_log(
 
             println!("commit {}{}", commit.id, branch_ref);
             println!("Author: {}", commit.author);
-            println!("Date:   {}", formatted_date);
+            println!("Date:   {formatted_date}");
             println!();
-            println!("    {} (+{} ~{} -{})", commit.message, added, modified, removed);
+            println!(
+                "    {} (+{} ~{} -{})",
+                commit.message, added, modified, removed
+            );
             println!();
         } else {
             println!("commit {}{}", commit.id, branch_ref);
             println!("Author: {}", commit.author);
-            println!("Date:   {}", formatted_date);
+            println!("Date:   {formatted_date}");
             println!();
             println!("    {}", commit.message);
             println!();
@@ -593,13 +594,25 @@ fn handle_log(
     Ok(())
 }
 
-fn handle_branch(name: String) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_branch() -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+    let store = VersionedKvStore::<32>::open(&current_dir)?;
 
-    store.branch(&name)?;
+    let branches = store.list_branches()?;
+    let current_branch = store.current_branch();
 
-    println!("✓ Created branch: {name}");
+    if branches.is_empty() {
+        println!("No branches found");
+        return Ok(());
+    }
+
+    for branch in branches {
+        if branch == current_branch {
+            println!("* {branch}");
+        } else {
+            println!("  {branch}");
+        }
+    }
 
     Ok(())
 }
