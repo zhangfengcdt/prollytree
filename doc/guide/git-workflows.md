@@ -1,4 +1,4 @@
-# git-prolly Development Workflows
+# Design of Development Workflows using Prollytree and Git
 
 A comprehensive guide to integrating git-prolly into your development workflows, covering both separate repository and monorepo approaches.
 

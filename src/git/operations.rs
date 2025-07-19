@@ -49,11 +49,11 @@ impl<const N: usize> GitOperations<N> {
         }
 
         // For now, we don't support three-way merges
-        // Return a conflict indicating manual merge is needed
+        // Return a conflict indicating guide merge is needed
         let conflicts = vec![crate::git::types::KvConflict {
             key: b"<merge>".to_vec(),
             base_value: None,
-            our_value: Some(b"Cannot automatically merge - manual merge required".to_vec()),
+            our_value: Some(b"Cannot automatically merge - guide merge required".to_vec()),
             their_value: Some(b"Use 'git merge' or resolve conflicts manually".to_vec()),
         }];
 

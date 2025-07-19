@@ -538,11 +538,11 @@ fn handle_merge(
             println!("  Merge commit: {commit_id}");
         }
         MergeResult::Conflict(conflicts) => {
-            // Check if this is our "manual merge needed" indicator
+            // Check if this is our "guide merge needed" indicator
             if conflicts.len() == 1 && conflicts[0].key == b"<merge>" {
                 println!("⚠ Cannot automatically merge branches");
-                println!("  The branches have diverged and require manual merging");
-                println!("  Use 'git merge {branch}' to perform a manual merge");
+                println!("  The branches have diverged and require guide merging");
+                println!("  Use 'git merge {branch}' to perform a guide merge");
             } else {
                 println!("⚠ Merge conflicts detected:");
                 for conflict in conflicts {
