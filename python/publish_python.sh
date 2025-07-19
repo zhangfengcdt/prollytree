@@ -9,6 +9,9 @@ ENVIRONMENT=${1:-test}
 
 echo "🔧 Building ProllyTree Python package for publication..."
 
+# Change to project root directory
+cd "$(dirname "$0")/.."
+
 # Check if maturin is installed
 if ! command -v maturin &> /dev/null; then
     echo "❌ maturin is not installed. Installing with pip..."

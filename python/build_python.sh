@@ -12,6 +12,9 @@ if ! command -v maturin &> /dev/null; then
     pip install maturin
 fi
 
+# Change to project root directory
+cd "$(dirname "$0")/.."
+
 # Build the wheel
 echo "🍹 Building wheel with maturin..."
 maturin build --release --features python
@@ -52,5 +55,5 @@ echo "To test the bindings:"
 echo "  python3 test_python_binding.py"
 echo ""
 echo "To publish to PyPI:"
-echo "  ./publish_python.sh test    # Publish to TestPyPI first"
-echo "  ./publish_python.sh prod    # Publish to production PyPI"
+echo "  cd python && ./publish_python.sh test    # Publish to TestPyPI first"
+echo "  cd python && ./publish_python.sh prod    # Publish to production PyPI"
