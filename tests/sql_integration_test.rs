@@ -1,11 +1,7 @@
 #[cfg(feature = "sql")]
 mod integration_tests {
+    use gluesql_core::{error::Result, executor::Payload, prelude::Glue};
     use prollytree::sql::ProllyStorage;
-    use gluesql_core::{
-        error::Result,
-        executor::Payload,
-        prelude::Glue,
-    };
     use tempfile::TempDir;
 
     async fn setup_test_db() -> Result<(TempDir, Glue<ProllyStorage<32>>)> {
@@ -46,7 +42,7 @@ mod integration_tests {
                 value INTEGER
             )
         "#;
-        
+
         let result = glue.execute(create_sql).await?;
         assert_eq!(result.len(), 1);
         assert!(matches!(result[0], Payload::Create));
@@ -58,7 +54,7 @@ mod integration_tests {
             (2, 'second', 200),
             (3, 'third', 300)
         "#;
-        
+
         let result = glue.execute(insert_sql).await?;
         assert_eq!(result.len(), 1);
         assert!(matches!(result[0], Payload::Insert(3)));
@@ -71,22 +67,28 @@ mod integration_tests {
         let (_temp_dir, mut glue) = setup_test_db().await?;
 
         // Setup data
-        glue.execute(r#"
+        glue.execute(
+            r#"
             CREATE TABLE products (
                 id INTEGER,
                 name TEXT,
                 price INTEGER,
                 category TEXT
             )
-        "#).await?;
+        "#,
+        )
+        .await?;
 
-        glue.execute(r#"
+        glue.execute(
+            r#"
             INSERT INTO products (id, name, price, category) VALUES
             (1, 'Laptop', 1000, 'Electronics'),
             (2, 'Book', 20, 'Education'),
             (3, 'Phone', 800, 'Electronics'),
             (4, 'Notebook', 5, 'Education')
-        "#).await?;
+        "#,
+        )
+        .await?;
 
         // Test SELECT *
         let result = glue.execute("SELECT * FROM products").await?;
@@ -99,7 +101,9 @@ mod integration_tests {
         }
 
         // Test SELECT with WHERE
-        let result = glue.execute("SELECT name, price FROM products WHERE category = 'Electronics'").await?;
+        let result = glue
+            .execute("SELECT name, price FROM products WHERE category = 'Electronics'")
+            .await?;
         if let Payload::Select { labels, rows } = &result[0] {
             assert_eq!(labels, &vec!["name", "price"]);
             assert_eq!(rows.len(), 2);
@@ -108,7 +112,9 @@ mod integration_tests {
         }
 
         // Test ORDER BY
-        let result = glue.execute("SELECT name FROM products ORDER BY price").await?;
+        let result = glue
+            .execute("SELECT name FROM products ORDER BY price")
+            .await?;
         if let Payload::Select { labels, rows } = &result[0] {
             assert_eq!(labels, &vec!["name"]);
             assert_eq!(rows.len(), 4);
@@ -124,44 +130,60 @@ mod integration_tests {
         let (_temp_dir, mut glue) = setup_test_db().await?;
 
         // Setup tables
-        glue.execute(r#"
+        glue.execute(
+            r#"
             CREATE TABLE customers (
                 id INTEGER,
                 name TEXT,
                 email TEXT
             )
-        "#).await?;
+        "#,
+        )
+        .await?;
 
-        glue.execute(r#"
+        glue.execute(
+            r#"
             CREATE TABLE orders (
                 id INTEGER,
                 customer_id INTEGER,
                 product TEXT,
                 amount INTEGER
             )
-        "#).await?;
+        "#,
+        )
+        .await?;
 
         // Insert data
-        glue.execute(r#"
+        glue.execute(
+            r#"
             INSERT INTO customers (id, name, email) VALUES
             (1, 'Alice', 'alice@example.com'),
             (2, 'Bob', 'bob@example.com')
-        "#).await?;
+        "#,
+        )
+        .await?;
 
-        glue.execute(r#"
+        glue.execute(
+            r#"
             INSERT INTO orders (id, customer_id, product, amount) VALUES
             (1, 1, 'Laptop', 1000),
             (2, 1, 'Mouse', 50),
             (3, 2, 'Keyboard', 100)
-        "#).await?;
+        "#,
+        )
+        .await?;
 
         // Test JOIN
-        let result = glue.execute(r#"
+        let result = glue
+            .execute(
+                r#"
             SELECT c.name, o.product, o.amount
             FROM customers c
             JOIN orders o ON c.id = o.customer_id
             ORDER BY c.name, o.product
-        "#).await?;
+        "#,
+            )
+            .await?;
 
         if let Payload::Select { labels, rows } = &result[0] {
             assert_eq!(labels, &vec!["name", "product", "amount"]);
@@ -178,27 +200,37 @@ mod integration_tests {
         let (_temp_dir, mut glue) = setup_test_db().await?;
 
         // Setup data
-        glue.execute(r#"
+        glue.execute(
+            r#"
             CREATE TABLE items (
                 id INTEGER,
                 name TEXT,
                 quantity INTEGER
             )
-        "#).await?;
+        "#,
+        )
+        .await?;
 
-        glue.execute(r#"
+        glue.execute(
+            r#"
             INSERT INTO items (id, name, quantity) VALUES
             (1, 'Item1', 10),
             (2, 'Item2', 20),
             (3, 'Item3', 30)
-        "#).await?;
+        "#,
+        )
+        .await?;
 
         // Test UPDATE
-        let result = glue.execute("UPDATE items SET quantity = 15 WHERE id = 1").await?;
+        let result = glue
+            .execute("UPDATE items SET quantity = 15 WHERE id = 1")
+            .await?;
         assert!(matches!(result[0], Payload::Update(1)));
 
         // Verify update
-        let result = glue.execute("SELECT quantity FROM items WHERE id = 1").await?;
+        let result = glue
+            .execute("SELECT quantity FROM items WHERE id = 1")
+            .await?;
         if let Payload::Select { rows, .. } = &result[0] {
             assert_eq!(rows.len(), 1);
         }
@@ -221,22 +253,28 @@ mod integration_tests {
         let (_temp_dir, mut glue) = setup_test_db().await?;
 
         // Setup data
-        glue.execute(r#"
+        glue.execute(
+            r#"
             CREATE TABLE sales (
                 id INTEGER,
                 product TEXT,
                 quantity INTEGER,
                 price INTEGER
             )
-        "#).await?;
+        "#,
+        )
+        .await?;
 
-        glue.execute(r#"
+        glue.execute(
+            r#"
             INSERT INTO sales (id, product, quantity, price) VALUES
             (1, 'A', 2, 100),
             (2, 'B', 1, 200),
             (3, 'A', 3, 150),
             (4, 'C', 1, 300)
-        "#).await?;
+        "#,
+        )
+        .await?;
 
         // Test COUNT
         let result = glue.execute("SELECT COUNT(id) FROM sales").await?;
@@ -245,7 +283,9 @@ mod integration_tests {
         }
 
         // Test GROUP BY with COUNT
-        let result = glue.execute("SELECT product, COUNT(id) FROM sales GROUP BY product ORDER BY product").await?;
+        let result = glue
+            .execute("SELECT product, COUNT(id) FROM sales GROUP BY product ORDER BY product")
+            .await?;
         if let Payload::Select { labels, rows } = &result[0] {
             assert_eq!(labels, &vec!["product", "COUNT(id)"]);
             assert_eq!(rows.len(), 3); // A, B, C
@@ -265,19 +305,25 @@ mod integration_tests {
         let (_temp_dir, mut glue) = setup_test_db().await?;
 
         // Create multiple tables
-        glue.execute(r#"
+        glue.execute(
+            r#"
             CREATE TABLE table1 (
                 id INTEGER,
                 name TEXT
             )
-        "#).await?;
+        "#,
+        )
+        .await?;
 
-        glue.execute(r#"
+        glue.execute(
+            r#"
             CREATE TABLE table2 (
                 id INTEGER,
                 value INTEGER
             )
-        "#).await?;
+        "#,
+        )
+        .await?;
 
         // Test that we can query both tables
         let result = glue.execute("SELECT * FROM table1").await?;

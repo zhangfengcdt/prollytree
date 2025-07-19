@@ -4,13 +4,9 @@
 //! to execute SQL queries on versioned key-value data.
 
 #[cfg(feature = "sql")]
-use prollytree::sql::ProllyStorage;
+use gluesql_core::{error::Result, executor::Payload, prelude::Glue};
 #[cfg(feature = "sql")]
-use gluesql_core::{
-    error::Result,
-    executor::Payload,
-    prelude::Glue,
-};
+use prollytree::sql::ProllyStorage;
 #[cfg(feature = "sql")]
 use tempfile::TempDir;
 
@@ -47,7 +43,7 @@ async fn main() -> Result<()> {
 
     // 1. Create tables
     println!("1. Creating tables...");
-    
+
     let create_users = r#"
         CREATE TABLE users (
             id INTEGER,
@@ -56,7 +52,7 @@ async fn main() -> Result<()> {
             age INTEGER
         )
     "#;
-    
+
     let create_orders = r#"
         CREATE TABLE orders (
             id INTEGER,
@@ -66,14 +62,14 @@ async fn main() -> Result<()> {
             order_date TEXT
         )
     "#;
-    
+
     glue.execute(create_users).await?;
     glue.execute(create_orders).await?;
     println!("   ✓ Created users and orders tables\n");
 
     // 2. Insert data
     println!("2. Inserting sample data...");
-    
+
     let insert_users = r#"
         INSERT INTO users (id, name, email, age) VALUES 
         (1, 'Alice Johnson', 'alice@example.com', 30),
@@ -81,7 +77,7 @@ async fn main() -> Result<()> {
         (3, 'Charlie Brown', 'charlie@example.com', 35),
         (4, 'Diana Ross', 'diana@example.com', 28)
     "#;
-    
+
     let insert_orders = r#"
         INSERT INTO orders (id, user_id, product, amount, order_date) VALUES 
         (1, 1, 'Laptop', 1200, '2024-01-15'),
@@ -91,14 +87,14 @@ async fn main() -> Result<()> {
         (5, 3, 'Webcam', 80, '2024-01-19'),
         (6, 4, 'Headphones', 150, '2024-01-20')
     "#;
-    
+
     glue.execute(insert_users).await?;
     glue.execute(insert_orders).await?;
     println!("   ✓ Inserted sample data\n");
 
     // 3. Basic SELECT queries
     println!("3. Running SELECT queries...");
-    
+
     let select_all_users = "SELECT * FROM users";
     let result = glue.execute(select_all_users).await?;
     print_results("All users:", &result);
@@ -109,7 +105,7 @@ async fn main() -> Result<()> {
 
     // 4. JOIN queries
     println!("4. Running JOIN queries...");
-    
+
     let join_query = r#"
         SELECT u.name, o.product, o.amount, o.order_date
         FROM users u
@@ -121,7 +117,7 @@ async fn main() -> Result<()> {
 
     // 5. Aggregation queries
     println!("5. Running aggregation queries...");
-    
+
     let user_totals = r#"
         SELECT u.name, COUNT(o.id) as order_count
         FROM users u
@@ -144,7 +140,7 @@ async fn main() -> Result<()> {
 
     // 6. UPDATE and DELETE operations
     println!("6. Running UPDATE and DELETE operations...");
-    
+
     let update_age = "UPDATE users SET age = 31 WHERE name = 'Alice Johnson'";
     let result = glue.execute(update_age).await?;
     println!("   ✓ Updated Alice's age: {:?}", result);
@@ -160,7 +156,7 @@ async fn main() -> Result<()> {
 
     // 7. Advanced queries with subqueries
     println!("7. Running advanced queries...");
-    
+
     let multi_order_customers = r#"
         SELECT u.name, u.email
         FROM users u
@@ -179,7 +175,7 @@ async fn main() -> Result<()> {
 #[cfg(feature = "sql")]
 fn print_results(title: &str, payloads: &Vec<Payload>) {
     println!("\n   📊 {}", title);
-    
+
     for payload in payloads {
         match payload {
             Payload::Select { labels, rows } => {
@@ -187,12 +183,12 @@ fn print_results(title: &str, payloads: &Vec<Payload>) {
                     println!("      (No results)");
                     continue;
                 }
-                
+
                 // Print headers
                 let header = labels.join(" | ");
                 println!("      {}", header);
                 println!("      {}", "-".repeat(header.len()));
-                
+
                 // Print rows
                 for row in rows {
                     let row_strs: Vec<String> = row.iter().map(|v| format!("{:?}", v)).collect();

@@ -13,19 +13,14 @@ limitations under the License.
 */
 
 use clap::{Parser, Subcommand};
+#[cfg(feature = "sql")]
+use gluesql_core::{executor::Payload, prelude::Glue};
 use prollytree::git::{DiffOperation, GitOperations, MergeResult, VersionedKvStore};
+#[cfg(feature = "sql")]
+use prollytree::sql::ProllyStorage;
 use prollytree::tree::Tree;
 use std::env;
 use std::path::PathBuf;
-#[cfg(feature = "sql")]
-
-#[cfg(feature = "sql")]
-use prollytree::sql::ProllyStorage;
-#[cfg(feature = "sql")]
-use gluesql_core::{
-    executor::Payload,
-    prelude::Glue,
-};
 
 #[derive(Parser)]
 #[command(name = "git-prolly")]
@@ -135,7 +130,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     #[cfg(feature = "sql")]
-    if let Commands::Sql { query, file, format, interactive, verbose } = &cli.command {
+    if let Commands::Sql {
+        query,
+        file,
+        format,
+        interactive,
+        verbose,
+    } = &cli.command
+    {
         // Create a tokio runtime for SQL commands
         let rt = tokio::runtime::Runtime::new()?;
         return rt.block_on(handle_sql(
@@ -195,7 +197,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
 
 fn handle_init(path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let target_path =
@@ -606,16 +607,16 @@ async fn handle_sql(
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    
+
     // Open the ProllyTree storage
     let storage = ProllyStorage::<32>::open(&current_dir).map_err(|e| {
         if verbose {
-            format!("Failed to open ProllyTree storage: {}", e)
+            format!("Failed to open ProllyTree storage: {e}")
         } else {
             "Failed to open dataset. Make sure you're in a git-prolly directory.".to_string()
         }
     })?;
-    
+
     let mut glue = Glue::new(storage);
     let output_format = format.unwrap_or_else(|| "table".to_string());
 
@@ -653,9 +654,9 @@ async fn handle_sql(
             match execute_query(&mut glue, input, &output_format, verbose).await {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     if verbose {
-                        eprintln!("Query: {}", input);
+                        eprintln!("Query: {input}");
                     }
                 }
             }
@@ -688,12 +689,12 @@ async fn execute_query(
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = std::time::Instant::now();
-    
+
     let result = glue.execute(query).await.map_err(|e| {
         if verbose {
-            format!("SQL execution error: {}", e)
+            format!("SQL execution error: {e}")
         } else {
-            format!("Query failed: {}", e)
+            format!("Query failed: {e}")
         }
     })?;
 
@@ -702,7 +703,7 @@ async fn execute_query(
     if result.is_empty() {
         println!("Query executed successfully (no results)");
         if verbose {
-            println!("Execution time: {:?}", execution_time);
+            println!("Execution time: {execution_time:?}");
         }
         return Ok(());
     }
@@ -712,7 +713,7 @@ async fn execute_query(
     }
 
     if verbose {
-        println!("\nExecution time: {:?}", execution_time);
+        println!("\nExecution time: {execution_time:?}");
     }
 
     Ok(())
@@ -738,19 +739,19 @@ fn format_payload(payload: &Payload, format: &str) -> Result<(), Box<dyn std::er
                     format_csv(labels, rows);
                 }
                 _ => {
-                    eprintln!("Unknown format: {}. Supported: table, json, csv", format);
+                    eprintln!("Unknown format: {format}. Supported: table, json, csv");
                     std::process::exit(1);
                 }
             }
         }
         Payload::Insert(count) => {
-            println!("✓ Inserted {} rows", count);
+            println!("✓ Inserted {count} rows");
         }
         Payload::Update(count) => {
-            println!("✓ Updated {} rows", count);
+            println!("✓ Updated {count} rows");
         }
         Payload::Delete(count) => {
-            println!("✓ Deleted {} rows", count);
+            println!("✓ Deleted {count} rows");
         }
         Payload::Create => {
             println!("✓ Table created successfully");
@@ -770,11 +771,11 @@ fn format_payload(payload: &Payload, format: &str) -> Result<(), Box<dyn std::er
 fn format_table(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) {
     // Calculate column widths
     let mut widths: Vec<usize> = labels.iter().map(|l| l.len()).collect();
-    
+
     for row in rows {
         for (i, value) in row.iter().enumerate() {
             if i < widths.len() {
-                let value_str = format!("{:?}", value);
+                let value_str = format!("{value:?}");
                 widths[i] = widths[i].max(value_str.len());
             }
         }
@@ -799,7 +800,7 @@ fn format_table(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) {
         print!("│");
         for (i, value) in row.iter().enumerate() {
             if i < widths.len() {
-                let value_str = format!("{:?}", value);
+                let value_str = format!("{value:?}");
                 print!(" {:width$} │", value_str, width = widths[i]);
             }
         }
@@ -808,9 +809,12 @@ fn format_table(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) {
 }
 
 #[cfg(feature = "sql")]
-fn format_json(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) -> Result<(), Box<dyn std::error::Error>> {
+fn format_json(
+    labels: &[String],
+    rows: &[Vec<gluesql_core::data::Value>],
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut json_rows = Vec::new();
-    
+
     for row in rows {
         let mut json_row = serde_json::Map::new();
         for (i, value) in row.iter().enumerate() {
@@ -828,24 +832,24 @@ fn format_json(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) -> Re
                     gluesql_core::data::Value::U64(n) => serde_json::Value::Number((*n).into()),
                     gluesql_core::data::Value::U128(n) => serde_json::Value::String(n.to_string()),
                     gluesql_core::data::Value::F32(f) => serde_json::Value::Number(
-                        serde_json::Number::from_f64(*f as f64).unwrap_or_else(|| 0.into())
+                        serde_json::Number::from_f64(*f as f64).unwrap_or_else(|| 0.into()),
                     ),
                     gluesql_core::data::Value::F64(f) => serde_json::Value::Number(
-                        serde_json::Number::from_f64(*f).unwrap_or_else(|| 0.into())
+                        serde_json::Number::from_f64(*f).unwrap_or_else(|| 0.into()),
                     ),
                     gluesql_core::data::Value::Str(s) => serde_json::Value::String(s.clone()),
                     gluesql_core::data::Value::Null => serde_json::Value::Null,
-                    _ => serde_json::Value::String(format!("{:?}", value)),
+                    _ => serde_json::Value::String(format!("{value:?}")),
                 };
                 json_row.insert(labels[i].clone(), json_value);
             }
         }
         json_rows.push(serde_json::Value::Object(json_row));
     }
-    
+
     let output = serde_json::to_string_pretty(&json_rows)?;
-    println!("{}", output);
-    
+    println!("{output}");
+
     Ok(())
 }
 
@@ -853,18 +857,21 @@ fn format_json(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) -> Re
 fn format_csv(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) {
     // Print header
     println!("{}", labels.join(","));
-    
+
     // Print rows
     for row in rows {
-        let row_strs: Vec<String> = row.iter().map(|v| {
-            let s = format!("{:?}", v);
-            // Simple CSV escaping - wrap in quotes if contains comma
-            if s.contains(',') {
-                format!("\"{}\"", s.replace('"', "\"\""))
-            } else {
-                s
-            }
-        }).collect();
+        let row_strs: Vec<String> = row
+            .iter()
+            .map(|v| {
+                let s = format!("{v:?}");
+                // Simple CSV escaping - wrap in quotes if contains comma
+                if s.contains(',') {
+                    format!("\"{}\"", s.replace('"', "\"\""))
+                } else {
+                    s
+                }
+            })
+            .collect();
         println!("{}", row_strs.join(","));
     }
 }

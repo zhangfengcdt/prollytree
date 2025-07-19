@@ -51,9 +51,9 @@ pub mod errors;
 #[cfg(feature = "git")]
 pub mod git;
 pub mod node;
+pub mod proof;
 #[cfg(feature = "sql")]
 pub mod sql;
-pub mod proof;
 pub mod storage;
 mod tracing;
 pub mod tree;
