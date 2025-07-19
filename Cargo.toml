@@ -30,6 +30,10 @@ clap = { version = "4.0", features = ["derive"], optional = true }
 lru = { version = "0.16", optional = true }
 hex = { version = "0.4", optional = true }
 chrono = { version = "0.4", optional = true }
+gluesql-core = { version = "0.15", optional = true }
+async-trait = { version = "0.1", optional = true }
+uuid = { version = "1.0", optional = true }
+futures = { version = "0.3", optional = true }
 
 [dev-dependencies]
 bytes = "1.10.1"
@@ -37,19 +41,21 @@ tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 criterion = "0.5"
 tempfile = "3.0"
+tokio = { version = "1.0", features = ["full"] }
 
 [features]
-default = ["digest_base64", "prolly_balance_max_nodes", "git"]
+default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql"]
 tracing = ["dep:tracing"]
 digest_base64 = ["dep:base64"]
 prolly_balance_max_nodes = []
 prolly_balance_rolling_hash = []
 git = ["dep:gix", "dep:clap", "dep:lru", "dep:hex", "dep:chrono"]
+sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures"]
 
 [[bin]]
 name = "git-prolly"
 path = "src/bin/git-prolly.rs"
-required-features = ["git"]
+required-features = ["git", "sql"]
 
 [[bench]]
 name = "prollytree_bench"
