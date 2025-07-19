@@ -34,6 +34,7 @@ gluesql-core = { version = "0.15", optional = true }
 async-trait = { version = "0.1", optional = true }
 uuid = { version = "1.0", optional = true }
 futures = { version = "0.3", optional = true }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"], optional = true }
 
 [dev-dependencies]
 bytes = "1.10.1"
@@ -50,7 +51,7 @@ digest_base64 = ["dep:base64"]
 prolly_balance_max_nodes = []
 prolly_balance_rolling_hash = []
 git = ["dep:gix", "dep:clap", "dep:lru", "dep:hex", "dep:chrono"]
-sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures"]
+sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures", "dep:tokio"]
 
 [[bin]]
 name = "git-prolly"

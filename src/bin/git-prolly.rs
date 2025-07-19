@@ -17,6 +17,15 @@ use prollytree::git::{DiffOperation, GitOperations, MergeResult, VersionedKvStor
 use prollytree::tree::Tree;
 use std::env;
 use std::path::PathBuf;
+#[cfg(feature = "sql")]
+
+#[cfg(feature = "sql")]
+use prollytree::sql::ProllyStorage;
+#[cfg(feature = "sql")]
+use gluesql_core::{
+    executor::Payload,
+    prelude::Glue,
+};
 
 #[derive(Parser)]
 #[command(name = "git-prolly")]
@@ -105,10 +114,38 @@ enum Commands {
         #[arg(help = "Commit to analyze (defaults to HEAD)")]
         commit: Option<String>,
     },
+
+    /// Execute SQL queries against the ProllyTree dataset
+    #[cfg(feature = "sql")]
+    Sql {
+        #[arg(help = "SQL query to execute")]
+        query: Option<String>,
+        #[arg(short, long, help = "Execute query from file")]
+        file: Option<PathBuf>,
+        #[arg(short = 'o', long, help = "Output format (table, json, csv)")]
+        format: Option<String>,
+        #[arg(short, long, help = "Start interactive SQL shell")]
+        interactive: bool,
+        #[arg(long, help = "Show detailed error messages")]
+        verbose: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    #[cfg(feature = "sql")]
+    if let Commands::Sql { query, file, format, interactive, verbose } = &cli.command {
+        // Create a tokio runtime for SQL commands
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(handle_sql(
+            query.clone(),
+            file.clone(),
+            format.clone(),
+            *interactive,
+            *verbose,
+        ));
+    }
 
     match cli.command {
         Commands::Init { path } => {
@@ -149,10 +186,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Stats { commit } => {
             handle_stats(commit)?;
         }
+        #[cfg(feature = "sql")]
+        Commands::Sql { .. } => {
+            // Handled above
+            unreachable!()
+        }
     }
 
     Ok(())
 }
+
 
 fn handle_init(path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let target_path =
@@ -552,4 +595,294 @@ fn handle_stats(commit: Option<String>) -> Result<(), Box<dyn std::error::Error>
     }
 
     Ok(())
+}
+
+#[cfg(feature = "sql")]
+async fn handle_sql(
+    query: Option<String>,
+    file: Option<PathBuf>,
+    format: Option<String>,
+    interactive: bool,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = env::current_dir()?;
+    
+    // Open the ProllyTree storage
+    let storage = ProllyStorage::<32>::open(&current_dir).map_err(|e| {
+        if verbose {
+            format!("Failed to open ProllyTree storage: {}", e)
+        } else {
+            "Failed to open dataset. Make sure you're in a git-prolly directory.".to_string()
+        }
+    })?;
+    
+    let mut glue = Glue::new(storage);
+    let output_format = format.unwrap_or_else(|| "table".to_string());
+
+    if interactive {
+        // Start interactive SQL shell
+        println!("🌟 ProllyTree SQL Interactive Shell");
+        println!("====================================");
+        println!("Type 'exit' or 'quit' to exit");
+        println!("Type 'help' for available commands\n");
+
+        loop {
+            print!("prolly-sql> ");
+            std::io::Write::flush(&mut std::io::stdout())?;
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+
+            if input.is_empty() {
+                continue;
+            }
+
+            match input.to_lowercase().as_str() {
+                "exit" | "quit" => {
+                    println!("Goodbye!");
+                    break;
+                }
+                "help" => {
+                    print_help();
+                    continue;
+                }
+                _ => {}
+            }
+
+            match execute_query(&mut glue, input, &output_format, verbose).await {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    if verbose {
+                        eprintln!("Query: {}", input);
+                    }
+                }
+            }
+            println!();
+        }
+    } else if let Some(query_str) = query {
+        // Execute single query
+        execute_query(&mut glue, &query_str, &output_format, verbose).await?;
+    } else if let Some(file_path) = file {
+        // Execute query from file
+        let query_str = std::fs::read_to_string(file_path)?;
+        execute_query(&mut glue, &query_str, &output_format, verbose).await?;
+    } else {
+        eprintln!("Error: Must provide either a query, file, or use interactive mode");
+        eprintln!("Usage:");
+        eprintln!("  git prolly sql \"SELECT * FROM table\"");
+        eprintln!("  git prolly sql --file query.sql");
+        eprintln!("  git prolly sql --interactive");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "sql")]
+async fn execute_query(
+    glue: &mut Glue<ProllyStorage<32>>,
+    query: &str,
+    format: &str,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start_time = std::time::Instant::now();
+    
+    let result = glue.execute(query).await.map_err(|e| {
+        if verbose {
+            format!("SQL execution error: {}", e)
+        } else {
+            format!("Query failed: {}", e)
+        }
+    })?;
+
+    let execution_time = start_time.elapsed();
+
+    if result.is_empty() {
+        println!("Query executed successfully (no results)");
+        if verbose {
+            println!("Execution time: {:?}", execution_time);
+        }
+        return Ok(());
+    }
+
+    for payload in result {
+        format_payload(&payload, format)?;
+    }
+
+    if verbose {
+        println!("\nExecution time: {:?}", execution_time);
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "sql")]
+fn format_payload(payload: &Payload, format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    match payload {
+        Payload::Select { labels, rows } => {
+            if rows.is_empty() {
+                println!("(No results)");
+                return Ok(());
+            }
+
+            match format {
+                "table" => {
+                    format_table(labels, rows);
+                }
+                "json" => {
+                    format_json(labels, rows)?;
+                }
+                "csv" => {
+                    format_csv(labels, rows);
+                }
+                _ => {
+                    eprintln!("Unknown format: {}. Supported: table, json, csv", format);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Payload::Insert(count) => {
+            println!("✓ Inserted {} rows", count);
+        }
+        Payload::Update(count) => {
+            println!("✓ Updated {} rows", count);
+        }
+        Payload::Delete(count) => {
+            println!("✓ Deleted {} rows", count);
+        }
+        Payload::Create => {
+            println!("✓ Table created successfully");
+        }
+        Payload::DropTable => {
+            println!("✓ Table dropped successfully");
+        }
+        _ => {
+            println!("✓ Operation completed successfully");
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "sql")]
+fn format_table(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) {
+    // Calculate column widths
+    let mut widths: Vec<usize> = labels.iter().map(|l| l.len()).collect();
+    
+    for row in rows {
+        for (i, value) in row.iter().enumerate() {
+            if i < widths.len() {
+                let value_str = format!("{:?}", value);
+                widths[i] = widths[i].max(value_str.len());
+            }
+        }
+    }
+
+    // Print header
+    print!("│");
+    for (i, label) in labels.iter().enumerate() {
+        print!(" {:width$} │", label, width = widths[i]);
+    }
+    println!();
+
+    // Print separator
+    print!("├");
+    for width in &widths {
+        print!("{:─>width$}┼", "", width = width + 2);
+    }
+    println!("┤");
+
+    // Print rows
+    for row in rows {
+        print!("│");
+        for (i, value) in row.iter().enumerate() {
+            if i < widths.len() {
+                let value_str = format!("{:?}", value);
+                print!(" {:width$} │", value_str, width = widths[i]);
+            }
+        }
+        println!();
+    }
+}
+
+#[cfg(feature = "sql")]
+fn format_json(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut json_rows = Vec::new();
+    
+    for row in rows {
+        let mut json_row = serde_json::Map::new();
+        for (i, value) in row.iter().enumerate() {
+            if i < labels.len() {
+                let json_value = match value {
+                    gluesql_core::data::Value::Bool(b) => serde_json::Value::Bool(*b),
+                    gluesql_core::data::Value::I8(n) => serde_json::Value::Number((*n).into()),
+                    gluesql_core::data::Value::I16(n) => serde_json::Value::Number((*n).into()),
+                    gluesql_core::data::Value::I32(n) => serde_json::Value::Number((*n).into()),
+                    gluesql_core::data::Value::I64(n) => serde_json::Value::Number((*n).into()),
+                    gluesql_core::data::Value::I128(n) => serde_json::Value::String(n.to_string()),
+                    gluesql_core::data::Value::U8(n) => serde_json::Value::Number((*n).into()),
+                    gluesql_core::data::Value::U16(n) => serde_json::Value::Number((*n).into()),
+                    gluesql_core::data::Value::U32(n) => serde_json::Value::Number((*n).into()),
+                    gluesql_core::data::Value::U64(n) => serde_json::Value::Number((*n).into()),
+                    gluesql_core::data::Value::U128(n) => serde_json::Value::String(n.to_string()),
+                    gluesql_core::data::Value::F32(f) => serde_json::Value::Number(
+                        serde_json::Number::from_f64(*f as f64).unwrap_or_else(|| 0.into())
+                    ),
+                    gluesql_core::data::Value::F64(f) => serde_json::Value::Number(
+                        serde_json::Number::from_f64(*f).unwrap_or_else(|| 0.into())
+                    ),
+                    gluesql_core::data::Value::Str(s) => serde_json::Value::String(s.clone()),
+                    gluesql_core::data::Value::Null => serde_json::Value::Null,
+                    _ => serde_json::Value::String(format!("{:?}", value)),
+                };
+                json_row.insert(labels[i].clone(), json_value);
+            }
+        }
+        json_rows.push(serde_json::Value::Object(json_row));
+    }
+    
+    let output = serde_json::to_string_pretty(&json_rows)?;
+    println!("{}", output);
+    
+    Ok(())
+}
+
+#[cfg(feature = "sql")]
+fn format_csv(labels: &[String], rows: &[Vec<gluesql_core::data::Value>]) {
+    // Print header
+    println!("{}", labels.join(","));
+    
+    // Print rows
+    for row in rows {
+        let row_strs: Vec<String> = row.iter().map(|v| {
+            let s = format!("{:?}", v);
+            // Simple CSV escaping - wrap in quotes if contains comma
+            if s.contains(',') {
+                format!("\"{}\"", s.replace('"', "\"\""))
+            } else {
+                s
+            }
+        }).collect();
+        println!("{}", row_strs.join(","));
+    }
+}
+
+#[cfg(feature = "sql")]
+fn print_help() {
+    println!("ProllyTree SQL Commands:");
+    println!("  SQL statements: CREATE TABLE, INSERT, SELECT, UPDATE, DELETE");
+    println!("  Special commands:");
+    println!("    help     - Show this help message");
+    println!("    exit     - Exit the SQL shell");
+    println!("    quit     - Exit the SQL shell");
+    println!();
+    println!("Examples:");
+    println!("  CREATE TABLE users (id INTEGER, name TEXT, email TEXT);");
+    println!("  INSERT INTO users VALUES (1, 'Alice', 'alice@example.com');");
+    println!("  SELECT * FROM users;");
+    println!("  SELECT name FROM users WHERE id = 1;");
+    println!();
+    println!("Note: Data is stored in the ProllyTree and versioned with Git.");
 }
