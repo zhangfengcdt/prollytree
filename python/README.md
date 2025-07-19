@@ -48,6 +48,31 @@ file_tree.insert(b"persistent_key", b"persistent_value")
 file_tree.save_config()
 ```
 
+## Publishing to PyPI
+
+### Configuration
+
+Copy the example PyPI configuration:
+```bash
+cp .pypirc.example ~/.pypirc
+```
+
+Edit `~/.pypirc` and add your API tokens:
+- Get TestPyPI token: https://test.pypi.org/manage/account/token/
+- Get PyPI token: https://pypi.org/manage/account/token/
+
+### Publishing
+
+Test on TestPyPI first:
+```bash
+./publish_python.sh test
+```
+
+Publish to production PyPI:
+```bash
+./publish_python.sh prod
+```
+
 ## API Reference
 
 ### TreeConfig
