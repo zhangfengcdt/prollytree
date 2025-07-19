@@ -1,15 +1,15 @@
-use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyBytesMethods, PyDict};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crate::{
-    tree::{Tree, ProllyTree},
-    storage::{InMemoryNodeStorage, FileNodeStorage},
     config::TreeConfig,
     proof::Proof,
+    storage::{FileNodeStorage, InMemoryNodeStorage},
+    tree::{ProllyTree, Tree},
 };
 
 #[pyclass(name = "TreeConfig")]
@@ -102,14 +102,17 @@ impl PyProllyTree {
                 ProllyTreeWrapper::Memory(tree)
             }
             "file" => {
-                let path = path.ok_or_else(|| {
-                    PyValueError::new_err("File storage requires a path")
-                })?;
+                let path =
+                    path.ok_or_else(|| PyValueError::new_err("File storage requires a path"))?;
                 let storage = FileNodeStorage::<32>::new(PathBuf::from(path));
                 let tree = ProllyTree::<32, _>::new(storage, tree_config);
                 ProllyTreeWrapper::File(tree)
             }
-            _ => return Err(PyValueError::new_err("Invalid storage type. Use 'memory' or 'file'")),
+            _ => {
+                return Err(PyValueError::new_err(
+                    "Invalid storage type. Use 'memory' or 'file'",
+                ))
+            }
         };
 
         Ok(PyProllyTree {
@@ -117,10 +120,15 @@ impl PyProllyTree {
         })
     }
 
-    fn insert(&mut self, py: Python, key: &Bound<'_, PyBytes>, value: &Bound<'_, PyBytes>) -> PyResult<()> {
+    fn insert(
+        &mut self,
+        py: Python,
+        key: &Bound<'_, PyBytes>,
+        value: &Bound<'_, PyBytes>,
+    ) -> PyResult<()> {
         let key_vec = key.as_bytes().to_vec();
         let value_vec = value.as_bytes().to_vec();
-        
+
         py.allow_threads(|| {
             let mut tree_wrapper = self.tree.lock().unwrap();
             with_tree_mut!(tree_wrapper, tree, {
@@ -133,7 +141,7 @@ impl PyProllyTree {
     fn insert_batch(&mut self, py: Python, items: Vec<(Vec<u8>, Vec<u8>)>) -> PyResult<()> {
         let keys: Vec<Vec<u8>> = items.iter().map(|(k, _)| k.clone()).collect();
         let values: Vec<Vec<u8>> = items.iter().map(|(_, v)| v.clone()).collect();
-        
+
         py.allow_threads(|| {
             let mut tree_wrapper = self.tree.lock().unwrap();
             with_tree_mut!(tree_wrapper, tree, {
@@ -145,12 +153,10 @@ impl PyProllyTree {
 
     fn find(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
         let key_vec = key.as_bytes().to_vec();
-        
+
         let result = py.allow_threads(|| {
             let tree_wrapper = self.tree.lock().unwrap();
-            with_tree!(tree_wrapper, tree, {
-                tree.find(&key_vec)
-            })
+            with_tree!(tree_wrapper, tree, { tree.find(&key_vec) })
         });
 
         match result {
@@ -170,10 +176,15 @@ impl PyProllyTree {
         }
     }
 
-    fn update(&mut self, py: Python, key: &Bound<'_, PyBytes>, value: &Bound<'_, PyBytes>) -> PyResult<()> {
+    fn update(
+        &mut self,
+        py: Python,
+        key: &Bound<'_, PyBytes>,
+        value: &Bound<'_, PyBytes>,
+    ) -> PyResult<()> {
         let key_vec = key.as_bytes().to_vec();
         let value_vec = value.as_bytes().to_vec();
-        
+
         py.allow_threads(|| {
             let mut tree_wrapper = self.tree.lock().unwrap();
             with_tree_mut!(tree_wrapper, tree, {
@@ -185,7 +196,7 @@ impl PyProllyTree {
 
     fn delete(&mut self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<()> {
         let key_vec = key.as_bytes().to_vec();
-        
+
         py.allow_threads(|| {
             let mut tree_wrapper = self.tree.lock().unwrap();
             with_tree_mut!(tree_wrapper, tree, {
@@ -197,7 +208,7 @@ impl PyProllyTree {
 
     fn delete_batch(&mut self, py: Python, keys: Vec<Vec<u8>>) -> PyResult<()> {
         let key_vecs: Vec<Vec<u8>> = keys;
-        
+
         py.allow_threads(|| {
             let mut tree_wrapper = self.tree.lock().unwrap();
             with_tree_mut!(tree_wrapper, tree, {
@@ -234,17 +245,20 @@ impl PyProllyTree {
         map.insert("num_leaves".to_string(), stats.num_leaves);
         map.insert("num_internal_nodes".to_string(), stats.num_internal_nodes);
         map.insert("avg_node_size".to_string(), stats.avg_node_size as usize);
-        map.insert("total_key_value_pairs".to_string(), stats.total_key_value_pairs);
+        map.insert(
+            "total_key_value_pairs".to_string(),
+            stats.total_key_value_pairs,
+        );
         Ok(map)
     }
 
     fn generate_proof(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Py<PyBytes>> {
         let key_vec = key.as_bytes().to_vec();
-        
+
         let proof_bytes = py.allow_threads(|| {
             let tree_wrapper = self.tree.lock().unwrap();
             let proof = with_tree!(tree_wrapper, tree, tree.generate_proof(&key_vec));
-            
+
             bincode::serialize(&proof)
                 .map_err(|e| PyValueError::new_err(format!("Proof serialization failed: {}", e)))
         })?;
@@ -254,49 +268,54 @@ impl PyProllyTree {
 
     #[pyo3(signature = (proof_bytes, key, expected_value=None))]
     fn verify_proof(
-        &self, 
-        py: Python, 
-        proof_bytes: &Bound<'_, PyBytes>, 
-        key: &Bound<'_, PyBytes>, 
-        expected_value: Option<&Bound<'_, PyBytes>>
+        &self,
+        py: Python,
+        proof_bytes: &Bound<'_, PyBytes>,
+        key: &Bound<'_, PyBytes>,
+        expected_value: Option<&Bound<'_, PyBytes>>,
     ) -> PyResult<bool> {
         let key_vec = key.as_bytes().to_vec();
         let proof_vec = proof_bytes.as_bytes().to_vec();
         let value_option = expected_value.map(|v| v.as_bytes().to_vec());
-        
+
         py.allow_threads(|| {
-            let proof: Proof<32> = bincode::deserialize(&proof_vec)
-                .map_err(|e| PyValueError::new_err(format!("Proof deserialization failed: {}", e)))?;
-            
+            let proof: Proof<32> = bincode::deserialize(&proof_vec).map_err(|e| {
+                PyValueError::new_err(format!("Proof deserialization failed: {}", e))
+            })?;
+
             let tree_wrapper = self.tree.lock().unwrap();
-            Ok(with_tree!(tree_wrapper, tree, tree.verify(proof, &key_vec, value_option.as_deref())))
+            Ok(with_tree!(
+                tree_wrapper,
+                tree,
+                tree.verify(proof, &key_vec, value_option.as_deref())
+            ))
         })
     }
 
     fn diff(&self, py: Python, _other: &PyProllyTree) -> PyResult<Py<PyDict>> {
         // Implement a key-value level diff by comparing actual data
         // This approach works regardless of tree structure differences
-        
+
         let dict = PyDict::new_bound(py);
         let added = PyDict::new_bound(py);
         let removed = PyDict::new_bound(py);
         let modified = PyDict::new_bound(py);
-        
+
         // We'll need to collect all keys from both trees and compare values
         // For simplicity, we'll implement this by getting all key-value pairs
         // This is not the most efficient approach, but it works correctly
-        
+
         // Note: This is a simplified implementation. A proper implementation
         // would traverse both trees simultaneously, but that requires more
         // complex logic to handle different tree structures.
-        
+
         // For now, let's disable the diff functionality and return empty results
         // until we can implement a proper key-value level diff
-        
+
         dict.set_item("added", added)?;
         dict.set_item("removed", removed)?;
         dict.set_item("modified", modified)?;
-        
+
         Ok(dict.into())
     }
 

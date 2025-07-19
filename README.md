@@ -6,6 +6,34 @@ peer-to-peer (P2P) networks.
 
 ## Getting Started
 
+### Python (Recommended)
+
+Install from PyPI:
+
+```sh
+pip install prollytree
+```
+
+Quick example:
+
+```python
+from prollytree import ProllyTree
+
+# Create a tree and insert data
+tree = ProllyTree(storage_type="memory")
+tree.insert(b"key1", b"value1")
+tree.insert(b"key2", b"value2")
+
+# Retrieve values
+value = tree.find(b"key1")  # Returns b"value1"
+
+# Generate and verify Merkle proofs
+proof = tree.generate_proof(b"key1")
+is_valid = tree.verify_proof(proof, b"key1", b"value1")  # Returns True
+```
+
+### Rust
+
 Build the project:
 
 ```sh

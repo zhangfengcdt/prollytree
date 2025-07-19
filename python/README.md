@@ -120,3 +120,52 @@ python -m pytest tests/
 cd python
 python examples/basic_usage.py
 ```
+
+## Publishing to PyPI
+
+### Prerequisites
+
+1. **Get API Tokens**:
+   - TestPyPI: https://test.pypi.org/manage/account/token/
+   - PyPI: https://pypi.org/manage/account/token/
+
+2. **Set Environment Variables**:
+   ```bash
+   export MATURIN_PYPI_TOKEN="pypi-your-token-here"
+   # or for TestPyPI
+   export TEST_PYPI_API_TOKEN="pypi-your-test-token-here"
+   ```
+
+### Manual Publishing
+
+1. **Test on TestPyPI first**:
+   ```bash
+   ./publish_python.sh test
+   ```
+
+2. **Publish to production PyPI**:
+   ```bash
+   ./publish_python.sh prod
+   ```
+
+### Automated Publishing (GitHub Actions)
+
+The repository includes a GitHub Actions workflow that automatically builds and publishes to PyPI when you push a version tag:
+
+```bash
+# Create and push a version tag
+git tag v0.2.1
+git push origin v0.2.1
+```
+
+**Setup Required**:
+1. Add `PYPI_API_TOKEN` to GitHub repository secrets
+2. Configure PyPI trusted publishing (recommended) or use API tokens
+
+### Version Management
+
+Update version in `pyproject.toml` before publishing:
+```toml
+[project]
+version = "0.2.1"  # Update this
+```

@@ -6,11 +6,14 @@ build-backend = "maturin"
 name = "prollytree"
 version = "0.2.1"
 description = "Python bindings for ProllyTree - a probabilistic tree for efficient storage and retrieval"
-readme = "README.md"
+readme = "python/README.md"
 requires-python = ">=3.8"
-keywords = ["prolly", "tree", "probabilistic", "merkle", "hash"]
+keywords = ["prolly", "tree", "probabilistic", "merkle", "hash", "data-structures", "btree", "merkle-tree"]
 license = {text = "Apache-2.0"}
 authors = [
+    {name = "Feng Zhang", email = "f.feng.zhang@gmail.com"}
+]
+maintainers = [
     {name = "Feng Zhang", email = "f.feng.zhang@gmail.com"}
 ]
 classifiers = [
