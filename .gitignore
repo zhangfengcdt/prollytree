@@ -44,3 +44,21 @@ Cargo.lock
 
 # Windows
 Thumbs.db
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.Python
+.venv/
+.env
+.pytest_cache/
+.coverage
+.mypy_cache/
+.tox/
+*.whl
