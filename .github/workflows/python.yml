@@ -2,7 +2,7 @@ name: Build Python Package
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [ready_for_review]
   push:
     branches:
       - main
@@ -28,10 +28,10 @@ jobs:
 #          - os: windows-latest
 #            target: x86
 #            manylinux: false
-          # macOS
-          - os: macos-latest
-            target: x86_64
-            manylinux: false
+#          # macOS
+#          - os: macos-latest
+#            target: x86_64
+#            manylinux: false
 #          - os: macos-14
 #            target: aarch64
 #            manylinux: false
@@ -61,82 +61,3 @@ jobs:
       with:
         name: wheels-${{ matrix.os }}-${{ matrix.target }}
         path: dist
-
-  build-sdist:
-    name: Build source distribution
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Build sdist
-      uses: PyO3/maturin-action@v1
-      with:
-        command: sdist
-        args: --out dist
-        rust-toolchain: stable
-
-    - name: Upload sdist
-      uses: actions/upload-artifact@v4
-      with:
-        name: wheels-sdist
-        path: dist
-
-  test-wheel:
-    name: Test built wheel
-    runs-on: ubuntu-latest
-    needs: [build-wheels]
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    
-    - name: Download Linux wheel
-      uses: actions/download-artifact@v4
-      with:
-        name: wheels-ubuntu-latest-x86_64
-        path: dist
-    
-    - name: Install and test wheel
-      run: |
-        pip install dist/*.whl
-        python -c "from prollytree import ProllyTree; tree = ProllyTree(); tree.insert(b'test', b'value'); assert tree.find(b'test') == b'value'"
-        echo "✅ Wheel test passed!"
-
-  collect-artifacts:
-    name: Collect all artifacts
-    runs-on: ubuntu-latest
-    needs: [build-wheels, build-sdist, test-wheel]
-    
-    steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        pattern: wheels-*
-        path: dist
-        merge-multiple: true
-
-    - name: List all built artifacts
-      run: |
-        echo "📦 Built artifacts:"
-        ls -la dist/
-        echo ""
-        echo "Total artifacts: $(ls -1 dist/ | wc -l)"
-        echo ""
-        echo "Artifact details:"
-        du -h dist/*
-
-    - name: Upload combined artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: all-python-artifacts
-        path: dist/
-        retention-days: 90
