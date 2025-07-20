@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+    types: [ready_for_review]
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        feature_flags: ["no-default-features", "all-features"]
+    runs-on: ubuntu-latest
+    steps:
+    
+    - uses: actions/checkout@v2
+
+    - name: fmt
+      run: cargo fmt --all -- --check
+
+    - name: build
+      run: cargo build --verbose
+
+    - name: test
+      run: cargo test --verbose
+
+    - name: build benchmarks
+      run: cargo test --benches --no-run --verbose
+
+    - name: clippy
+      run: cargo clippy
+
+    - name: docs
+      run: cargo doc --document-private-items --no-deps
