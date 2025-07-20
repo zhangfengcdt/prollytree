@@ -67,3 +67,13 @@ required-features = ["git", "sql"]
 [[bench]]
 name = "prollytree_bench"
 harness = false
+
+[[bench]]
+name = "sql_bench"
+harness = false
+required-features = ["sql"]
+
+[[bench]]
+name = "git_prolly_bench"
+harness = false
+required-features = ["git", "sql"]
