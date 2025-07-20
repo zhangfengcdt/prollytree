@@ -103,9 +103,7 @@ impl VersionedAgent {
         if context_text.is_empty() {
             format!("User: {input}\nAssistant:")
         } else {
-            format!(
-                "Context from memory:\n{context_text}\n\nUser: {input}\nAssistant:"
-            )
+            format!("Context from memory:\n{context_text}\n\nUser: {input}\nAssistant:")
         }
     }
 
