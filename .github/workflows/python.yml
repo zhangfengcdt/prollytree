@@ -2,10 +2,14 @@ name: Build Python Package
 
 on:
   pull_request:
-    types: [ready_for_review]
+    types: [ready_for_review, synchronize]
+    paths:
+      - 'python/**'
   push:
     branches:
       - main
+    paths:
+      - 'python/**'
 
 jobs:
   build-wheels:
