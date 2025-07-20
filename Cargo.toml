@@ -77,3 +77,25 @@ required-features = ["sql"]
 name = "git_prolly_bench"
 harness = false
 required-features = ["git", "sql"]
+
+[[example]]
+name = "proof_visualization"
+path = "examples/proof_visualization.rs"
+
+[[example]]
+name = "git_sql"
+path = "examples/git_sql.rs"
+required-features = ["sql"]
+
+[[example]]
+name = "git_diff"
+path = "examples/git_diff.rs"
+required-features = ["git"]
+
+[[example]]
+name = "git_merge"
+path = "examples/git_merge.rs"
+required-features = ["git"]
+
+[workspace]
+members = ["examples/rig_versioned_memory"]
