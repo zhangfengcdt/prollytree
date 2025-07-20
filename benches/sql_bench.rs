@@ -13,7 +13,7 @@ limitations under the License.
 */
 
 #[cfg(feature = "sql")]
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(feature = "sql")]
 use gluesql_core::prelude::Glue;
 #[cfg(feature = "sql")]
@@ -61,7 +61,7 @@ fn bench_sql_insert(c: &mut Criterion) {
     for size in &[100, 500, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter(|| {
                 runtime.block_on(async {
                     let temp_dir = TempDir::new().unwrap();
@@ -69,9 +69,9 @@ fn bench_sql_insert(c: &mut Criterion) {
                     let mut glue = Glue::new(storage);
 
                     // Create table
-                    glue.execute(
-                        "CREATE TABLE bench_table (id INTEGER PRIMARY KEY, data TEXT)"
-                    ).await.unwrap();
+                    glue.execute("CREATE TABLE bench_table (id INTEGER PRIMARY KEY, data TEXT)")
+                        .await
+                        .unwrap();
 
                     // Insert records
                     for i in 0..size {
@@ -97,13 +97,14 @@ fn bench_sql_select(c: &mut Criterion) {
     for size in &[100, 500, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter_batched(
                 || runtime.block_on(setup_database(size)),
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
                         // Simple SELECT
-                        let result = glue.execute("SELECT * FROM users WHERE age > 30")
+                        let result = glue
+                            .execute("SELECT * FROM users WHERE age > 30")
                             .await
                             .unwrap();
                         black_box(result);
@@ -125,12 +126,12 @@ fn bench_sql_join(c: &mut Criterion) {
     for size in &[100, 500] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter_batched(
                 || {
                     runtime.block_on(async {
                         let (mut glue, temp_dir) = setup_database(size).await;
-                        
+
                         // Create orders table
                         glue.execute(
                             "CREATE TABLE orders (
@@ -138,32 +139,39 @@ fn bench_sql_join(c: &mut Criterion) {
                                 user_id INTEGER,
                                 amount DECIMAL,
                                 status TEXT
-                            )"
-                        ).await.unwrap();
+                            )",
+                        )
+                        .await
+                        .unwrap();
 
                         // Insert orders
-                        for i in 0..size*2 {
+                        for i in 0..size * 2 {
                             let sql = format!(
                                 "INSERT INTO orders (id, user_id, amount, status) 
                                  VALUES ({}, {}, {}, '{}')",
-                                i, i % size, 100.0 + (i as f64), 
+                                i,
+                                i % size,
+                                100.0 + (i as f64),
                                 if i % 2 == 0 { "completed" } else { "pending" }
                             );
                             glue.execute(&sql).await.unwrap();
                         }
-                        
+
                         (glue, temp_dir)
                     })
                 },
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
-                        let result = glue.execute(
-                            "SELECT u.name, COUNT(o.id) as order_count, SUM(o.amount) as total
+                        let result = glue
+                            .execute(
+                                "SELECT u.name, COUNT(o.id) as order_count, SUM(o.amount) as total
                              FROM users u
                              JOIN orders o ON u.id = o.user_id
                              WHERE o.status = 'completed'
-                             GROUP BY u.name"
-                        ).await.unwrap();
+                             GROUP BY u.name",
+                            )
+                            .await
+                            .unwrap();
                         black_box(result);
                     })
                 },
@@ -183,13 +191,14 @@ fn bench_sql_aggregation(c: &mut Criterion) {
     for size in &[100, 500, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter_batched(
                 || runtime.block_on(setup_database(size)),
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
-                        let result = glue.execute(
-                            "SELECT city, 
+                        let result = glue
+                            .execute(
+                                "SELECT city, 
                                     COUNT(*) as user_count,
                                     AVG(age) as avg_age,
                                     MIN(age) as min_age,
@@ -197,8 +206,10 @@ fn bench_sql_aggregation(c: &mut Criterion) {
                              FROM users
                              GROUP BY city
                              HAVING COUNT(*) > 5
-                             ORDER BY user_count DESC"
-                        ).await.unwrap();
+                             ORDER BY user_count DESC",
+                            )
+                            .await
+                            .unwrap();
                         black_box(result);
                     })
                 },
@@ -218,18 +229,21 @@ fn bench_sql_update(c: &mut Criterion) {
     for size in &[100, 500, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter_batched(
                 || runtime.block_on(setup_database(size)),
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
                         // Update multiple records
-                        let result = glue.execute(
-                            "UPDATE users 
+                        let result = glue
+                            .execute(
+                                "UPDATE users 
                              SET age = age + 1, 
                                  city = 'UpdatedCity'
-                             WHERE age < 30"
-                        ).await.unwrap();
+                             WHERE age < 30",
+                            )
+                            .await
+                            .unwrap();
                         black_box(result);
                     })
                 },
@@ -249,15 +263,16 @@ fn bench_sql_delete(c: &mut Criterion) {
     for size in &[100, 500, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter_batched(
                 || runtime.block_on(setup_database(size)),
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
                         // Delete records
-                        let result = glue.execute(
-                            "DELETE FROM users WHERE age > 50"
-                        ).await.unwrap();
+                        let result = glue
+                            .execute("DELETE FROM users WHERE age > 50")
+                            .await
+                            .unwrap();
                         black_box(result);
                     })
                 },
@@ -277,19 +292,21 @@ fn bench_sql_index_operations(c: &mut Criterion) {
     for size in &[100, 500] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter_batched(
                 || runtime.block_on(setup_database(size)),
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
                         // Create index
                         glue.execute("CREATE INDEX idx_users_age ON users(age)")
-                            .await.unwrap();
-                        
+                            .await
+                            .unwrap();
+
                         // Query using index
-                        let result = glue.execute(
-                            "SELECT * FROM users WHERE age = 25"
-                        ).await.unwrap();
+                        let result = glue
+                            .execute("SELECT * FROM users WHERE age = 25")
+                            .await
+                            .unwrap();
                         black_box(result);
                     })
                 },
@@ -309,23 +326,20 @@ fn bench_sql_transaction(c: &mut Criterion) {
     for size in &[10, 50, 100] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter_batched(
                 || runtime.block_on(setup_database(100)),
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
                         // Begin transaction
                         glue.execute("BEGIN").await.unwrap();
-                        
+
                         // Multiple operations in transaction
                         for i in 0..size {
-                            let sql = format!(
-                                "UPDATE users SET age = age + 1 WHERE id = {}",
-                                i
-                            );
+                            let sql = format!("UPDATE users SET age = age + 1 WHERE id = {}", i);
                             glue.execute(&sql).await.unwrap();
                         }
-                        
+
                         // Commit transaction
                         glue.execute("COMMIT").await.unwrap();
                     })
@@ -346,14 +360,15 @@ fn bench_sql_complex_query(c: &mut Criterion) {
     for size in &[100, 500] {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            
+
             b.iter_batched(
                 || runtime.block_on(setup_database(size)),
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
                         // Complex query with subqueries
-                        let result = glue.execute(
-                            "SELECT 
+                        let result = glue
+                            .execute(
+                                "SELECT 
                                 u.city,
                                 COUNT(DISTINCT u.id) as user_count,
                                 (SELECT COUNT(*) 
@@ -366,8 +381,10 @@ fn bench_sql_complex_query(c: &mut Criterion) {
                                 WHERE age BETWEEN 25 AND 45
                              )
                              GROUP BY u.city
-                             ORDER BY user_count DESC, avg_age ASC"
-                        ).await.unwrap();
+                             ORDER BY user_count DESC, avg_age ASC",
+                            )
+                            .await
+                            .unwrap();
                         black_box(result);
                     })
                 },
