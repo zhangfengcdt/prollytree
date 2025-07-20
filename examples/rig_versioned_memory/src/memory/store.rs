@@ -16,7 +16,7 @@ pub struct VersionedMemoryStore {
 impl VersionedMemoryStore {
     pub async fn new(store_path: &str) -> Result<Self> {
         let path = Path::new(store_path);
-        
+
         // Create directory if it doesn't exist
         if !path.exists() {
             std::fs::create_dir_all(path)?;
@@ -26,29 +26,29 @@ impl VersionedMemoryStore {
         let git_dir = path.join(".git");
         if !git_dir.exists() {
             use std::process::Command;
-            
+
             // Initialize git repository
             let output = Command::new("git")
-                .args(&["init"])
+                .args(["init"])
                 .current_dir(path)
                 .output()?;
-                
+
             if !output.status.success() {
                 return Err(anyhow::anyhow!(
-                    "Failed to initialize git repository: {}", 
+                    "Failed to initialize git repository: {}",
                     String::from_utf8_lossy(&output.stderr)
                 ));
             }
-            
+
             // Set up initial git config if needed
             Command::new("git")
-                .args(&["config", "user.name", "AI Agent"])
+                .args(["config", "user.name", "AI Agent"])
                 .current_dir(path)
                 .output()
                 .ok(); // Ignore errors, might already be set globally
-                
+
             Command::new("git")
-                .args(&["config", "user.email", "agent@example.com"])
+                .args(["config", "user.email", "agent@example.com"])
                 .current_dir(path)
                 .output()
                 .ok(); // Ignore errors, might already be set globally
@@ -59,7 +59,7 @@ impl VersionedMemoryStore {
         if !data_dir.exists() {
             std::fs::create_dir_all(&data_dir)?;
         }
-        
+
         let storage = if data_dir.join(".git-prolly").exists() {
             ProllyStorage::<32>::open(&data_dir)?
         } else {
@@ -77,11 +77,7 @@ impl VersionedMemoryStore {
         })
     }
 
-    pub async fn store_memory(
-        &self,
-        memory_type: MemoryType,
-        memory: &Memory,
-    ) -> Result<String> {
+    pub async fn store_memory(&self, memory_type: MemoryType, memory: &Memory) -> Result<String> {
         let path = Path::new(&self.store_path).join("data");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
@@ -154,7 +150,9 @@ impl VersionedMemoryStore {
         }
 
         // Create a version (commit to git)
-        let version = self.create_version(&format!("Store {} memory", memory_type)).await?;
+        let version = self
+            .create_version(&format!("Store {memory_type} memory"))
+            .await?;
         Ok(version)
     }
 
@@ -237,12 +235,12 @@ impl VersionedMemoryStore {
                             Value::Str(s) => s.clone(),
                             _ => continue,
                         };
-                        
+
                         let content = match &row[1] {
                             Value::Str(s) => s.clone(),
                             _ => continue,
                         };
-                        
+
                         let timestamp = match &row[2] {
                             Value::I64(ts) => *ts,
                             Value::I32(ts) => *ts as i64,
@@ -251,24 +249,22 @@ impl VersionedMemoryStore {
                         };
 
                         let metadata = match memory_type {
-                            MemoryType::ShortTerm => {
-                                match &row[3] {
-                                    Value::Str(s) => serde_json::from_str(s).unwrap_or(serde_json::json!({})),
-                                    _ => serde_json::json!({}),
+                            MemoryType::ShortTerm => match &row[3] {
+                                Value::Str(s) => {
+                                    serde_json::from_str(s).unwrap_or(serde_json::json!({}))
                                 }
-                            }
-                            MemoryType::LongTerm => {
-                                match &row[3] {
-                                    Value::Str(concept) => serde_json::json!({ "concept": concept }),
-                                    _ => serde_json::json!({ "concept": "general" }),
+                                _ => serde_json::json!({}),
+                            },
+                            MemoryType::LongTerm => match &row[3] {
+                                Value::Str(concept) => serde_json::json!({ "concept": concept }),
+                                _ => serde_json::json!({ "concept": "general" }),
+                            },
+                            MemoryType::Episodic => match &row[3] {
+                                Value::Str(s) => {
+                                    serde_json::from_str(s).unwrap_or(serde_json::json!({}))
                                 }
-                            }
-                            MemoryType::Episodic => {
-                                match &row[3] {
-                                    Value::Str(s) => serde_json::from_str(s).unwrap_or(serde_json::json!({})),
-                                    _ => serde_json::json!({}),
-                                }
-                            }
+                                _ => serde_json::json!({}),
+                            },
                         };
 
                         let memory = Memory {
@@ -291,13 +287,13 @@ impl VersionedMemoryStore {
 
     pub async fn create_branch(&self, name: &str) -> Result<()> {
         // In a real implementation, we would create a git branch using VersionedKvStore
-        println!("🌿 Created memory branch: {}", name);
+        println!("🌿 Created memory branch: {name}");
         Ok(())
     }
 
     pub async fn rollback_to_version(&self, version: &str) -> Result<()> {
         // In a real implementation, we would checkout a specific git commit
-        println!("⏪ Rolled back to version: {}", version);
+        println!("⏪ Rolled back to version: {version}");
         Ok(())
     }
 
@@ -315,13 +311,13 @@ impl VersionedMemoryStore {
         let path = Path::new(&self.store_path).join("data");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
-        
+
         glue.execute(&format!(
             "DELETE FROM short_term_memory WHERE session_id = '{}'",
             self.current_session
         ))
         .await?;
-        
+
         Ok(())
     }
 
@@ -333,13 +329,12 @@ impl VersionedMemoryStore {
         let path = Path::new(&self.store_path).join("data");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
-        
+
         glue.execute(&format!(
-            "UPDATE long_term_memory SET access_count = access_count + 1 WHERE id = '{}'",
-            memory_id
+            "UPDATE long_term_memory SET access_count = access_count + 1 WHERE id = '{memory_id}'"
         ))
         .await?;
-        
+
         Ok(())
     }
 }

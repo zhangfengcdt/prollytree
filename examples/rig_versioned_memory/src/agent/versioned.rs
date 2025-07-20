@@ -51,10 +51,8 @@ impl VersionedAgent {
         let prompt_text = self.build_prompt(input, &context);
 
         // 4. Generate response using Rig
-        let agent = self.openai_client
-            .agent(&self.model)
-            .build();
-        
+        let agent = self.openai_client.agent(&self.model).build();
+
         let response = agent.prompt(&prompt_text).await?;
 
         // 5. Store response and commit version
@@ -73,7 +71,10 @@ impl VersionedAgent {
             .store_memory(MemoryType::ShortTerm, &response_memory)
             .await?;
 
-        println!("💾 {}", format!("Memory committed to version: {}", version).cyan());
+        println!(
+            "💾 {}",
+            format!("Memory committed to version: {version}").cyan()
+        );
 
         Ok((response, version))
     }
@@ -98,13 +99,12 @@ impl VersionedAgent {
 
     fn build_prompt(&self, input: &str, context: &MemoryContext) -> String {
         let context_text = context.build_context_text();
-        
+
         if context_text.is_empty() {
-            format!("User: {}\nAssistant:", input)
+            format!("User: {input}\nAssistant:")
         } else {
             format!(
-                "Context from memory:\n{}\n\nUser: {}\nAssistant:",
-                context_text, input
+                "Context from memory:\n{context_text}\n\nUser: {input}\nAssistant:"
             )
         }
     }

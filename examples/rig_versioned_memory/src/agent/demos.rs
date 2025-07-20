@@ -11,7 +11,9 @@ impl VersionedAgent {
 
         // Agent learns user preference
         println!("\n{}: I prefer technical explanations", "User".blue());
-        let (response1, _v1) = self.process_message("I prefer technical explanations").await?;
+        let (response1, _v1) = self
+            .process_message("I prefer technical explanations")
+            .await?;
         println!("{}: {}", "Agent".yellow(), response1);
 
         // Store this as long-term memory
@@ -31,9 +33,9 @@ impl VersionedAgent {
             "\n{}: Actually, I prefer simple explanations",
             "User".blue()
         );
-        let (response3, _v3) =
-            self.process_message("Actually, I prefer simple explanations")
-                .await?;
+        let (response3, _v3) = self
+            .process_message("Actually, I prefer simple explanations")
+            .await?;
         println!("{}: {}", "Agent".yellow(), response3);
 
         // Update the preference
@@ -47,7 +49,7 @@ impl VersionedAgent {
         println!(
             "\n{} {}",
             "⏪ Rolling back to version".red(),
-            format!("{} (before preference change)", v2).red()
+            format!("{v2} (before preference change)").red()
         );
         self.rollback_to_version(&v2).await?;
 
@@ -176,10 +178,7 @@ impl VersionedAgent {
         .await?;
 
         // Another interaction
-        println!(
-            "\n{}: Set all my reminders 5 minutes early",
-            "User".blue()
-        );
+        println!("\n{}: Set all my reminders 5 minutes early", "User".blue());
         let (response2, _) = self
             .process_message("Set all my reminders 5 minutes early")
             .await?;
@@ -245,7 +244,7 @@ impl VersionedAgent {
                         let version = self.learn_fact(parts[0], parts[1]).await?;
                         println!(
                             "{}",
-                            format!("✅ Learned fact (version: {})", version).green()
+                            format!("✅ Learned fact (version: {version})").green()
                         );
                     } else {
                         println!("{}", "Usage: /learn <concept> <fact>".red());
@@ -254,7 +253,7 @@ impl VersionedAgent {
                 _ => match self.process_message(input).await {
                     Ok((response, version)) => {
                         println!("{}: {}", "Agent".yellow(), response);
-                        println!("{}", format!("💾 Version: {}", version).dimmed());
+                        println!("{}", format!("💾 Version: {version}").dimmed());
                     }
                     Err(e) => println!("{}: {}", "Error".red(), e),
                 },

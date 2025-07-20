@@ -35,9 +35,9 @@ impl Memory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryType {
-    ShortTerm,  // Current conversation context
-    LongTerm,   // Learned facts, preferences
-    Episodic,   // Past experiences, outcomes
+    ShortTerm, // Current conversation context
+    LongTerm,  // Learned facts, preferences
+    Episodic,  // Past experiences, outcomes
 }
 
 impl MemoryType {
@@ -75,6 +75,12 @@ pub struct DecisionAudit {
 pub struct MemoryContext {
     pub long_term_memories: Vec<Memory>,
     pub recent_memories: Vec<Memory>,
+}
+
+impl Default for MemoryContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MemoryContext {
