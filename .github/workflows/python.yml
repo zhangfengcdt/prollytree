@@ -42,22 +42,19 @@ jobs:
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
-        python-version: |
-          3.11
+        python-version: '3.11'
 
-    - name: Build wheels
+    - name: Build wheels (CPython only)
       uses: PyO3/maturin-action@v1
+      env:
+        # Ensure PyO3 doesn't try to use PyPy
+        PYO3_CROSS_PYTHON_VERSION: "3.11"
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --features python --find-interpreter
+        args: --release --out dist --features python --interpreter python3.11
         sccache: 'true'
         manylinux: ${{ matrix.manylinux }}
         rust-toolchain: stable
-        before-script-linux: |
-          # Install any system dependencies if needed
-          if [[ "${{ matrix.target }}" == "aarch64" ]]; then
-            echo "Setting up cross-compilation for aarch64"
-          fi
 
     - name: Upload wheels
       uses: actions/upload-artifact@v4
