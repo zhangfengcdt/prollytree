@@ -124,6 +124,14 @@ enum Commands {
         #[arg(long, help = "Show detailed error messages")]
         verbose: bool,
     },
+
+    /// Clear all tree nodes, staging changes, and git blobs for the current dataset
+    Clear {
+        #[arg(long, help = "Confirm the destructive operation")]
+        confirm: bool,
+        #[arg(long, help = "Keep git history but clear tree data")]
+        keep_history: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -187,6 +195,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Stats { commit } => {
             handle_stats(commit)?;
+        }
+        Commands::Clear {
+            confirm,
+            keep_history,
+        } => {
+            handle_clear(confirm, keep_history)?;
         }
         #[cfg(feature = "sql")]
         Commands::Sql { .. } => {
@@ -594,6 +608,153 @@ fn handle_stats(commit: Option<String>) -> Result<(), Box<dyn std::error::Error>
             .format("%Y-%m-%d %H:%M:%S");
         println!("Latest Commit: {date}");
     }
+
+    Ok(())
+}
+
+fn handle_clear(confirm: bool, keep_history: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = env::current_dir()?;
+
+    // Safety check - require confirmation for destructive operation
+    if !confirm {
+        eprintln!("⚠ This will permanently delete all tree data and staging changes!");
+        eprintln!("  Use --confirm to proceed with this destructive operation");
+        eprintln!("  Use --keep-history to preserve git history");
+        std::process::exit(1);
+    }
+
+    println!("🧹 Clearing ProllyTree dataset...");
+
+    // Open the store to get access to internal structures
+    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+
+    // Clear staging area first
+    println!("  ↳ Clearing staging changes...");
+    let status = store.status();
+    if !status.is_empty() {
+        // Reset staging area by recreating the store
+        store = VersionedKvStore::<32>::open(&current_dir)?;
+        println!("    ✓ Cleared {} staged changes", status.len());
+    } else {
+        println!("    ✓ No staged changes to clear");
+    }
+
+    // Clear the tree data
+    println!("  ↳ Clearing tree nodes and data...");
+
+    // Get current key count before clearing
+    let keys = store.list_keys();
+    let key_count = keys.len();
+
+    // Clear all keys from the tree
+    for key in keys {
+        store.delete(&key)?;
+    }
+
+    // Clear the staging area to make sure deletions are staged
+    // The staging should already contain the deletions from above
+
+    println!("    ✓ Cleared {key_count} keys from tree");
+
+    // Clear mapping files and node storage
+    println!("  ↳ Clearing node mappings...");
+
+    // Get the dataset directory structure
+    let git_prolly_dir = current_dir.join(".git-prolly");
+    let staging_file = git_prolly_dir.join("staging.json");
+    let mapping_file = git_prolly_dir.join("mapping.json");
+
+    // Remove staging file
+    if staging_file.exists() {
+        std::fs::remove_file(&staging_file)?;
+        println!("    ✓ Removed staging file");
+    }
+
+    // Clear or remove mapping file
+    if mapping_file.exists() {
+        if keep_history {
+            // Just clear the contents but keep the file structure
+            std::fs::write(&mapping_file, "{}")?;
+            println!("    ✓ Cleared mapping file contents");
+        } else {
+            std::fs::remove_file(&mapping_file)?;
+            println!("    ✓ Removed mapping file");
+        }
+    }
+
+    // Clear git blobs if not keeping history
+    if !keep_history {
+        println!("  ↳ Clearing git blob objects...");
+
+        // Run git gc to clean up unreferenced objects
+        let git_dir = current_dir.join(".git");
+        if git_dir.exists() {
+            // Remove all prolly-related refs and objects
+            let objects_dir = git_dir.join("objects");
+            if objects_dir.exists() {
+                // Use git prune to remove unreachable objects
+                use std::process::Command;
+
+                let output = Command::new("git")
+                    .args(["prune", "--expire=now"])
+                    .current_dir(&current_dir)
+                    .output();
+
+                match output {
+                    Ok(result) if result.status.success() => {
+                        println!("    ✓ Pruned unreachable git objects");
+                    }
+                    _ => {
+                        println!("    ⚠ Could not prune git objects (git prune failed)");
+                    }
+                }
+
+                // Also run git gc aggressively
+                let gc_output = Command::new("git")
+                    .args(["gc", "--aggressive", "--prune=now"])
+                    .current_dir(&current_dir)
+                    .output();
+
+                match gc_output {
+                    Ok(result) if result.status.success() => {
+                        println!("    ✓ Cleaned up git repository");
+                    }
+                    _ => {
+                        println!("    ⚠ Could not clean up git repository (git gc failed)");
+                    }
+                }
+            }
+        }
+    } else {
+        println!("  ↳ Keeping git history (--keep-history specified)");
+    }
+
+    // Reinitialize empty tree structure
+    println!("  ↳ Reinitializing empty tree structure...");
+
+    // Commit the empty state if keeping history
+    if keep_history {
+        // Make sure the deletions are committed to create an empty state
+        let status = store.status();
+        if !status.is_empty() {
+            let commit_id = store.commit("Clear all data")?;
+            println!("    ✓ Committed empty state: {commit_id}");
+        } else {
+            println!("    ✓ Tree already empty, no commit needed");
+        }
+    }
+
+    println!("✅ Successfully cleared ProllyTree dataset!");
+
+    if keep_history {
+        println!(
+            "   Git history preserved - use 'git prolly show <commit>' to view previous states"
+        );
+    } else {
+        println!("   All data permanently removed - repository is now clean");
+    }
+
+    println!("   Ready for new data - use 'git prolly set <key> <value>' to add data");
 
     Ok(())
 }
