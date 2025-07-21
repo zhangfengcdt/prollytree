@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use gluesql_core::prelude::{Glue, Payload};
@@ -258,12 +261,8 @@ impl MemoryStore {
         let version = format!("v-{}", Utc::now().timestamp());
 
         if self.audit_enabled {
-            self.log_audit(
-                &format!("Commit: {message}"),
-                MemoryType::System,
-                &version,
-            )
-            .await?;
+            self.log_audit(&format!("Commit: {message}"), MemoryType::System, &version)
+                .await?;
         }
 
         Ok(version)

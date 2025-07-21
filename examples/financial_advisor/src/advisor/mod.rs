@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 // For now, commenting out rig-core imports to focus on memory consistency demo
@@ -172,9 +174,7 @@ impl FinancialAdvisor {
                     .await?;
 
                 if self.verbose {
-                    println!(
-                        "⚠️  Potential contradiction detected, created branch: {branch_id}"
-                    );
+                    println!("⚠️  Potential contradiction detected, created branch: {branch_id}");
                 }
 
                 // Analyze and resolve contradiction

@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 pub mod attack_simulator;
 
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SecurityLevel {
     Low,
