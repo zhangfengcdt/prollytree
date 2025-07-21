@@ -63,6 +63,11 @@ impl<const D: usize> ProllyStorage<D> {
         Ok(Self::new(store))
     }
 
+    // returns the underlying store
+    pub fn store(&self) -> &VersionedKvStore<D> {
+        &self.store
+    }
+
     /// Convert table name and row key to storage key
     fn make_storage_key(table_name: &str, key: &Key) -> Vec<u8> {
         match key {
@@ -97,7 +102,6 @@ impl<const D: usize> ProllyStorage<D> {
 impl<const D: usize> AlterTable for ProllyStorage<D> {}
 impl<const D: usize> Index for ProllyStorage<D> {}
 impl<const D: usize> IndexMut for ProllyStorage<D> {}
-impl<const D: usize> Transaction for ProllyStorage<D> {}
 impl<const D: usize> Metadata for ProllyStorage<D> {}
 impl<const D: usize> CustomFunction for ProllyStorage<D> {}
 impl<const D: usize> CustomFunctionMut for ProllyStorage<D> {}
@@ -264,6 +268,33 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
                 .map_err(|e| Error::StorageMsg(format!("Failed to delete row: {e}")))?;
         }
 
+        Ok(())
+    }
+}
+
+#[async_trait(?Send)]
+impl<const D: usize> Transaction for ProllyStorage<D> {
+    async fn begin(&mut self, autocommit: bool) -> Result<bool> {
+        if autocommit {
+            return Ok(false);
+        }
+
+        // ProllyTree with git backend doesn't support nested transactions
+        // Always return false to indicate no transaction was started
+        Ok(false)
+    }
+
+    async fn rollback(&mut self) -> Result<()> {
+        // Since we don't support transactions, rollback is a no-op
+        // In a real implementation, you might want to reset to the last commit
+        Ok(())
+    }
+
+    async fn commit(&mut self) -> Result<()> {
+        // Commit changes to the git repository
+        self.store
+            .commit("Transaction commit")
+            .map_err(|e| Error::StorageMsg(format!("Failed to commit transaction: {e}")))?;
         Ok(())
     }
 }

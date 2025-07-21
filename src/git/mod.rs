@@ -12,20 +12,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#[cfg(feature = "git")]
 pub mod operations;
-#[cfg(feature = "git")]
 pub mod storage;
-#[cfg(feature = "git")]
 pub mod types;
-#[cfg(feature = "git")]
 pub mod versioned_store;
 
-#[cfg(feature = "git")]
+// Re-export commonly used types
 pub use operations::GitOperations;
-#[cfg(feature = "git")]
 pub use storage::GitNodeStorage;
-#[cfg(feature = "git")]
-pub use types::*;
-#[cfg(feature = "git")]
+pub use types::{
+    CommitDetails, CommitInfo, DiffOperation, GitKvError, KvConflict, KvDiff, KvStorageMetadata,
+    MergeResult,
+};
 pub use versioned_store::VersionedKvStore;

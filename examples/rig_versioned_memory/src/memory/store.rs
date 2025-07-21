@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::Utc;
 use gluesql_core::prelude::{Glue, Payload};
+use gluesql_core::store::Transaction;
 use prollytree::sql::ProllyStorage;
 use std::path::Path;
 use uuid::Uuid;
@@ -60,7 +61,7 @@ impl VersionedMemoryStore {
             std::fs::create_dir_all(&data_dir)?;
         }
 
-        let storage = if data_dir.join(".git-prolly").exists() {
+        let storage = if data_dir.join("prolly_config_tree_config").exists() {
             ProllyStorage::<32>::open(&data_dir)?
         } else {
             ProllyStorage::<32>::init(&data_dir)?
@@ -101,6 +102,7 @@ impl VersionedMemoryStore {
                     memory.metadata.to_string().replace('\'', "''")
                 );
                 glue.execute(&sql).await?;
+                glue.storage.commit().await?;
             }
             MemoryType::LongTerm => {
                 let sql = format!(
@@ -118,6 +120,7 @@ impl VersionedMemoryStore {
                     memory.timestamp.timestamp()
                 );
                 glue.execute(&sql).await?;
+                glue.storage.commit().await?;
             }
             MemoryType::Episodic => {
                 let sql = format!(
@@ -146,6 +149,7 @@ impl VersionedMemoryStore {
                         .unwrap_or(0.0)
                 );
                 glue.execute(&sql).await?;
+                glue.storage.commit().await?;
             }
         }
 
@@ -215,6 +219,7 @@ impl VersionedMemoryStore {
         };
 
         let results = glue.execute(&sql).await?;
+        glue.storage.commit().await?;
         let memories = self.parse_query_results(results, memory_type)?;
         Ok(memories)
     }

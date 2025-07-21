@@ -98,4 +98,4 @@ path = "examples/git_merge.rs"
 required-features = ["git"]
 
 [workspace]
-members = ["examples/rig_versioned_memory"]
+members = ["examples/rig_versioned_memory", "examples/financial_advisor"]

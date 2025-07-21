@@ -85,6 +85,16 @@ pub struct CommitInfo {
     pub timestamp: i64,
 }
 
+impl fmt::Display for CommitInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Commit {} by {} (timestamp: {})\nMessage: {}",
+            self.id, self.author, self.timestamp, self.message
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CommitDetails {
     pub info: CommitInfo,
