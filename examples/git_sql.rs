@@ -19,6 +19,7 @@ limitations under the License.
 
 #[cfg(feature = "sql")]
 use gluesql_core::{error::Result, executor::Payload, prelude::Glue};
+use gluesql_core::store::Transaction;
 #[cfg(feature = "sql")]
 use prollytree::sql::ProllyStorage;
 #[cfg(feature = "sql")]
@@ -55,6 +56,8 @@ async fn main() -> Result<()> {
     let storage = ProllyStorage::<32>::init(&dataset_path)?;
     let mut glue = Glue::new(storage);
 
+    glue.storage.begin(false).await?;
+
     // 1. Create tables
     println!("1. Creating tables...");
 
@@ -77,9 +80,12 @@ async fn main() -> Result<()> {
         )
     "#;
 
+    glue.storage.commit().await?;
+
     glue.execute(create_users).await?;
     glue.execute(create_orders).await?;
     println!("   ✓ Created users and orders tables\n");
+
 
     // 2. Insert data
     println!("2. Inserting sample data...");
@@ -105,6 +111,7 @@ async fn main() -> Result<()> {
     glue.execute(insert_users).await?;
     glue.execute(insert_orders).await?;
     println!("   ✓ Inserted sample data\n");
+    glue.storage.commit().await?;
 
     // 3. Basic SELECT queries
     println!("3. Running SELECT queries...");
@@ -167,6 +174,7 @@ async fn main() -> Result<()> {
     let verify_query = "SELECT name, age FROM users WHERE name = 'Alice Johnson'";
     let result = glue.execute(verify_query).await?;
     print_results("Alice's updated info:", &result);
+    glue.storage.commit().await?;
 
     // 7. Advanced queries with subqueries
     println!("7. Running advanced queries...");
@@ -182,6 +190,29 @@ async fn main() -> Result<()> {
     println!("\n🎉 SQL example completed successfully!");
     println!("This demonstrates how ProllyTree can serve as a backend for SQL queries");
     println!("while maintaining its versioned, git-like capabilities.\n");
+
+    // Check git status
+    let kv_store = glue.storage.store();
+    match kv_store.log() {
+        Ok(history) => {
+            println!("Git history:");
+            for commit_info in history {
+                println!("  - Commit: {:?}", commit_info);
+            }
+        }
+        Err(e) => {
+            println!("Failed to get git history: {:?}", e);
+        }
+    }
+
+    println!("Git keys:");
+    for key in kv_store.list_keys() {
+        // Convert Vec<u8> to String for display, or use debug format
+        match String::from_utf8(key.clone()) {
+            Ok(key_str) => println!("  - Key: {}", key_str),
+            Err(_) => println!("  - Key: {:?}", key),
+        }
+    }
 
     Ok(())
 }

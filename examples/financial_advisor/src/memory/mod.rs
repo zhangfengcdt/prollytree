@@ -50,15 +50,18 @@ impl MemoryStore {
                 .map_err(|e| anyhow::anyhow!("Failed to initialize git repo: {}", e))?;
         }
 
-        // Initialize or open VersionedKvStore in dataset subdirectory
-        let versioned_store = if dataset_dir.join(".git-prolly").exists() {
-            VersionedKvStore::<32>::open(&dataset_dir).map_err(|e| anyhow::anyhow!("Failed to open versioned store: {:?}", e))?
+        // Initialize VersionedKvStore in dataset subdirectory  
+        // Check if prolly tree config exists to determine if we should init or open
+        let versioned_store = if dataset_dir.join("prolly_config_tree_config").exists() {
+            VersionedKvStore::<32>::open(&dataset_dir)
+                .map_err(|e| anyhow::anyhow!("Failed to open versioned store: {:?}", e))?
         } else {
-            VersionedKvStore::<32>::init(&dataset_dir).map_err(|e| anyhow::anyhow!("Failed to init versioned store: {:?}", e))?
+            VersionedKvStore::<32>::init(&dataset_dir)
+                .map_err(|e| anyhow::anyhow!("Failed to init versioned store: {:?}", e))?
         };
 
-        // Initialize SQL schema using ProllyStorage
-        let storage = if dataset_dir.join(".git-prolly").exists() {
+        // Initialize ProllyStorage - it will create its own VersionedKvStore accessing the same prolly tree files
+        let storage = if dataset_dir.join("prolly_config_tree_config").exists() {
             ProllyStorage::<32>::open(&dataset_dir)?
         } else {
             ProllyStorage::<32>::init(&dataset_dir)?
@@ -142,7 +145,11 @@ impl MemoryStore {
         memory: &ValidatedMemory,
     ) -> Result<String> {
         let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = ProllyStorage::<32>::open(&path)?;
+        let storage = if path.join("prolly_config_tree_config").exists() {
+            ProllyStorage::<32>::open(&path)?
+        } else {
+            ProllyStorage::<32>::init(&path)?
+        };
         let mut glue = Glue::new(storage);
         
         // Ensure schema exists (this should be safe to run multiple times)
@@ -207,21 +214,6 @@ impl MemoryStore {
             glue.execute(&sql).await?;
         }
 
-        // IMPORTANT: We need to store in our versioned_store instance because
-        // ProllyStorage has its own VersionedKvStore instance. They share the same
-        // files but have separate staging areas. Only our instance does commits.
-        let kv_key = format!("{}:{}", memory_type, memory.id);
-        let kv_value = serde_json::json!({
-            "type": format!("{:?}", memory_type),
-            "id": memory.id,
-            "confidence": memory.confidence,
-            "timestamp": memory.timestamp.to_rfc3339()
-        });
-        
-        self.versioned_store
-            .insert(kv_key.as_bytes().to_vec(), serde_json::to_string(&kv_value)?.as_bytes().to_vec())
-            .map_err(|e| anyhow::anyhow!("Failed to store in KV: {:?}", e))?;
-
         // Create version
         let version = self
             .create_version(&format!("Store {} memory: {}", memory_type, memory.id))
@@ -249,7 +241,11 @@ impl MemoryStore {
 
     pub async fn query_related(&self, content: &str, limit: usize) -> Result<Vec<ValidatedMemory>> {
         let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = ProllyStorage::<32>::open(&path)?;
+        let storage = if path.join("prolly_config_tree_config").exists() {
+            ProllyStorage::<32>::open(&path)?
+        } else {
+            ProllyStorage::<32>::init(&path)?
+        };
         let mut glue = Glue::new(storage);
         
         // Ensure schema exists
@@ -326,7 +322,11 @@ impl MemoryStore {
         to: Option<DateTime<Utc>>,
     ) -> Result<Vec<AuditEntry>> {
         let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = ProllyStorage::<32>::open(&path)?;
+        let storage = if path.join("prolly_config_tree_config").exists() {
+            ProllyStorage::<32>::open(&path)?
+        } else {
+            ProllyStorage::<32>::init(&path)?
+        };
         let mut glue = Glue::new(storage);
 
         let mut sql =
@@ -358,7 +358,11 @@ impl MemoryStore {
         memory_id: &str,
     ) -> Result<()> {
         let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = ProllyStorage::<32>::open(&path)?;
+        let storage = if path.join("prolly_config_tree_config").exists() {
+            ProllyStorage::<32>::open(&path)?
+        } else {
+            ProllyStorage::<32>::init(&path)?
+        };
         let mut glue = Glue::new(storage);
         
         // Ensure schema exists
@@ -633,7 +637,11 @@ impl MemoryStore {
         
         // Query recommendations from this point in time
         let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = ProllyStorage::<32>::open(&path)?;
+        let storage = if path.join("prolly_config_tree_config").exists() {
+            ProllyStorage::<32>::open(&path)?
+        } else {
+            ProllyStorage::<32>::init(&path)?
+        };
         let mut glue = Glue::new(storage);
         
         let sql = "SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp FROM recommendations ORDER BY timestamp DESC";
@@ -679,7 +687,11 @@ impl MemoryStore {
         
         // Query market data from this point in time
         let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = ProllyStorage::<32>::open(&path)?;
+        let storage = if path.join("prolly_config_tree_config").exists() {
+            ProllyStorage::<32>::open(&path)?
+        } else {
+            ProllyStorage::<32>::init(&path)?
+        };
         let mut glue = Glue::new(storage);
         
         let sql = if let Some(symbol) = symbol {
