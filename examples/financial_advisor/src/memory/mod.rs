@@ -207,6 +207,21 @@ impl MemoryStore {
             glue.execute(&sql).await?;
         }
 
+        // IMPORTANT: We need to store in our versioned_store instance because
+        // ProllyStorage has its own VersionedKvStore instance. They share the same
+        // files but have separate staging areas. Only our instance does commits.
+        let kv_key = format!("{}:{}", memory_type, memory.id);
+        let kv_value = serde_json::json!({
+            "type": format!("{:?}", memory_type),
+            "id": memory.id,
+            "confidence": memory.confidence,
+            "timestamp": memory.timestamp.to_rfc3339()
+        });
+        
+        self.versioned_store
+            .insert(kv_key.as_bytes().to_vec(), serde_json::to_string(&kv_value)?.as_bytes().to_vec())
+            .map_err(|e| anyhow::anyhow!("Failed to store in KV: {:?}", e))?;
+
         // Create version
         let version = self
             .create_version(&format!("Store {} memory: {}", memory_type, memory.id))
