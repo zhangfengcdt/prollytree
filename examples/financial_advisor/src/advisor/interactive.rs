@@ -195,6 +195,28 @@ impl<'a> InteractiveSession<'a> {
     fn show_help(&self) {
         println!("{}", "📚 Help - Financial Advisory AI".blue().bold());
         println!();
+        
+        // Show available commands first
+        println!("{}", "Available commands:".yellow());
+        println!(
+            "  {} - Get recommendation for a stock symbol",
+            "recommend <SYMBOL>".cyan()
+        );
+        println!("  {} - Show client profile", "profile".cyan());
+        println!(
+            "  {} - Set risk tolerance (conservative/moderate/aggressive)",
+            "risk <LEVEL>".cyan()
+        );
+        println!("  {} - Show recent recommendations", "history".cyan());
+        println!("  {} - Show memory validation status", "memory".cyan());
+        println!("  {} - Show audit trail", "audit".cyan());
+        println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
+        println!("  {} - Show memory tree visualization", "visualize".cyan());
+        println!("  {} - Create memory branch", "branch <NAME>".cyan());
+        println!("  {} - Show this help", "help".cyan());
+        println!("  {} - Exit", "exit".cyan());
+        println!();
+        
         println!("{}", "Core Features:".yellow());
         println!(
             "• {} - Provides validated investment recommendations",

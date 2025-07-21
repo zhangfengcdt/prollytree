@@ -75,10 +75,8 @@ impl MemoryStore {
     }
 
     async fn init_schema(glue: &mut Glue<ProllyStorage<32>>) -> Result<()> {
-        // Market data table
-        glue.execute(
-            r#"
-            CREATE TABLE IF NOT EXISTS market_data (
+        Self::ensure_table_exists(glue, "market_data", 
+            r#"CREATE TABLE market_data (
                 id TEXT PRIMARY KEY,
                 symbol TEXT,
                 content TEXT,
@@ -86,15 +84,10 @@ impl MemoryStore {
                 sources TEXT,
                 confidence FLOAT,
                 timestamp INTEGER
-            )
-        "#,
-        )
-        .await?;
-
-        // Recommendations table
-        glue.execute(
-            r#"
-            CREATE TABLE IF NOT EXISTS recommendations (
+            )"#).await?;
+        
+        Self::ensure_table_exists(glue, "recommendations", 
+            r#"CREATE TABLE recommendations (
                 id TEXT PRIMARY KEY,
                 client_id TEXT,
                 symbol TEXT,
@@ -104,15 +97,10 @@ impl MemoryStore {
                 validation_hash TEXT,
                 memory_version TEXT,
                 timestamp INTEGER
-            )
-        "#,
-        )
-        .await?;
-
-        // Audit log table
-        glue.execute(
-            r#"
-            CREATE TABLE IF NOT EXISTS audit_log (
+            )"#).await?;
+            
+        Self::ensure_table_exists(glue, "audit_log", 
+            r#"CREATE TABLE audit_log (
                 id TEXT PRIMARY KEY,
                 action TEXT,
                 memory_type TEXT,
@@ -120,25 +108,31 @@ impl MemoryStore {
                 branch TEXT,
                 timestamp INTEGER,
                 details TEXT
-            )
-        "#,
-        )
-        .await?;
-
-        // Memory cross-references table
-        glue.execute(
-            r#"
-            CREATE TABLE IF NOT EXISTS cross_references (
+            )"#).await?;
+            
+        Self::ensure_table_exists(glue, "cross_references", 
+            r#"CREATE TABLE cross_references (
                 source_id TEXT,
                 target_id TEXT,
                 reference_type TEXT,
                 confidence FLOAT,
                 PRIMARY KEY (source_id, target_id)
-            )
-        "#,
-        )
-        .await?;
+            )"#).await?;
 
+        Ok(())
+    }
+
+    async fn ensure_table_exists(
+        glue: &mut Glue<ProllyStorage<32>>, 
+        table_name: &str, 
+        create_sql: &str
+    ) -> Result<()> {
+        // Try a simple query to check if table exists
+        let check_sql = format!("SELECT COUNT(*) FROM {}", table_name);
+        if glue.execute(&check_sql).await.is_err() {
+            // Table doesn't exist, create it
+            glue.execute(create_sql).await?;
+        }
         Ok(())
     }
 
@@ -150,6 +144,9 @@ impl MemoryStore {
         let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
+        
+        // Ensure schema exists (this should be safe to run multiple times)
+        Self::init_schema(&mut glue).await?;
 
         match memory_type {
             MemoryType::MarketData => {
@@ -194,8 +191,15 @@ impl MemoryStore {
 
         // Store cross-references
         for reference in &memory.cross_references {
+            // First try to delete if exists, then insert (GlueSQL doesn't support UPSERT)
+            let delete_sql = format!(
+                "DELETE FROM cross_references WHERE source_id = '{}' AND target_id = '{}'",
+                memory.id, reference
+            );
+            let _ = glue.execute(&delete_sql).await; // Ignore if record doesn't exist
+            
             let sql = format!(
-                r#"INSERT OR REPLACE INTO cross_references 
+                r#"INSERT INTO cross_references 
                 (source_id, target_id, reference_type, confidence)
                 VALUES ('{}', '{}', 'validation', {})"#,
                 memory.id, reference, memory.confidence
@@ -232,6 +236,9 @@ impl MemoryStore {
         let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
+        
+        // Ensure schema exists
+        Self::init_schema(&mut glue).await?;
 
         // For now, do a simple content search
         // In production, this would use vector embeddings
@@ -338,6 +345,9 @@ impl MemoryStore {
         let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
+        
+        // Ensure schema exists
+        Self::init_schema(&mut glue).await?;
 
         let audit_entry = AuditEntry {
             id: Uuid::new_v4().to_string(),
