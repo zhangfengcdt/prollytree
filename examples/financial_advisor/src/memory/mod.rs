@@ -5,6 +5,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use gluesql_core::prelude::{Glue, Payload};
 use prollytree::sql::ProllyStorage;
+use prollytree::git::{VersionedKvStore, GitKvError};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -18,7 +19,7 @@ pub use types::{AuditEntry, MemoryType, ValidatedMemory};
 /// Core memory store with versioning capabilities
 pub struct MemoryStore {
     store_path: String,
-    current_branch: String,
+    versioned_store: VersionedKvStore<32>,
     audit_enabled: bool,
 }
 
@@ -31,35 +32,44 @@ impl MemoryStore {
             std::fs::create_dir_all(path)?;
         }
 
-        // Initialize git repository if needed
-        let git_dir = path.join(".git");
+        // Initialize ProllyTree storage with git-prolly integration
+        // Create data directory structure: data/dataset (git-prolly needs subdirectory)
+        let data_dir = path.join("data");
+        let dataset_dir = data_dir.join("dataset");
+        if !dataset_dir.exists() {
+            std::fs::create_dir_all(&dataset_dir)?;
+        }
+
+        // Initialize git repository in data directory if needed
+        let git_dir = data_dir.join(".git");
         if !git_dir.exists() {
             std::process::Command::new("git")
                 .args(["init"])
-                .current_dir(path)
-                .output()?;
+                .current_dir(&data_dir)
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to initialize git repo: {}", e))?;
         }
 
-        // Initialize ProllyTree storage
-        let data_dir = path.join("data");
-        if !data_dir.exists() {
-            std::fs::create_dir_all(&data_dir)?;
-        }
-
-        let storage = if data_dir.join(".git-prolly").exists() {
-            ProllyStorage::<32>::open(&data_dir)?
+        // Initialize or open VersionedKvStore in dataset subdirectory
+        let versioned_store = if dataset_dir.join(".git-prolly").exists() {
+            VersionedKvStore::<32>::open(&dataset_dir).map_err(|e| anyhow::anyhow!("Failed to open versioned store: {:?}", e))?
         } else {
-            ProllyStorage::<32>::init(&data_dir)?
+            VersionedKvStore::<32>::init(&dataset_dir).map_err(|e| anyhow::anyhow!("Failed to init versioned store: {:?}", e))?
+        };
+
+        // Initialize SQL schema using ProllyStorage
+        let storage = if dataset_dir.join(".git-prolly").exists() {
+            ProllyStorage::<32>::open(&dataset_dir)?
+        } else {
+            ProllyStorage::<32>::init(&dataset_dir)?
         };
 
         let mut glue = Glue::new(storage);
-
-        // Initialize schema
         Self::init_schema(&mut glue).await?;
 
         Ok(Self {
             store_path: store_path.to_string(),
-            current_branch: "main".to_string(),
+            versioned_store,
             audit_enabled: true,
         })
     }
@@ -137,7 +147,7 @@ impl MemoryStore {
         memory_type: MemoryType,
         memory: &ValidatedMemory,
     ) -> Result<String> {
-        let path = Path::new(&self.store_path).join("data");
+        let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
 
@@ -219,7 +229,7 @@ impl MemoryStore {
     }
 
     pub async fn query_related(&self, content: &str, limit: usize) -> Result<Vec<ValidatedMemory>> {
-        let path = Path::new(&self.store_path).join("data");
+        let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
 
@@ -240,36 +250,42 @@ impl MemoryStore {
     }
 
     pub async fn create_branch(&mut self, name: &str) -> Result<String> {
-        // In a real implementation, use git-prolly branch commands
-        let branch_id = format!("{}-{}", name, Uuid::new_v4());
-        self.current_branch = branch_id.clone();
+        // Use real git-prolly branch creation
+        self.versioned_store.create_branch(name)
+            .map_err(|e| anyhow::anyhow!("Failed to create branch '{}': {:?}", name, e))?;
 
         if self.audit_enabled {
             self.log_audit(
                 &format!("Created branch: {name}"),
                 MemoryType::System,
-                &branch_id,
+                name,
             )
             .await?;
         }
 
-        Ok(branch_id)
+        Ok(name.to_string())
     }
 
-    pub async fn commit(&self, message: &str) -> Result<String> {
-        // In a real implementation, use git-prolly commit
-        let version = format!("v-{}", Utc::now().timestamp());
+    pub async fn commit(&mut self, message: &str) -> Result<String> {
+        // Use real git-prolly commit
+        let commit_id = self.versioned_store.commit(message)
+            .map_err(|e| anyhow::anyhow!("Failed to commit: {:?}", e))?;
+        
+        let commit_hex = commit_id.to_hex().to_string();
 
         if self.audit_enabled {
-            self.log_audit(&format!("Commit: {message}"), MemoryType::System, &version)
+            self.log_audit(&format!("Commit: {message}"), MemoryType::System, &commit_hex)
                 .await?;
         }
 
-        Ok(version)
+        Ok(commit_hex)
     }
 
     pub async fn rollback(&mut self, version: &str) -> Result<()> {
-        // In a real implementation, use git-prolly checkout
+        // Use real git-prolly checkout
+        self.versioned_store.checkout(version)
+            .map_err(|e| anyhow::anyhow!("Failed to rollback to '{}': {:?}", version, e))?;
+
         if self.audit_enabled {
             self.log_audit(
                 &format!("Rollback to: {version}"),
@@ -287,7 +303,7 @@ impl MemoryStore {
         from: Option<DateTime<Utc>>,
         to: Option<DateTime<Utc>>,
     ) -> Result<Vec<AuditEntry>> {
-        let path = Path::new(&self.store_path).join("data");
+        let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
 
@@ -319,7 +335,7 @@ impl MemoryStore {
         memory_type: MemoryType,
         memory_id: &str,
     ) -> Result<()> {
-        let path = Path::new(&self.store_path).join("data");
+        let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
 
@@ -328,10 +344,10 @@ impl MemoryStore {
             action: action.to_string(),
             memory_type: format!("{memory_type:?}"),
             memory_id: memory_id.to_string(),
-            branch: self.current_branch.clone(),
+            branch: self.current_branch().to_string(),
             timestamp: Utc::now(),
             details: serde_json::json!({
-                "branch": self.current_branch,
+                "branch": self.current_branch(),
                 "audit_enabled": self.audit_enabled,
             }),
         };
@@ -353,9 +369,44 @@ impl MemoryStore {
         Ok(())
     }
 
-    async fn create_version(&self, message: &str) -> String {
-        // In production, this would create a git commit
-        format!("v-{}-{}", Utc::now().timestamp(), &message[..8])
+    async fn create_version(&mut self, message: &str) -> String {
+        // Create a real git commit
+        match self.versioned_store.commit(message) {
+            Ok(commit_id) => commit_id.to_hex().to_string(),
+            Err(_) => format!("v-{}-{}", Utc::now().timestamp(), &message[..8.min(message.len())]),
+        }
+    }
+
+    /// Get current branch name
+    pub fn current_branch(&self) -> &str {
+        self.versioned_store.current_branch()
+    }
+
+    /// List all branches
+    pub fn list_branches(&self) -> Result<Vec<String>> {
+        self.versioned_store.list_branches()
+            .map_err(|e| anyhow::anyhow!("Failed to list branches: {:?}", e))
+    }
+
+    /// Get git status (staged changes)
+    pub fn status(&self) -> Vec<(Vec<u8>, String)> {
+        self.versioned_store.status()
+    }
+
+    /// Checkout branch or commit
+    pub async fn checkout(&mut self, branch_or_commit: &str) -> Result<()> {
+        self.versioned_store.checkout(branch_or_commit)
+            .map_err(|e| anyhow::anyhow!("Failed to checkout '{}': {:?}", branch_or_commit, e))?;
+        
+        if self.audit_enabled {
+            self.log_audit(
+                &format!("Checked out: {}", branch_or_commit),
+                MemoryType::System,
+                branch_or_commit,
+            ).await?;
+        }
+        
+        Ok(())
     }
 
     fn extract_symbol(&self, content: &str) -> Result<String> {
