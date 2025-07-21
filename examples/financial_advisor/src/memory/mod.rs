@@ -20,6 +20,11 @@ pub use types::{
     ValidatedMemory,
 };
 
+// Constants for directory structure
+const DATA_DIR: &str = "advisedb";
+const DATASET_DIR: &str = "dataset";
+const PROLLY_CONFIG_FILE: &str = "prolly_config_tree_config";
+
 /// Core memory store with versioning capabilities
 pub struct MemoryStore {
     store_path: String,
@@ -38,8 +43,8 @@ impl MemoryStore {
 
         // Initialize ProllyTree storage with git-prolly integration
         // Create data directory structure: data/dataset (git-prolly needs subdirectory)
-        let data_dir = path.join("data");
-        let dataset_dir = data_dir.join("dataset");
+        let data_dir = path.join(DATA_DIR);
+        let dataset_dir = data_dir.join(DATASET_DIR);
         if !dataset_dir.exists() {
             std::fs::create_dir_all(&dataset_dir)?;
         }
@@ -56,7 +61,7 @@ impl MemoryStore {
 
         // Initialize VersionedKvStore in dataset subdirectory
         // Check if prolly tree config exists to determine if we should init or open
-        let versioned_store = if dataset_dir.join("prolly_config_tree_config").exists() {
+        let versioned_store = if dataset_dir.join(PROLLY_CONFIG_FILE).exists() {
             VersionedKvStore::<32>::open(&dataset_dir)
                 .map_err(|e| anyhow::anyhow!("Failed to open versioned store: {:?}", e))?
         } else {
@@ -65,7 +70,7 @@ impl MemoryStore {
         };
 
         // Initialize ProllyStorage - it will create its own VersionedKvStore accessing the same prolly tree files
-        let storage = if dataset_dir.join("prolly_config_tree_config").exists() {
+        let storage = if dataset_dir.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&dataset_dir)?
         } else {
             ProllyStorage::<32>::init(&dataset_dir)?
@@ -165,8 +170,8 @@ impl MemoryStore {
         memory_type: MemoryType,
         memory: &ValidatedMemory,
     ) -> Result<String> {
-        let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = if path.join("prolly_config_tree_config").exists() {
+        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
             ProllyStorage::<32>::init(&path)?
@@ -264,8 +269,8 @@ impl MemoryStore {
     }
 
     pub async fn query_related(&self, content: &str, limit: usize) -> Result<Vec<ValidatedMemory>> {
-        let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = if path.join("prolly_config_tree_config").exists() {
+        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
             ProllyStorage::<32>::init(&path)?
@@ -349,8 +354,8 @@ impl MemoryStore {
         from: Option<DateTime<Utc>>,
         to: Option<DateTime<Utc>>,
     ) -> Result<Vec<AuditEntry>> {
-        let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = if path.join("prolly_config_tree_config").exists() {
+        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
             ProllyStorage::<32>::init(&path)?
@@ -385,8 +390,8 @@ impl MemoryStore {
         memory_type: MemoryType,
         memory_id: &str,
     ) -> Result<()> {
-        let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = if path.join("prolly_config_tree_config").exists() {
+        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
             ProllyStorage::<32>::init(&path)?
@@ -480,7 +485,7 @@ impl MemoryStore {
         // This follows the rig_versioned_memory pattern of showing version progression
         let log_output = std::process::Command::new("git")
             .args(["log", "--oneline", "--format=%H|%s|%at"])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get git log: {}", e))?;
 
@@ -553,7 +558,7 @@ impl MemoryStore {
         // Simple implementation using git show command
         let show_output = std::process::Command::new("git")
             .args(["show", "--format=%H|%s|%at|%an", "--name-only", commit])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to show commit '{}': {}", commit, e))?;
 
@@ -604,7 +609,7 @@ impl MemoryStore {
         // Simple revert using git reset (following rig_versioned_memory pattern)
         let reset_output = std::process::Command::new("git")
             .args(["reset", "--hard", commit])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to reset to commit '{}': {}", commit, e))?;
 
@@ -633,7 +638,7 @@ impl MemoryStore {
     pub async fn get_current_commit_id(&self) -> Result<String> {
         let output = std::process::Command::new("git")
             .args(["rev-parse", "HEAD"])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get commit ID: {}", e))?;
 
@@ -671,7 +676,7 @@ impl MemoryStore {
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit '{}': {}", commit, e))?;
 
@@ -681,8 +686,8 @@ impl MemoryStore {
         }
 
         // Query recommendations from this point in time
-        let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = if path.join("prolly_config_tree_config").exists() {
+        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
             ProllyStorage::<32>::init(&path)?
@@ -697,7 +702,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
 
@@ -726,7 +731,7 @@ impl MemoryStore {
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit '{}': {}", commit, e))?;
 
@@ -736,8 +741,8 @@ impl MemoryStore {
         }
 
         // Query market data from this point in time
-        let path = Path::new(&self.store_path).join("data").join("dataset");
-        let storage = if path.join("prolly_config_tree_config").exists() {
+        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
             ProllyStorage::<32>::init(&path)?
@@ -756,7 +761,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
 
@@ -820,7 +825,7 @@ impl MemoryStore {
                 "--until",
                 &target_time.timestamp().to_string(),
             ])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get git log: {}", e))?;
 
@@ -851,7 +856,7 @@ impl MemoryStore {
         // Temporarily checkout the target commit
         std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit for audit: {}", e))?;
 
@@ -861,7 +866,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(Path::new(&self.store_path).join("data"))
+            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch for audit: {}", e))?;
 
