@@ -122,7 +122,7 @@ impl MemoryValidator {
             if *trust_score < 0.5 {
                 issues.push(ValidationIssue {
                     severity: IssueSeverity::Warning,
-                    description: format!("Low trust source: {}", source),
+                    description: format!("Low trust source: {source}"),
                     source: source.to_string(),
                 });
             }

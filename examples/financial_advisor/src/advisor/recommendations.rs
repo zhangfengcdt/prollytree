@@ -8,6 +8,12 @@ use crate::validation::ValidationResult;
 
 pub struct RecommendationEngine;
 
+impl Default for RecommendationEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RecommendationEngine {
     pub fn new() -> Self {
         Self
@@ -56,8 +62,7 @@ impl RecommendationEngine {
             for source in sources {
                 if let Some((_, source_data)) = source
                     .as_array()
-                    .and_then(|arr| arr.get(1))
-                    .and_then(|data| Some((source, data)))
+                    .and_then(|arr| arr.get(1)).map(|data| (source, data))
                 {
                     if let Some(price) = source_data.get("price").and_then(|p| p.as_f64()) {
                         prices.push(price);
@@ -81,8 +86,7 @@ impl RecommendationEngine {
             for source in sources {
                 if let Some((_, source_data)) = source
                     .as_array()
-                    .and_then(|arr| arr.get(1))
-                    .and_then(|data| Some((source, data)))
+                    .and_then(|arr| arr.get(1)).map(|data| (source, data))
                 {
                     if let Some(pe_ratio) = source_data.get("pe_ratio").and_then(|p| p.as_f64()) {
                         ratios.push(pe_ratio);

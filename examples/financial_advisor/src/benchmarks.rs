@@ -3,7 +3,7 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::{Duration, Instant};
 
-pub async fn run_all_benchmarks(storage_path: &str, operations: usize) -> Result<()> {
+pub async fn run_all_benchmarks(_storage_path: &str, operations: usize) -> Result<()> {
     println!("{}", "⚡ Memory Consistency Benchmarks".yellow().bold());
     println!("{}", "═".repeat(40).dimmed());
     println!();

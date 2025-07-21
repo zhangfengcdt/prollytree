@@ -403,7 +403,7 @@ impl<'a> InteractiveSession<'a> {
                 println!();
                 println!("{}", "Recommendations:".yellow());
                 for rec in &alert.recommendations {
-                    println!("  • {}", rec);
+                    println!("  • {rec}");
                 }
 
                 println!();

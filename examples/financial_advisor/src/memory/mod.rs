@@ -2,8 +2,6 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use gluesql_core::prelude::{Glue, Payload};
 use prollytree::sql::ProllyStorage;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -149,7 +147,7 @@ impl MemoryStore {
                     memory.id,
                     self.extract_symbol(&memory.content)?,
                     memory.content.replace('\'', "''"),
-                    hex::encode(&memory.validation_hash),
+                    hex::encode(memory.validation_hash),
                     memory.sources.join(","),
                     memory.confidence,
                     memory.timestamp.timestamp()
@@ -171,7 +169,7 @@ impl MemoryStore {
                     rec.recommendation_type.as_str(),
                     rec.reasoning.replace('\'', "''"),
                     rec.confidence,
-                    hex::encode(&memory.validation_hash),
+                    hex::encode(memory.validation_hash),
                     rec.memory_version,
                     rec.timestamp.timestamp()
                 );
@@ -245,7 +243,7 @@ impl MemoryStore {
 
         if self.audit_enabled {
             self.log_audit(
-                &format!("Created branch: {}", name),
+                &format!("Created branch: {name}"),
                 MemoryType::System,
                 &branch_id,
             )
@@ -261,7 +259,7 @@ impl MemoryStore {
 
         if self.audit_enabled {
             self.log_audit(
-                &format!("Commit: {}", message),
+                &format!("Commit: {message}"),
                 MemoryType::System,
                 &version,
             )
@@ -275,7 +273,7 @@ impl MemoryStore {
         // In a real implementation, use git-prolly checkout
         if self.audit_enabled {
             self.log_audit(
-                &format!("Rollback to: {}", version),
+                &format!("Rollback to: {version}"),
                 MemoryType::System,
                 version,
             )
@@ -329,7 +327,7 @@ impl MemoryStore {
         let audit_entry = AuditEntry {
             id: Uuid::new_v4().to_string(),
             action: action.to_string(),
-            memory_type: format!("{:?}", memory_type),
+            memory_type: format!("{memory_type:?}"),
             memory_id: memory_id.to_string(),
             branch: self.current_branch.clone(),
             timestamp: Utc::now(),

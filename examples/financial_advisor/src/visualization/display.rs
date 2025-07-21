@@ -85,7 +85,7 @@ impl MemoryVisualizer {
             println!(
                 "{} {} {} {}",
                 time.dimmed(),
-                format!("[{}]", component).cyan(),
+                format!("[{component}]").cyan(),
                 "│".dimmed(),
                 event
             );

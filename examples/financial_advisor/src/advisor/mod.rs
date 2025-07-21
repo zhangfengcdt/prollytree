@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 // use rig_core::providers::openai::{Client, CompletionModel, OpenAI};
 // use rig_core::completion::Prompt;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::memory::{MemoryStore, MemoryType, ValidatedMemory};
@@ -93,7 +92,7 @@ impl FinancialAdvisor {
         client_profile: &ClientProfile,
     ) -> Result<Recommendation> {
         if self.verbose {
-            println!("🔍 Fetching market data for {}...", symbol);
+            println!("🔍 Fetching market data for {symbol}...");
         }
 
         // Step 1: Validate and store market data
@@ -174,8 +173,7 @@ impl FinancialAdvisor {
 
                 if self.verbose {
                     println!(
-                        "⚠️  Potential contradiction detected, created branch: {}",
-                        branch_id
+                        "⚠️  Potential contradiction detected, created branch: {branch_id}"
                     );
                 }
 
@@ -226,7 +224,7 @@ impl FinancialAdvisor {
             .await?;
 
         if self.verbose {
-            println!("✅ Recommendation stored at version: {}", version);
+            println!("✅ Recommendation stored at version: {version}");
         }
 
         Ok(())

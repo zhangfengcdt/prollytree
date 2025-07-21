@@ -244,7 +244,7 @@ async fn run_attack_simulation(
 
 async fn run_benchmarks(storage: &str, operations: usize) -> Result<()> {
     println!("{}", "⚡ Performance Benchmarks".yellow().bold());
-    println!("Running {} operations...", operations);
+    println!("Running {operations} operations...");
     println!();
 
     benchmarks::run_all_benchmarks(storage, operations).await?;
@@ -320,7 +320,7 @@ async fn run_compliance_audit(
     let advisor = FinancialAdvisor::new(storage, "").await?;
     let report = advisor.generate_compliance_report(from, to).await?;
 
-    println!("{}", report);
+    println!("{report}");
 
     Ok(())
 }

@@ -2,6 +2,12 @@ use anyhow::Result;
 
 pub struct MemoryConsistencyChecker;
 
+impl Default for MemoryConsistencyChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryConsistencyChecker {
     pub fn new() -> Self {
         Self

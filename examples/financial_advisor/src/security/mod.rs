@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 pub mod attack_simulator;
 
-pub use attack_simulator::AttackSimulator;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SecurityLevel {
@@ -37,6 +36,12 @@ pub struct SecurityMonitor {
     context_windows: HashMap<String, Vec<String>>, // session -> recent inputs
     max_context_size: usize,
     alert_threshold: f64,
+}
+
+impl Default for SecurityMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SecurityMonitor {
@@ -151,7 +156,7 @@ impl SecurityMonitor {
 
     pub fn detect_data_poisoning(&self, sources: &[String]) -> Option<SecurityAlert> {
         // Check for unusual source patterns
-        let trusted_sources = vec!["bloomberg", "yahoo_finance", "alpha_vantage"];
+        let trusted_sources = ["bloomberg", "yahoo_finance", "alpha_vantage"];
         let untrusted_count = sources
             .iter()
             .filter(|s| !trusted_sources.contains(&s.as_str()))
