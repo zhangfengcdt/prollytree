@@ -1,5 +1,6 @@
 use anyhow::Result;
 use gluesql_core::prelude::Glue;
+use gluesql_core::store::Transaction;
 use prollytree::sql::ProllyStorage;
 
 pub async fn setup_schema(glue: &mut Glue<ProllyStorage<32>>) -> Result<()> {
@@ -66,6 +67,9 @@ pub async fn setup_schema(glue: &mut Glue<ProllyStorage<32>>) -> Result<()> {
 
     // Note: Indexes are not supported by ProllyStorage yet
     // Future enhancement: implement index support in ProllyStorage
+
+    // commit the schema changes
+    glue.storage.commit().await?;
 
     Ok(())
 }

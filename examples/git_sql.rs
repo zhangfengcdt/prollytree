@@ -17,9 +17,9 @@ limitations under the License.
 //! This example shows how to use GlueSQL with ProllyTree as a custom storage backend
 //! to execute SQL queries on versioned key-value data.
 
+use gluesql_core::store::Transaction;
 #[cfg(feature = "sql")]
 use gluesql_core::{error::Result, executor::Payload, prelude::Glue};
-use gluesql_core::store::Transaction;
 #[cfg(feature = "sql")]
 use prollytree::sql::ProllyStorage;
 #[cfg(feature = "sql")]
@@ -85,7 +85,6 @@ async fn main() -> Result<()> {
     glue.execute(create_users).await?;
     glue.execute(create_orders).await?;
     println!("   ✓ Created users and orders tables\n");
-
 
     // 2. Insert data
     println!("2. Inserting sample data...");

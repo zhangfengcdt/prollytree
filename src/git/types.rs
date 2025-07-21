@@ -90,10 +90,7 @@ impl fmt::Display for CommitInfo {
         write!(
             f,
             "Commit {} by {} (timestamp: {})\nMessage: {}",
-            self.id,
-            self.author,
-            self.timestamp,
-            self.message
+            self.id, self.author, self.timestamp, self.message
         )
     }
 }

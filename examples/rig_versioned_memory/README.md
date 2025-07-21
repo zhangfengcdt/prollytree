@@ -148,7 +148,6 @@ cargo run -- --storage /path/to/your/storage
 ### Storage Structure
 The storage directory contains:
 - `.git/` - Git repository for version control
-- `.git-prolly/` - ProllyTree metadata and configuration
 - SQL database files with the following tables:
   - `short_term_memory`: Conversation history
   - `long_term_memory`: Learned facts and knowledge

@@ -4,8 +4,9 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use gluesql_core::prelude::{Glue, Payload};
+use gluesql_core::store::Transaction;
+use prollytree::git::{GitKvError, VersionedKvStore};
 use prollytree::sql::ProllyStorage;
-use prollytree::git::{VersionedKvStore, GitKvError};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -14,7 +15,10 @@ pub mod display;
 pub mod types;
 
 pub use consistency::MemoryConsistencyChecker;
-pub use types::{AuditEntry, MemoryType, ValidatedMemory, MemoryCommit, MemoryCommitDetails, MemorySnapshot, MemoryComparison};
+pub use types::{
+    AuditEntry, MemoryCommit, MemoryCommitDetails, MemoryComparison, MemorySnapshot, MemoryType,
+    ValidatedMemory,
+};
 
 /// Core memory store with versioning capabilities
 pub struct MemoryStore {
@@ -50,7 +54,7 @@ impl MemoryStore {
                 .map_err(|e| anyhow::anyhow!("Failed to initialize git repo: {}", e))?;
         }
 
-        // Initialize VersionedKvStore in dataset subdirectory  
+        // Initialize VersionedKvStore in dataset subdirectory
         // Check if prolly tree config exists to determine if we should init or open
         let versioned_store = if dataset_dir.join("prolly_config_tree_config").exists() {
             VersionedKvStore::<32>::open(&dataset_dir)
@@ -78,7 +82,9 @@ impl MemoryStore {
     }
 
     async fn init_schema(glue: &mut Glue<ProllyStorage<32>>) -> Result<()> {
-        Self::ensure_table_exists(glue, "market_data", 
+        Self::ensure_table_exists(
+            glue,
+            "market_data",
             r#"CREATE TABLE market_data (
                 id TEXT PRIMARY KEY,
                 symbol TEXT,
@@ -87,9 +93,13 @@ impl MemoryStore {
                 sources TEXT,
                 confidence FLOAT,
                 timestamp INTEGER
-            )"#).await?;
-        
-        Self::ensure_table_exists(glue, "recommendations", 
+            )"#,
+        )
+        .await?;
+
+        Self::ensure_table_exists(
+            glue,
+            "recommendations",
             r#"CREATE TABLE recommendations (
                 id TEXT PRIMARY KEY,
                 client_id TEXT,
@@ -100,9 +110,13 @@ impl MemoryStore {
                 validation_hash TEXT,
                 memory_version TEXT,
                 timestamp INTEGER
-            )"#).await?;
-            
-        Self::ensure_table_exists(glue, "audit_log", 
+            )"#,
+        )
+        .await?;
+
+        Self::ensure_table_exists(
+            glue,
+            "audit_log",
             r#"CREATE TABLE audit_log (
                 id TEXT PRIMARY KEY,
                 action TEXT,
@@ -111,30 +125,37 @@ impl MemoryStore {
                 branch TEXT,
                 timestamp INTEGER,
                 details TEXT
-            )"#).await?;
-            
-        Self::ensure_table_exists(glue, "cross_references", 
+            )"#,
+        )
+        .await?;
+
+        Self::ensure_table_exists(
+            glue,
+            "cross_references",
             r#"CREATE TABLE cross_references (
                 source_id TEXT,
                 target_id TEXT,
                 reference_type TEXT,
                 confidence FLOAT,
                 PRIMARY KEY (source_id, target_id)
-            )"#).await?;
+            )"#,
+        )
+        .await?;
 
         Ok(())
     }
 
     async fn ensure_table_exists(
-        glue: &mut Glue<ProllyStorage<32>>, 
-        table_name: &str, 
-        create_sql: &str
+        glue: &mut Glue<ProllyStorage<32>>,
+        table_name: &str,
+        create_sql: &str,
     ) -> Result<()> {
         // Try a simple query to check if table exists
-        let check_sql = format!("SELECT COUNT(*) FROM {}", table_name);
+        let check_sql = format!("SELECT COUNT(*) FROM {table_name}");
         if glue.execute(&check_sql).await.is_err() {
             // Table doesn't exist, create it
             glue.execute(create_sql).await?;
+            glue.storage.commit().await?;
         }
         Ok(())
     }
@@ -151,7 +172,7 @@ impl MemoryStore {
             ProllyStorage::<32>::init(&path)?
         };
         let mut glue = Glue::new(storage);
-        
+
         // Ensure schema exists (this should be safe to run multiple times)
         Self::init_schema(&mut glue).await?;
 
@@ -170,6 +191,7 @@ impl MemoryStore {
                     memory.timestamp.timestamp()
                 );
                 glue.execute(&sql).await?;
+                glue.storage.commit().await?;
             }
 
             MemoryType::Recommendation => {
@@ -191,6 +213,7 @@ impl MemoryStore {
                     rec.timestamp.timestamp()
                 );
                 glue.execute(&sql).await?;
+                glue.storage.commit().await?;
             }
 
             _ => {}
@@ -204,7 +227,7 @@ impl MemoryStore {
                 memory.id, reference
             );
             let _ = glue.execute(&delete_sql).await; // Ignore if record doesn't exist
-            
+
             let sql = format!(
                 r#"INSERT INTO cross_references 
                 (source_id, target_id, reference_type, confidence)
@@ -212,6 +235,7 @@ impl MemoryStore {
                 memory.id, reference, memory.confidence
             );
             glue.execute(&sql).await?;
+            glue.storage.commit().await?;
         }
 
         // Create version
@@ -247,7 +271,7 @@ impl MemoryStore {
             ProllyStorage::<32>::init(&path)?
         };
         let mut glue = Glue::new(storage);
-        
+
         // Ensure schema exists
         Self::init_schema(&mut glue).await?;
 
@@ -269,16 +293,13 @@ impl MemoryStore {
 
     pub async fn create_branch(&mut self, name: &str) -> Result<String> {
         // Use real git-prolly branch creation
-        self.versioned_store.create_branch(name)
+        self.versioned_store
+            .create_branch(name)
             .map_err(|e| anyhow::anyhow!("Failed to create branch '{}': {:?}", name, e))?;
 
         if self.audit_enabled {
-            self.log_audit(
-                &format!("Created branch: {name}"),
-                MemoryType::System,
-                name,
-            )
-            .await?;
+            self.log_audit(&format!("Created branch: {name}"), MemoryType::System, name)
+                .await?;
         }
 
         Ok(name.to_string())
@@ -286,14 +307,20 @@ impl MemoryStore {
 
     pub async fn commit(&mut self, message: &str) -> Result<String> {
         // Use real git-prolly commit
-        let commit_id = self.versioned_store.commit(message)
+        let commit_id = self
+            .versioned_store
+            .commit(message)
             .map_err(|e| anyhow::anyhow!("Failed to commit: {:?}", e))?;
-        
+
         let commit_hex = commit_id.to_hex().to_string();
 
         if self.audit_enabled {
-            self.log_audit(&format!("Commit: {message}"), MemoryType::System, &commit_hex)
-                .await?;
+            self.log_audit(
+                &format!("Commit: {message}"),
+                MemoryType::System,
+                &commit_hex,
+            )
+            .await?;
         }
 
         Ok(commit_hex)
@@ -301,7 +328,8 @@ impl MemoryStore {
 
     pub async fn rollback(&mut self, version: &str) -> Result<()> {
         // Use real git-prolly checkout
-        self.versioned_store.checkout(version)
+        self.versioned_store
+            .checkout(version)
             .map_err(|e| anyhow::anyhow!("Failed to rollback to '{}': {:?}", version, e))?;
 
         if self.audit_enabled {
@@ -364,7 +392,7 @@ impl MemoryStore {
             ProllyStorage::<32>::init(&path)?
         };
         let mut glue = Glue::new(storage);
-        
+
         // Ensure schema exists
         Self::init_schema(&mut glue).await?;
 
@@ -395,6 +423,7 @@ impl MemoryStore {
         );
 
         glue.execute(&sql).await?;
+        glue.storage.commit().await?;
         Ok(())
     }
 
@@ -402,7 +431,11 @@ impl MemoryStore {
         // Create a real git commit
         match self.versioned_store.commit(message) {
             Ok(commit_id) => commit_id.to_hex().to_string(),
-            Err(_) => format!("v-{}-{}", Utc::now().timestamp(), &message[..8.min(message.len())]),
+            Err(_) => format!(
+                "v-{}-{}",
+                Utc::now().timestamp(),
+                &message[..8.min(message.len())]
+            ),
         }
     }
 
@@ -413,7 +446,8 @@ impl MemoryStore {
 
     /// List all branches
     pub fn list_branches(&self) -> Result<Vec<String>> {
-        self.versioned_store.list_branches()
+        self.versioned_store
+            .list_branches()
             .map_err(|e| anyhow::anyhow!("Failed to list branches: {:?}", e))
     }
 
@@ -424,17 +458,19 @@ impl MemoryStore {
 
     /// Checkout branch or commit
     pub async fn checkout(&mut self, branch_or_commit: &str) -> Result<()> {
-        self.versioned_store.checkout(branch_or_commit)
+        self.versioned_store
+            .checkout(branch_or_commit)
             .map_err(|e| anyhow::anyhow!("Failed to checkout '{}': {:?}", branch_or_commit, e))?;
-        
+
         if self.audit_enabled {
             self.log_audit(
                 &format!("Checked out: {branch_or_commit}"),
                 MemoryType::System,
                 branch_or_commit,
-            ).await?;
+            )
+            .await?;
         }
-        
+
         Ok(())
     }
 
@@ -447,37 +483,39 @@ impl MemoryStore {
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get git log: {}", e))?;
-            
+
         let log_str = String::from_utf8_lossy(&log_output.stdout);
         let mut commits = Vec::new();
-        
+
         for (index, line) in log_str.lines().enumerate() {
             if let Some(limit) = limit {
                 if index >= limit {
                     break;
                 }
             }
-            
+
             let parts: Vec<&str> = line.split('|').collect();
             if parts.len() >= 3 {
                 let commit = MemoryCommit {
                     hash: parts[0].to_string(),
                     message: parts[1].to_string(),
-                    timestamp: DateTime::from_timestamp(parts[2].parse().unwrap_or(0), 0).unwrap_or_else(Utc::now),
+                    timestamp: DateTime::from_timestamp(parts[2].parse().unwrap_or(0), 0)
+                        .unwrap_or_else(Utc::now),
                     memory_type: self.parse_memory_type_from_message(parts[1]),
                 };
                 commits.push(commit);
             }
         }
-        
+
         if self.audit_enabled {
             self.log_audit(
                 "Retrieved memory history",
                 MemoryType::System,
                 &format!("limit_{}", limit.unwrap_or(10)),
-            ).await?;
+            )
+            .await?;
         }
-        
+
         Ok(commits)
     }
 
@@ -486,26 +524,27 @@ impl MemoryStore {
         // Simplified merge implementation - just checkout the other branch
         // This follows the rig_versioned_memory pattern of simple branch switching
         let current_branch = self.current_branch().to_string();
-        
+
         // Switch to target branch
         self.checkout(branch).await?;
         let _target_commit = self.get_current_commit_id().await?;
-        
-        // Switch back to original branch  
+
+        // Switch back to original branch
         self.checkout(&current_branch).await?;
-        
+
         // For now, just create a merge commit message
         let merge_message = format!("Merge branch '{branch}' into '{current_branch}'");
         let merge_commit = self.commit(&merge_message).await?;
-        
+
         if self.audit_enabled {
             self.log_audit(
                 &format!("Merged branch: {branch} -> {current_branch}"),
                 MemoryType::System,
                 branch,
-            ).await?;
+            )
+            .await?;
         }
-        
+
         Ok(merge_commit)
     }
 
@@ -517,21 +556,22 @@ impl MemoryStore {
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to show commit '{}': {}", commit, e))?;
-            
+
         let show_str = String::from_utf8_lossy(&show_output.stdout);
         let lines: Vec<&str> = show_str.lines().collect();
-        
+
         if lines.is_empty() {
             return Err(anyhow::anyhow!("Commit not found: {}", commit));
         }
-        
+
         // Parse first line with commit info
         let parts: Vec<&str> = lines[0].split('|').collect();
         let details = if parts.len() >= 4 {
             MemoryCommitDetails {
                 hash: parts[0].to_string(),
                 message: parts[1].to_string(),
-                timestamp: DateTime::from_timestamp(parts[2].parse().unwrap_or(0), 0).unwrap_or_else(Utc::now),
+                timestamp: DateTime::from_timestamp(parts[2].parse().unwrap_or(0), 0)
+                    .unwrap_or_else(Utc::now),
                 author: parts[3].to_string(),
                 changed_files: lines[2..].iter().map(|s| s.to_string()).collect(),
                 memory_impact: format!("Modified {} files", lines.len().saturating_sub(2)),
@@ -546,15 +586,16 @@ impl MemoryStore {
                 memory_impact: "Unknown changes".to_string(),
             }
         };
-        
+
         if self.audit_enabled {
             self.log_audit(
                 &format!("Viewed commit: {commit}"),
                 MemoryType::System,
                 commit,
-            ).await?;
+            )
+            .await?;
         }
-        
+
         Ok(details)
     }
 
@@ -566,24 +607,25 @@ impl MemoryStore {
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to reset to commit '{}': {}", commit, e))?;
-            
+
         if !reset_output.status.success() {
             let error = String::from_utf8_lossy(&reset_output.stderr);
             return Err(anyhow::anyhow!("Git reset failed: {}", error));
         }
-        
+
         // Create a new commit to document this revert
         let revert_message = format!("Revert to commit {commit}");
         let new_commit = self.commit(&revert_message).await?;
-        
+
         if self.audit_enabled {
             self.log_audit(
                 &format!("Reverted to commit: {commit}"),
                 MemoryType::System,
                 &new_commit,
-            ).await?;
+            )
+            .await?;
         }
-        
+
         Ok(new_commit)
     }
 
@@ -594,11 +636,11 @@ impl MemoryStore {
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get commit ID: {}", e))?;
-            
+
         if !output.status.success() {
             return Err(anyhow::anyhow!("Failed to get current commit"));
         }
-        
+
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
@@ -618,23 +660,26 @@ impl MemoryStore {
     }
 
     /// Get recommendations at a specific commit/time (temporal query)
-    pub async fn get_recommendations_at_commit(&self, commit: &str) -> Result<Vec<ValidatedMemory>> {
+    pub async fn get_recommendations_at_commit(
+        &self,
+        commit: &str,
+    ) -> Result<Vec<ValidatedMemory>> {
         // Save current state
         let _current_commit = self.get_current_commit_id().await?;
         let current_branch = self.current_branch().to_string();
-        
+
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
             .args(["checkout", commit])
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit '{}': {}", commit, e))?;
-            
+
         if !checkout_output.status.success() {
             let error = String::from_utf8_lossy(&checkout_output.stderr);
             return Err(anyhow::anyhow!("Git checkout failed: {}", error));
         }
-        
+
         // Query recommendations from this point in time
         let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = if path.join("prolly_config_tree_config").exists() {
@@ -643,48 +688,53 @@ impl MemoryStore {
             ProllyStorage::<32>::init(&path)?
         };
         let mut glue = Glue::new(storage);
-        
+
         let sql = "SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp FROM recommendations ORDER BY timestamp DESC";
         let results = glue.execute(sql).await?;
-        
+
         let recommendations = self.parse_recommendation_results(results)?;
-        
+
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
-        
+
         if self.audit_enabled {
             self.log_audit(
                 &format!("Temporal query: recommendations at commit {commit}"),
                 MemoryType::Recommendation,
                 commit,
-            ).await?;
+            )
+            .await?;
         }
-        
+
         Ok(recommendations)
     }
 
     /// Get market data at a specific commit/time (temporal query)
-    pub async fn get_market_data_at_commit(&self, commit: &str, symbol: Option<&str>) -> Result<Vec<ValidatedMemory>> {
+    pub async fn get_market_data_at_commit(
+        &self,
+        commit: &str,
+        symbol: Option<&str>,
+    ) -> Result<Vec<ValidatedMemory>> {
         // Save current state
         let _current_commit = self.get_current_commit_id().await?;
         let current_branch = self.current_branch().to_string();
-        
+
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
             .args(["checkout", commit])
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit '{}': {}", commit, e))?;
-            
+
         if !checkout_output.status.success() {
             let error = String::from_utf8_lossy(&checkout_output.stderr);
             return Err(anyhow::anyhow!("Git checkout failed: {}", error));
         }
-        
+
         // Query market data from this point in time
         let path = Path::new(&self.store_path).join("data").join("dataset");
         let storage = if path.join("prolly_config_tree_config").exists() {
@@ -693,23 +743,23 @@ impl MemoryStore {
             ProllyStorage::<32>::init(&path)?
         };
         let mut glue = Glue::new(storage);
-        
+
         let sql = if let Some(symbol) = symbol {
             format!("SELECT id, symbol, content, validation_hash, sources, confidence, timestamp FROM market_data WHERE symbol = '{symbol}' ORDER BY timestamp DESC")
         } else {
             "SELECT id, symbol, content, validation_hash, sources, confidence, timestamp FROM market_data ORDER BY timestamp DESC".to_string()
         };
-        
+
         let results = glue.execute(&sql).await?;
         let market_data = self.parse_memory_results(results)?;
-        
+
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
-        
+
         if self.audit_enabled {
             let query_desc = if let Some(symbol) = symbol {
                 format!("market data for {symbol} at commit {commit}")
@@ -720,24 +770,37 @@ impl MemoryStore {
                 &format!("Temporal query: {query_desc}"),
                 MemoryType::MarketData,
                 commit,
-            ).await?;
+            )
+            .await?;
         }
-        
+
         Ok(market_data)
     }
 
     /// Get memory state at a specific date/time
-    pub async fn get_memory_state_at_time(&self, target_time: DateTime<Utc>) -> Result<MemorySnapshot> {
+    pub async fn get_memory_state_at_time(
+        &self,
+        target_time: DateTime<Utc>,
+    ) -> Result<MemorySnapshot> {
         // Find the commit closest to the target time
         let commit_hash = self.find_commit_at_time(target_time).await?;
-        
+
         // Get all memory types at that commit
-        let recommendations = self.get_recommendations_at_commit(&commit_hash).await.unwrap_or_default();
-        let market_data = self.get_market_data_at_commit(&commit_hash, None).await.unwrap_or_default();
-        let audit_trail = self.get_audit_trail_at_commit(&commit_hash).await.unwrap_or_default();
-        
+        let recommendations = self
+            .get_recommendations_at_commit(&commit_hash)
+            .await
+            .unwrap_or_default();
+        let market_data = self
+            .get_market_data_at_commit(&commit_hash, None)
+            .await
+            .unwrap_or_default();
+        let audit_trail = self
+            .get_audit_trail_at_commit(&commit_hash)
+            .await
+            .unwrap_or_default();
+
         let total_memories = recommendations.len() + market_data.len();
-        
+
         Ok(MemorySnapshot {
             commit_hash: commit_hash.clone(),
             timestamp: target_time,
@@ -751,18 +814,26 @@ impl MemoryStore {
     /// Find commit hash closest to a specific time
     async fn find_commit_at_time(&self, target_time: DateTime<Utc>) -> Result<String> {
         let log_output = std::process::Command::new("git")
-            .args(["log", "--format=%H|%at", "--until", &target_time.timestamp().to_string()])
+            .args([
+                "log",
+                "--format=%H|%at",
+                "--until",
+                &target_time.timestamp().to_string(),
+            ])
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get git log: {}", e))?;
-            
+
         let log_str = String::from_utf8_lossy(&log_output.stdout);
         let lines: Vec<&str> = log_str.lines().collect();
-        
+
         if lines.is_empty() {
-            return Err(anyhow::anyhow!("No commits found before time {}", target_time));
+            return Err(anyhow::anyhow!(
+                "No commits found before time {}",
+                target_time
+            ));
         }
-        
+
         // Return the most recent commit before the target time
         let parts: Vec<&str> = lines[0].split('|').collect();
         if !parts.is_empty() {
@@ -776,37 +847,43 @@ impl MemoryStore {
     async fn get_audit_trail_at_commit(&self, commit: &str) -> Result<Vec<AuditEntry>> {
         // Save current state
         let current_branch = self.current_branch().to_string();
-        
+
         // Temporarily checkout the target commit
         std::process::Command::new("git")
             .args(["checkout", commit])
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit for audit: {}", e))?;
-        
+
         // Query audit trail from this point in time
         let audit_entries = self.get_audit_trail(None, None).await.unwrap_or_default();
-        
+
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
             .current_dir(Path::new(&self.store_path).join("data"))
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch for audit: {}", e))?;
-        
+
         Ok(audit_entries)
     }
 
     /// Compare memory states between two time points
-    pub async fn compare_memory_states(&self, from_time: DateTime<Utc>, to_time: DateTime<Utc>) -> Result<MemoryComparison> {
+    pub async fn compare_memory_states(
+        &self,
+        from_time: DateTime<Utc>,
+        to_time: DateTime<Utc>,
+    ) -> Result<MemoryComparison> {
         let from_snapshot = self.get_memory_state_at_time(from_time).await?;
         let to_snapshot = self.get_memory_state_at_time(to_time).await?;
-        
+
         // Simple comparison - count differences
-        let recommendation_diff = to_snapshot.recommendations.len() as i64 - from_snapshot.recommendations.len() as i64;
-        let market_data_diff = to_snapshot.market_data.len() as i64 - from_snapshot.market_data.len() as i64;
+        let recommendation_diff =
+            to_snapshot.recommendations.len() as i64 - from_snapshot.recommendations.len() as i64;
+        let market_data_diff =
+            to_snapshot.market_data.len() as i64 - from_snapshot.market_data.len() as i64;
         let total_diff = to_snapshot.total_memories as i64 - from_snapshot.total_memories as i64;
-        
+
         Ok(MemoryComparison {
             from_commit: from_snapshot.commit_hash,
             to_commit: to_snapshot.commit_hash,
@@ -815,10 +892,12 @@ impl MemoryStore {
             recommendation_changes: recommendation_diff,
             market_data_changes: market_data_diff,
             total_memory_change: total_diff,
-            summary: format!("Memory changed by {} entries between {} and {}", 
-                           total_diff, 
-                           from_time.format("%Y-%m-%d %H:%M"), 
-                           to_time.format("%Y-%m-%d %H:%M")),
+            summary: format!(
+                "Memory changed by {} entries between {} and {}",
+                total_diff,
+                from_time.format("%Y-%m-%d %H:%M"),
+                to_time.format("%Y-%m-%d %H:%M")
+            ),
         })
     }
 
@@ -836,7 +915,7 @@ impl MemoryStore {
     fn parse_recommendation_results(&self, results: Vec<Payload>) -> Result<Vec<ValidatedMemory>> {
         use gluesql_core::data::Value;
         let mut recommendations = Vec::new();
-        
+
         for payload in results {
             if let Payload::Select { labels: _, rows } = payload {
                 for row in rows {
@@ -846,17 +925,17 @@ impl MemoryStore {
                             Value::Str(s) => s.clone(),
                             _ => continue,
                         };
-                        
+
                         let client_id = match &row[1] {
                             Value::Str(s) => s.clone(),
                             _ => continue,
                         };
-                        
+
                         let symbol = match &row[2] {
                             Value::Str(s) => s.clone(),
                             _ => continue,
                         };
-                        
+
                         // Create content from recommendation fields
                         let content = serde_json::json!({
                             "id": id,
@@ -866,8 +945,9 @@ impl MemoryStore {
                             "reasoning": row[4],
                             "confidence": row[5],
                             "memory_version": row[7]
-                        }).to_string();
-                        
+                        })
+                        .to_string();
+
                         let memory = ValidatedMemory {
                             id,
                             content,
@@ -891,16 +971,15 @@ impl MemoryStore {
                             },
                             cross_references: vec![],
                         };
-                        
+
                         recommendations.push(memory);
                     }
                 }
             }
         }
-        
+
         Ok(recommendations)
     }
-
 
     fn parse_memory_results(&self, results: Vec<Payload>) -> Result<Vec<ValidatedMemory>> {
         use gluesql_core::data::Value;

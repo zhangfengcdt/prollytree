@@ -195,7 +195,7 @@ impl<'a> InteractiveSession<'a> {
     fn show_help(&self) {
         println!("{}", "📚 Help - Financial Advisory AI".blue().bold());
         println!();
-        
+
         // Show available commands first
         println!("{}", "Available commands:".yellow());
         println!(
@@ -216,7 +216,7 @@ impl<'a> InteractiveSession<'a> {
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
-        
+
         println!("{}", "Core Features:".yellow());
         println!(
             "• {} - Provides validated investment recommendations",

@@ -3,7 +3,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 // OpenAI integration for AI-powered recommendations
-use reqwest;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -81,10 +80,10 @@ impl FinancialAdvisor {
         let validator = MemoryValidator::default();
         let security_monitor = SecurityMonitor::new();
         let recommendation_engine = RecommendationEngine::new();
-        
+
         // Initialize OpenAI client
         let openai_client = reqwest::Client::new();
-        
+
         Ok(Self {
             memory_store,
             validator,
@@ -358,12 +357,17 @@ impl FinancialAdvisor {
                     .and_then(|message| message.get("content"))
                     .and_then(|content| content.as_str())
                     .unwrap_or("AI analysis unavailable at this time.");
-                    
+
                 Ok(content.to_string())
             }
             _ => {
                 // Fallback to rule-based reasoning if OpenAI fails
-                Ok(self.generate_fallback_reasoning(symbol, recommendation_type, market_data, client))
+                Ok(self.generate_fallback_reasoning(
+                    symbol,
+                    recommendation_type,
+                    market_data,
+                    client,
+                ))
             }
         }
     }
@@ -418,14 +422,17 @@ impl FinancialAdvisor {
     // Simulated data fetching methods with realistic stock data
     async fn fetch_bloomberg_data(&self, symbol: &str) -> Result<serde_json::Value> {
         // Simulate network latency for Bloomberg API (known to be fast)
-        tokio::time::sleep(tokio::time::Duration::from_millis(50 + (symbol.len() % 3) as u64 * 10)).await;
-        
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            50 + (symbol.len() % 3) as u64 * 10,
+        ))
+        .await;
+
         let stock_data = self.get_realistic_stock_data(symbol);
-        
+
         // Add slight Bloomberg-specific variance (Bloomberg tends to be slightly lower)
         let price_variance = 0.98 + (symbol.len() % 5) as f64 * 0.01;
         let adjusted_price = stock_data.price * price_variance;
-        
+
         Ok(serde_json::json!({
             "symbol": symbol,
             "price": (adjusted_price * 100.0).round() / 100.0,
@@ -440,14 +447,17 @@ impl FinancialAdvisor {
 
     async fn fetch_yahoo_data(&self, symbol: &str) -> Result<serde_json::Value> {
         // Simulate network latency for Yahoo Finance API (free tier, slower)
-        tokio::time::sleep(tokio::time::Duration::from_millis(120 + (symbol.len() % 4) as u64 * 15)).await;
-        
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            120 + (symbol.len() % 4) as u64 * 15,
+        ))
+        .await;
+
         let stock_data = self.get_realistic_stock_data(symbol);
-        
+
         // Add slight Yahoo-specific variance (Yahoo tends to be slightly higher)
         let price_variance = 1.01 + (symbol.len() % 3) as f64 * 0.005;
         let adjusted_price = stock_data.price * price_variance;
-        
+
         Ok(serde_json::json!({
             "symbol": symbol,
             "price": (adjusted_price * 100.0).round() / 100.0,
@@ -462,14 +472,17 @@ impl FinancialAdvisor {
 
     async fn fetch_alpha_vantage_data(&self, symbol: &str) -> Result<serde_json::Value> {
         // Simulate network latency for Alpha Vantage API (rate limited)
-        tokio::time::sleep(tokio::time::Duration::from_millis(200 + (symbol.len() % 6) as u64 * 20)).await;
-        
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            200 + (symbol.len() % 6) as u64 * 20,
+        ))
+        .await;
+
         let stock_data = self.get_realistic_stock_data(symbol);
-        
+
         // Add slight Alpha Vantage-specific variance (most accurate, minimal variance)
         let price_variance = 0.995 + (symbol.len() % 7) as f64 * 0.003;
         let adjusted_price = stock_data.price * price_variance;
-        
+
         Ok(serde_json::json!({
             "symbol": symbol,
             "price": (adjusted_price * 100.0).round() / 100.0,
