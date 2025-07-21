@@ -2,8 +2,9 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum MemoryType {
     MarketData,
     Recommendation,
@@ -61,4 +62,48 @@ pub struct MemoryVersion {
     pub timestamp: DateTime<Utc>,
     pub message: String,
     pub author: String,
+}
+
+/// Memory commit information following rig_versioned_memory pattern
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryCommit {
+    pub hash: String,
+    pub message: String,
+    pub timestamp: DateTime<Utc>,
+    pub memory_type: MemoryType,
+}
+
+/// Detailed commit information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryCommitDetails {
+    pub hash: String,
+    pub message: String,
+    pub timestamp: DateTime<Utc>,
+    pub author: String,
+    pub changed_files: Vec<String>,
+    pub memory_impact: String,
+}
+
+/// Memory snapshot at a specific point in time
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySnapshot {
+    pub commit_hash: String,
+    pub timestamp: DateTime<Utc>,
+    pub recommendations: Vec<ValidatedMemory>,
+    pub market_data: Vec<ValidatedMemory>,
+    pub audit_entries: Vec<AuditEntry>,
+    pub total_memories: usize,
+}
+
+/// Comparison between two memory states
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryComparison {
+    pub from_commit: String,
+    pub to_commit: String,
+    pub from_time: DateTime<Utc>,
+    pub to_time: DateTime<Utc>,
+    pub recommendation_changes: i64,
+    pub market_data_changes: i64,
+    pub total_memory_change: i64,
+    pub summary: String,
 }

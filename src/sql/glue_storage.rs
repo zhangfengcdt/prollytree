@@ -110,7 +110,7 @@ impl<const D: usize> Store for ProllyStorage<D> {
 
         for storage_key in all_keys {
             if storage_key.ends_with(b":__schema__") {
-                if let Some(schema_data) = self.store.get(&storage_key) {
+                if let Some(schema_data) = self.store.get(&storage_key){
                     let schema: Schema = serde_json::from_slice(&schema_data).map_err(|e| {
                         Error::StorageMsg(format!("Failed to deserialize schema: {e}"))
                     })?;
@@ -126,7 +126,7 @@ impl<const D: usize> Store for ProllyStorage<D> {
     async fn fetch_schema(&self, table_name: &str) -> Result<Option<Schema>> {
         let key = Self::schema_key(table_name);
 
-        if let Some(schema_data) = self.store.get(&key) {
+        if let Some(schema_data) = self.store.get(&key){
             let schema: Schema = serde_json::from_slice(&schema_data)
                 .map_err(|e| Error::StorageMsg(format!("Failed to deserialize schema: {e}")))?;
             Ok(Some(schema))
@@ -138,7 +138,7 @@ impl<const D: usize> Store for ProllyStorage<D> {
     async fn fetch_data(&self, table_name: &str, key: &Key) -> Result<Option<DataRow>> {
         let storage_key = Self::make_storage_key(table_name, key);
 
-        if let Some(row_data) = self.store.get(&storage_key) {
+        if let Some(row_data) = self.store.get(&storage_key){
             let row: DataRow = serde_json::from_slice(&row_data)
                 .map_err(|e| Error::StorageMsg(format!("Failed to deserialize row: {e}")))?;
             Ok(Some(row))
@@ -163,7 +163,7 @@ impl<const D: usize> Store for ProllyStorage<D> {
                     continue;
                 }
 
-                if let Some(row_data) = self.store.get(&storage_key) {
+                if let Some(row_data) = self.store.get(&storage_key){
                     let row: DataRow = serde_json::from_slice(&row_data).map_err(|e| {
                         Error::StorageMsg(format!("Failed to deserialize row: {e}"))
                     })?;
