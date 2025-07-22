@@ -149,7 +149,7 @@ impl FinancialAdvisor {
 
         // Step 5: Store recommendation with audit trail
         self.store_recommendation(&recommendation).await?;
-        
+
         // Keep in session memory for quick access
         self.session_recommendations.push(recommendation.clone());
 
@@ -269,8 +269,14 @@ impl FinancialAdvisor {
         self.memory_store.get_recent_recommendations(limit).await
     }
 
-    pub async fn get_recommendations_at_commit(&self, commit: &str, limit: usize) -> Result<Vec<Recommendation>> {
-        self.memory_store.get_recommendations(None, Some(commit), Some(limit)).await
+    pub async fn get_recommendations_at_commit(
+        &self,
+        commit: &str,
+        limit: usize,
+    ) -> Result<Vec<Recommendation>> {
+        self.memory_store
+            .get_recommendations(None, Some(commit), Some(limit))
+            .await
     }
 
     pub async fn get_memory_status(&self) -> Result<crate::memory::MemoryStatus> {

@@ -52,8 +52,9 @@ impl<const D: usize> ProllyStorage<D> {
     pub fn init(path: &std::path::Path) -> Result<Self> {
         let dir = path.to_path_buf();
         let dir_string = dir.to_string_lossy().to_string();
-        let store = VersionedKvStore::init(path)
-            .map_err(|e| Error::StorageMsg(format!("Failed to initialize store: {e} from {dir_string}")))?;
+        let store = VersionedKvStore::init(path).map_err(|e| {
+            Error::StorageMsg(format!("Failed to initialize store: {e} from {dir_string}"))
+        })?;
         Ok(Self::new(store))
     }
 
@@ -98,7 +99,7 @@ impl<const D: usize> ProllyStorage<D> {
             Key::Str(key_part.to_string())
         }
     }
-    
+
     /// Commit with a custom message
     pub async fn commit_with_message(&mut self, message: &str) -> Result<()> {
         // Commit changes to the git repository with custom message

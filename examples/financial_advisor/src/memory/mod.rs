@@ -1,13 +1,13 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-use std::any::Any;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use gluesql_core::prelude::{Glue, Payload};
 use gluesql_core::store::Transaction;
 use prollytree::git::{GitKvError, VersionedKvStore};
 use prollytree::sql::ProllyStorage;
+use std::any::Any;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -15,12 +15,12 @@ pub mod consistency;
 pub mod display;
 pub mod types;
 
+use crate::memory::MemoryType::Recommendation;
 pub use consistency::MemoryConsistencyChecker;
 pub use types::{
-    AuditEntry, MemoryCommit, MemoryCommitDetails, MemoryComparison, MemorySnapshot, MemoryStatus, 
+    AuditEntry, MemoryCommit, MemoryCommitDetails, MemoryComparison, MemorySnapshot, MemoryStatus,
     MemoryType, SourceStatus, ValidatedMemory, ValidationSource,
 };
-use crate::memory::MemoryType::Recommendation;
 
 const PROLLY_CONFIG_FILE: &str = "prolly_config_tree_config";
 
@@ -164,7 +164,9 @@ impl MemoryStore {
         if glue.execute(&check_sql).await.is_err() {
             // Table doesn't exist, create it
             glue.execute(create_sql).await?;
-            glue.storage.commit_with_message(&format!("Create table: {}", table_name)).await?;
+            glue.storage
+                .commit_with_message(&format!("Create table: {}", table_name))
+                .await?;
         }
         Ok(())
     }
@@ -185,7 +187,8 @@ impl MemoryStore {
         // Try to parse content as JSON to determine memory type
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&memory.content) {
             // Try to store as recommendation first
-            if let Ok(rec) = serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
+            if let Ok(rec) = serde_json::from_str::<crate::advisor::Recommendation>(&memory.content)
+            {
                 let sql = format!(
                     r#"INSERT INTO recommendations
                 (id, client_id, symbol, recommendation_type, reasoning, confidence,
@@ -204,7 +207,9 @@ impl MemoryStore {
                 glue.execute(&sql).await?;
             }
             // Try to store as client profile
-            else if let Ok(_profile) = serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content) {
+            else if let Ok(_profile) =
+                serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content)
+            {
                 let sql = format!(
                     r#"INSERT INTO client_profiles
                 (id, content, timestamp, validation_hash, sources, confidence)
@@ -220,7 +225,8 @@ impl MemoryStore {
             }
             // Default to market data if it has a symbol field or fallback
             else {
-                let symbol = json_value.get("symbol")
+                let symbol = json_value
+                    .get("symbol")
                     .and_then(|s| s.as_str())
                     .unwrap_or("UNKNOWN");
 
@@ -273,7 +279,9 @@ impl MemoryStore {
         }
 
         let version = memory.clone().id;
-        glue.storage.commit_with_message(&format!("Store memory: {}", memory.id)).await?;
+        glue.storage
+            .commit_with_message(&format!("Store memory: {}", memory.id))
+            .await?;
 
         Ok(version)
     }
@@ -446,7 +454,9 @@ impl MemoryStore {
         );
 
         glue.execute(&sql).await?;
-        glue.storage.commit_with_message(&format!("Commit Audit log: {}", action)).await?;
+        glue.storage
+            .commit_with_message(&format!("Commit Audit log: {}", action))
+            .await?;
         Ok(())
     }
 
@@ -501,18 +511,15 @@ impl MemoryStore {
     pub async fn get_memory_history(&self, limit: Option<usize>) -> Result<Vec<MemoryCommit>> {
         // The git repository is in the parent directory (data), not dataset
         let git_dir = Path::new(&self.store_path);
-        
+
         // First, check if git repository exists
         if !git_dir.join(".git").exists() {
             return Ok(vec![]); // Return empty history if no git repo
         }
 
         // Build git log command with proper limit
-        let mut args = vec![
-            "log",
-            "--format=%H|%s|%at|%an",
-        ];
-        
+        let mut args = vec!["log", "--format=%H|%s|%at|%an"];
+
         // Add limit if specified
         let limit_str;
         if let Some(limit) = limit {
@@ -1134,46 +1141,48 @@ impl MemoryStore {
     }
 
     /// Get recent recommendations from versioned storage
-    pub async fn get_recent_recommendations(&self, limit: usize) -> Result<Vec<crate::advisor::Recommendation>> {
+    pub async fn get_recent_recommendations(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<crate::advisor::Recommendation>> {
         self.get_recommendations(None, None, Some(limit)).await
     }
-
 
     /// Get recommendations with optional branch/commit and limit  
     pub async fn get_recommendations(
         &self,
         _branch: Option<&str>,
-        commit: Option<&str>, 
-        limit: Option<usize>
+        commit: Option<&str>,
+        limit: Option<usize>,
     ) -> Result<Vec<crate::advisor::Recommendation>> {
         if let Some(_commit_hash) = commit {
             // For now, temporal querying is complex - return empty for specific commits
             // This could be implemented later with proper git checkout and query
             return Ok(vec![]);
         }
-        
+
         // Query current branch for recommendations
         let path = Path::new(&self.store_path);
         if !path.exists() {
             return Ok(vec![]);
         }
-        
+
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
             return Ok(vec![]);
         };
-        
+
         let mut glue = Glue::new(storage);
         let sql = if let Some(limit) = limit {
             format!("SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp FROM recommendations ORDER BY timestamp DESC LIMIT {}", limit)
         } else {
             "SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp FROM recommendations ORDER BY timestamp DESC".to_string()
         };
-        
+
         let results = glue.execute(&sql).await?;
         let memories = self.parse_recommendation_results(results)?;
-        
+
         let mut recommendations = Vec::new();
         for memory in memories {
             match serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
@@ -1181,26 +1190,28 @@ impl MemoryStore {
                 Err(e) => eprintln!("Warning: Failed to parse recommendation: {}", e),
             }
         }
-        
+
         Ok(recommendations)
     }
 
-
     /// Get memory system status information
     pub async fn get_memory_status(&self) -> Result<MemoryStatus> {
-        let current_commit = self.get_current_commit_id().await.unwrap_or_else(|_| "unknown".to_string());
+        let current_commit = self
+            .get_current_commit_id()
+            .await
+            .unwrap_or_else(|_| "unknown".to_string());
         let branches = self.list_branches().unwrap_or_default();
         let current_branch = self.current_branch();
-        
+
         // Get memory stats
         let history = self.get_memory_history(Some(100)).await.unwrap_or_default();
         let total_commits = history.len();
-        
+
         // Count by type
         let mut recommendation_count = 0;
         let mut market_data_count = 0;
         let mut audit_count = 0;
-        
+
         for commit in &history {
             match commit.memory_type {
                 MemoryType::Recommendation => recommendation_count += 1,
@@ -1209,15 +1220,15 @@ impl MemoryStore {
                 _ => {}
             }
         }
-        
+
         // Check if git repo exists and is healthy
         let git_dir = Path::new(&self.store_path);
         let git_healthy = git_dir.join(".git").exists();
-        
+
         // Check if dataset directory exists
         let dataset_dir = Path::new(&self.store_path);
         let storage_healthy = dataset_dir.exists() && dataset_dir.join(PROLLY_CONFIG_FILE).exists();
-        
+
         Ok(MemoryStatus {
             validation_active: storage_healthy && git_healthy,
             audit_enabled: self.audit_enabled,
@@ -1264,7 +1275,10 @@ impl MemoryStore {
     }
 
     /// Store client profile in versioned memory
-    pub async fn store_client_profile(&mut self, profile: &crate::advisor::ClientProfile) -> Result<()> {
+    pub async fn store_client_profile(
+        &mut self,
+        profile: &crate::advisor::ClientProfile,
+    ) -> Result<()> {
         let validated_memory = ValidatedMemory {
             id: profile.id.clone(),
             content: serde_json::to_string(profile)?,
@@ -1274,13 +1288,14 @@ impl MemoryStore {
             confidence: 1.0,
             cross_references: vec![],
         };
-        
+
         // Store in versioned memory with audit trail
         self.store_with_audit(
             MemoryType::ClientProfile,
             &validated_memory,
             &format!("Updated client profile for {}", profile.id),
-        ).await?;
+        )
+        .await?;
 
         Ok(())
     }
@@ -1291,15 +1306,15 @@ impl MemoryStore {
         if !path.exists() || !path.join(PROLLY_CONFIG_FILE).exists() {
             return Ok(None);
         }
-        
+
         // Create a fresh storage instance to ensure we see the latest committed state
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
-        
+
         // First, let's test if the table exists and has any data
         let count_sql = "SELECT COUNT(*) FROM client_profiles";
         let count_results = glue.execute(&count_sql).await?;
-        
+
         use gluesql_core::prelude::Payload;
         if let Some(count_result) = count_results.first() {
             if let Payload::Select { labels: _, rows } = count_result {
@@ -1310,17 +1325,18 @@ impl MemoryStore {
                 }
             }
         }
-        
+
         let sql = "SELECT content FROM client_profiles ORDER BY timestamp DESC LIMIT 1";
         let results = glue.execute(&sql).await?;
-        
+
         if let Some(result) = results.first() {
             match result {
                 Payload::Select { labels: _, rows } => {
                     if let Some(row) = rows.first() {
                         if let Some(content_value) = row.first() {
                             if let gluesql_core::data::Value::Str(content) = content_value {
-                                let profile: crate::advisor::ClientProfile = serde_json::from_str(content)?;
+                                let profile: crate::advisor::ClientProfile =
+                                    serde_json::from_str(content)?;
                                 return Ok(Some(profile));
                             }
                         }
@@ -1334,7 +1350,7 @@ impl MemoryStore {
 
     /// Simple content hashing for validation
     fn hash_content(&self, content: &str) -> [u8; 32] {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
         hasher.finalize().into()
