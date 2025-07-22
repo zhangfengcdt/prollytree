@@ -682,4 +682,13 @@ impl RecommendationType {
             RecommendationType::Rebalance => "REBALANCE",
         }
     }
+    
+    pub fn as_serde_str(&self) -> &str {
+        match self {
+            RecommendationType::Buy => "Buy",
+            RecommendationType::Sell => "Sell",
+            RecommendationType::Hold => "Hold",
+            RecommendationType::Rebalance => "Rebalance",
+        }
+    }
 }

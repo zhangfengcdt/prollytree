@@ -172,7 +172,7 @@ impl MemoryStore {
     }
 
     pub async fn store(&mut self, memory: &ValidatedMemory) -> Result<String> {
-        let path = std::env::current_dir()?;
+        let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
@@ -197,7 +197,7 @@ impl MemoryStore {
                     rec.id,
                     rec.client_id,
                     rec.symbol,
-                    rec.recommendation_type.as_str(),
+                    rec.recommendation_type.as_serde_str(),
                     rec.reasoning.replace('\'', "''"),
                     rec.confidence,
                     hex::encode(memory.validation_hash),
@@ -304,7 +304,7 @@ impl MemoryStore {
     }
 
     pub async fn query_related(&self, content: &str, limit: usize) -> Result<Vec<ValidatedMemory>> {
-        let path = std::env::current_dir()?;
+        let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
@@ -998,27 +998,66 @@ impl MemoryStore {
                         };
 
                         // Create content from recommendation fields
+                        let recommendation_type = match &row[3] {
+                            Value::Str(s) => s.clone(),
+                            _ => "UNKNOWN".to_string(),
+                        };
+                        
+                        let reasoning = match &row[4] {
+                            Value::Str(s) => s.clone(),
+                            _ => "".to_string(),
+                        };
+                        
+                        let confidence = match &row[5] {
+                            Value::F64(f) => *f,
+                            _ => 0.0,
+                        };
+                        
+                        let memory_version = match &row[7] {
+                            Value::Str(s) => s.clone(),
+                            _ => "".to_string(),
+                        };
+                        
+                        let timestamp = match &row[8] {
+                            Value::I64(ts) => {
+                                DateTime::from_timestamp(*ts, 0)
+                                    .unwrap_or_else(Utc::now)
+                                    .to_rfc3339()
+                            },
+                            _ => Utc::now().to_rfc3339(),
+                        };
+                        
+                        let validation_hash = match &row[6] {
+                            Value::Str(s) => hex::decode(s)
+                                .unwrap_or_default()
+                                .try_into()
+                                .unwrap_or([0u8; 32]),
+                            _ => [0u8; 32],
+                        };
+                        
                         let content = serde_json::json!({
                             "id": id,
                             "client_id": client_id,
                             "symbol": symbol,
-                            "recommendation_type": row[3],
-                            "reasoning": row[4],
-                            "confidence": row[5],
-                            "memory_version": row[7]
+                            "recommendation_type": recommendation_type,
+                            "reasoning": reasoning,
+                            "confidence": confidence,
+                            "memory_version": memory_version,
+                            "timestamp": timestamp,
+                            "validation_result": {
+                                "is_valid": true,
+                                "confidence": confidence,
+                                "hash": validation_hash.to_vec(),
+                                "cross_references": [],
+                                "issues": []
+                            }
                         })
                         .to_string();
 
                         let memory = ValidatedMemory {
                             id,
                             content,
-                            validation_hash: match &row[6] {
-                                Value::Str(s) => hex::decode(s)
-                                    .unwrap_or_default()
-                                    .try_into()
-                                    .unwrap_or([0u8; 32]),
-                                _ => [0u8; 32],
-                            },
+                            validation_hash,
                             sources: vec!["recommendation_engine".to_string()],
                             confidence: match &row[5] {
                                 Value::F64(f) => *f,
