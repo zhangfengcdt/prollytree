@@ -1,6 +1,0 @@
-# This configuration only includes fields that are known to be supported by Clippy
-
-# Set the complexity threshold for cyclomatic complexity lint
-cognitive-complexity-threshold = 20
-
-# Additional settings can be included based on your project's needs
