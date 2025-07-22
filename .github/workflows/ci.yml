@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+    types: [ready_for_review, synchronize]
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        feature_flags: ["no-default-features", "all-features"]
+    runs-on: ubuntu-latest
+    steps:
+    
+    - uses: actions/checkout@v2
+
+    - name: fmt
+      run: cargo fmt --all -- --check
+
+    - name: build
+      run: cargo build --verbose
+
+    - name: test
+      run: cargo test --verbose
+
+    - name: build benchmarks
+      run: cargo test --benches --no-run --verbose
+
+    - name: clippy
+      run: cargo clippy
+
+    - name: docs
+      run: cargo doc --document-private-items --no-deps
+
+    - name: fmt rig_versioned_memory example
+      run: cargo fmt --all -- --check
+      working-directory: examples/rig_versioned_memory
+
+    - name: build rig_versioned_memory example
+      run: cargo build --verbose
+      working-directory: examples/rig_versioned_memory
+
+    - name: test rig_versioned_memory example
+      run: cargo test --verbose
+      working-directory: examples/rig_versioned_memory
+
+    - name: clippy rig_versioned_memory example
+      run: cargo clippy
+      working-directory: examples/rig_versioned_memory
