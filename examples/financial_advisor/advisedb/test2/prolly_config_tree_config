@@ -1,0 +1,1 @@
+{"base":257,"modulus":1000000007,"min_chunk_size":2,"max_chunk_size":16384,"pattern":3,"root_hash":[15,66,248,242,210,128,174,237,49,95,211,96,6,231,104,222,121,44,97,241,40,216,222,62,166,101,137,62,70,253,21,187],"key_schema":null,"value_schema":null,"encode_types":[]}
