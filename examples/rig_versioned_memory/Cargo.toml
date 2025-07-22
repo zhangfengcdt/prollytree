@@ -16,7 +16,7 @@ gluesql-core = "0.15"
 async-trait = "0.1"
 clap = { version = "4.0", features = ["derive"] }
 dotenv = "0.15"
-colored = "2.0"
+colored = "3.0"
 
 [[bin]]
 name = "rig-memory-demo"

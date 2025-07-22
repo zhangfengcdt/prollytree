@@ -16,7 +16,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 thiserror = "1.0"
 clap = { version = "4.0", features = ["derive"] }
-colored = "2.0"
+colored = "3.0"
 indicatif = "0.17"
 tabled = "0.16"
 sha2 = "0.10"
