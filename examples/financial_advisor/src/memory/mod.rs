@@ -207,9 +207,17 @@ impl MemoryStore {
                 glue.execute(&sql).await?;
             }
             // Try to store as client profile
-            else if let Ok(_profile) =
+            else if let Ok(profile) =
                 serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content)
             {
+                // First, delete existing profile if any
+                let delete_sql = format!(
+                    "DELETE FROM client_profiles WHERE id = '{}'",
+                    profile.id
+                );
+                let _ = glue.execute(&delete_sql).await; // Ignore error if doesn't exist
+                
+                // Then insert the new/updated profile
                 let sql = format!(
                     r#"INSERT INTO client_profiles
                 (id, content, timestamp, validation_hash, sources, confidence)
