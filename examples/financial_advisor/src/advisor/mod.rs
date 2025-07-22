@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::memory::{MemoryStore, MemoryType, ValidatedMemory, Storable};
+use crate::memory::{MemoryStore, MemoryType, Storable, ValidatedMemory};
 use crate::security::SecurityMonitor;
 use crate::validation::{MemoryValidator, ValidationResult};
 
@@ -278,7 +278,7 @@ impl FinancialAdvisor {
             .get_recommendations(None, Some(commit), Some(limit))
             .await
     }
-    
+
     pub async fn get_recommendations_at_branch(
         &self,
         branch: &str,
@@ -692,7 +692,7 @@ impl RecommendationType {
             RecommendationType::Rebalance => "REBALANCE",
         }
     }
-    
+
     pub fn as_serde_str(&self) -> &str {
         match self {
             RecommendationType::Buy => "Buy",
@@ -707,16 +707,16 @@ impl Storable for Recommendation {
     fn table_name() -> &'static str {
         "recommendations"
     }
-    
+
     fn get_id(&self) -> String {
         self.id.clone()
     }
-    
-    async fn store_to_db(
+
+    fn store_to_db(
         &self,
         glue: &mut gluesql_core::prelude::Glue<prollytree::sql::ProllyStorage<32>>,
         memory: &ValidatedMemory,
-    ) -> Result<()> {
+    ) -> impl std::future::Future<Output = Result<()>> {
         let sql = format!(
             r#"INSERT INTO recommendations
             (id, client_id, symbol, recommendation_type, reasoning, confidence,
@@ -732,120 +732,124 @@ impl Storable for Recommendation {
             self.memory_version,
             self.timestamp.timestamp()
         );
-        glue.execute(&sql).await?;
-        Ok(())
+
+        async move {
+            glue.execute(&sql).await?;
+            Ok(())
+        }
     }
-    
-    async fn load_from_db(
+
+    fn load_from_db(
         glue: &mut gluesql_core::prelude::Glue<prollytree::sql::ProllyStorage<32>>,
         limit: Option<usize>,
-    ) -> Result<Vec<ValidatedMemory>> {
+    ) -> impl std::future::Future<Output = Result<Vec<ValidatedMemory>>> {
         let sql = if let Some(limit) = limit {
             format!("SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp FROM recommendations ORDER BY timestamp DESC LIMIT {limit}")
         } else {
             "SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp FROM recommendations ORDER BY timestamp DESC".to_string()
         };
-        
-        let results = glue.execute(&sql).await?;
-        
-        // Parse results into ValidatedMemory objects
-        use gluesql_core::data::Value;
-        let mut memories = Vec::new();
-        
-        for payload in results {
-            if let gluesql_core::prelude::Payload::Select { labels: _, rows } = payload {
-                for row in rows {
-                    if row.len() >= 9 {
-                        let id = match &row[0] {
-                            Value::Str(s) => s.clone(),
-                            _ => continue,
-                        };
-                        
-                        let client_id = match &row[1] {
-                            Value::Str(s) => s.clone(),
-                            _ => continue,
-                        };
-                        
-                        let symbol = match &row[2] {
-                            Value::Str(s) => s.clone(),
-                            _ => continue,
-                        };
-                        
-                        let recommendation_type = match &row[3] {
-                            Value::Str(s) => s.clone(),
-                            _ => "Unknown".to_string(),
-                        };
-                        
-                        let reasoning = match &row[4] {
-                            Value::Str(s) => s.clone(),
-                            _ => "".to_string(),
-                        };
-                        
-                        let confidence = match &row[5] {
-                            Value::F64(f) => *f,
-                            _ => 0.0,
-                        };
-                        
-                        let memory_version = match &row[7] {
-                            Value::Str(s) => s.clone(),
-                            _ => "".to_string(),
-                        };
-                        
-                        let timestamp = match &row[8] {
-                            Value::I64(ts) => {
-                                chrono::DateTime::from_timestamp(*ts, 0)
+
+        async move {
+            let results = glue.execute(&sql).await?;
+
+            use gluesql_core::data::Value;
+            let mut memories = Vec::new();
+
+            for payload in results {
+                if let gluesql_core::prelude::Payload::Select { labels: _, rows } = payload {
+                    for row in rows {
+                        if row.len() >= 9 {
+                            let id = match &row[0] {
+                                Value::Str(s) => s.clone(),
+                                _ => continue,
+                            };
+
+                            let client_id = match &row[1] {
+                                Value::Str(s) => s.clone(),
+                                _ => continue,
+                            };
+
+                            let symbol = match &row[2] {
+                                Value::Str(s) => s.clone(),
+                                _ => continue,
+                            };
+
+                            let recommendation_type = match &row[3] {
+                                Value::Str(s) => s.clone(),
+                                _ => "Unknown".to_string(),
+                            };
+
+                            let reasoning = match &row[4] {
+                                Value::Str(s) => s.clone(),
+                                _ => "".to_string(),
+                            };
+
+                            let confidence = match &row[5] {
+                                Value::F64(f) => *f,
+                                _ => 0.0,
+                            };
+
+                            let memory_version = match &row[7] {
+                                Value::Str(s) => s.clone(),
+                                _ => "".to_string(),
+                            };
+
+                            let timestamp = match &row[8] {
+                                Value::I64(ts) => chrono::DateTime::from_timestamp(*ts, 0)
                                     .unwrap_or_else(chrono::Utc::now)
-                                    .to_rfc3339()
-                            },
-                            _ => chrono::Utc::now().to_rfc3339(),
-                        };
-                        
-                        let validation_hash = match &row[6] {
-                            Value::Str(s) => hex::decode(s)
-                                .unwrap_or_default()
-                                .try_into()
-                                .unwrap_or([0u8; 32]),
-                            _ => [0u8; 32],
-                        };
-                        
-                        let content = serde_json::json!({
-                            "id": id,
-                            "client_id": client_id,
-                            "symbol": symbol,
-                            "recommendation_type": recommendation_type,
-                            "reasoning": reasoning,
-                            "confidence": confidence,
-                            "memory_version": memory_version,
-                            "timestamp": timestamp,
-                            "validation_result": {
-                                "is_valid": true,
+                                    .to_rfc3339(),
+                                _ => chrono::Utc::now().to_rfc3339(),
+                            };
+
+                            let validation_hash = match &row[6] {
+                                Value::Str(s) => hex::decode(s)
+                                    .unwrap_or_default()
+                                    .try_into()
+                                    .unwrap_or([0u8; 32]),
+                                _ => [0u8; 32],
+                            };
+
+                            let content = serde_json::json!({
+                                "id": id,
+                                "client_id": client_id,
+                                "symbol": symbol,
+                                "recommendation_type": recommendation_type,
+                                "reasoning": reasoning,
                                 "confidence": confidence,
-                                "hash": validation_hash.to_vec(),
-                                "cross_references": [],
-                                "issues": []
-                            }
-                        }).to_string();
-                        
-                        let memory = ValidatedMemory {
-                            id,
-                            content,
-                            validation_hash,
-                            sources: vec!["recommendation_engine".to_string()],
-                            confidence,
-                            timestamp: match &row[8] {
-                                Value::I64(ts) => chrono::DateTime::from_timestamp(*ts, 0).unwrap_or_else(chrono::Utc::now),
-                                _ => chrono::Utc::now(),
-                            },
-                            cross_references: vec![],
-                        };
-                        
-                        memories.push(memory);
+                                "memory_version": memory_version,
+                                "timestamp": timestamp,
+                                "validation_result": {
+                                    "is_valid": true,
+                                    "confidence": confidence,
+                                    "hash": validation_hash.to_vec(),
+                                    "cross_references": [],
+                                    "issues": []
+                                }
+                            })
+                            .to_string();
+
+                            let memory = ValidatedMemory {
+                                id,
+                                content,
+                                validation_hash,
+                                sources: vec!["recommendation_engine".to_string()],
+                                confidence,
+                                timestamp: match &row[8] {
+                                    Value::I64(ts) => chrono::DateTime::from_timestamp(*ts, 0)
+                                        .unwrap_or_else(chrono::Utc::now),
+                                    _ => chrono::Utc::now(),
+                                },
+                                cross_references: vec![],
+                            };
+
+                            memories.push(memory);
+                        }
                     }
                 }
             }
+
+            Ok(memories)
         }
-        
-        Ok(memories)
     }
 }
 
@@ -853,16 +857,16 @@ impl Storable for ClientProfile {
     fn table_name() -> &'static str {
         "client_profiles"
     }
-    
+
     fn get_id(&self) -> String {
         self.id.clone()
     }
-    
-    async fn store_to_db(
+
+    fn store_to_db(
         &self,
         glue: &mut gluesql_core::prelude::Glue<prollytree::sql::ProllyStorage<32>>,
         memory: &ValidatedMemory,
-    ) -> Result<()> {
+    ) -> impl std::future::Future<Output = Result<()>> {
         let sql = format!(
             r#"INSERT INTO client_profiles
             (id, content, timestamp, validation_hash, sources, confidence)
@@ -874,60 +878,67 @@ impl Storable for ClientProfile {
             memory.sources.join(","),
             memory.confidence
         );
-        glue.execute(&sql).await?;
-        Ok(())
+
+        async move {
+            glue.execute(&sql).await?;
+            Ok(())
+        }
     }
-    
-    async fn load_from_db(
+
+    fn load_from_db(
         glue: &mut gluesql_core::prelude::Glue<prollytree::sql::ProllyStorage<32>>,
         _limit: Option<usize>,
-    ) -> Result<Vec<ValidatedMemory>> {
+    ) -> impl std::future::Future<Output = Result<Vec<ValidatedMemory>>> {
         let sql = "SELECT id, content, timestamp, validation_hash, sources, confidence FROM client_profiles ORDER BY timestamp DESC LIMIT 1";
-        let results = glue.execute(sql).await?;
-        
-        use gluesql_core::data::Value;
-        let mut memories = Vec::new();
-        
-        for payload in results {
-            if let gluesql_core::prelude::Payload::Select { labels: _, rows } = payload {
-                for row in rows {
-                    if row.len() >= 6 {
-                        let memory = ValidatedMemory {
-                            id: match &row[0] {
-                                Value::Str(s) => s.clone(),
-                                _ => continue,
-                            },
-                            content: match &row[1] {
-                                Value::Str(s) => s.clone(),
-                                _ => continue,
-                            },
-                            timestamp: match &row[2] {
-                                Value::I64(ts) => chrono::DateTime::from_timestamp(*ts, 0).unwrap_or_else(chrono::Utc::now),
-                                _ => chrono::Utc::now(),
-                            },
-                            validation_hash: match &row[3] {
-                                Value::Str(s) => hex::decode(s)
-                                    .unwrap_or_default()
-                                    .try_into()
-                                    .unwrap_or([0u8; 32]),
-                                _ => [0u8; 32],
-                            },
-                            sources: match &row[4] {
-                                Value::Str(s) => s.split(',').map(String::from).collect(),
-                                _ => vec![],
-                            },
-                            confidence: match &row[5] {
-                                Value::F64(f) => *f,
-                                _ => 0.0,
-                            },
-                            cross_references: vec![],
-                        };
-                        memories.push(memory);
+
+        async move {
+            let results = glue.execute(sql).await?;
+
+            use gluesql_core::data::Value;
+            let mut memories = Vec::new();
+
+            for payload in results {
+                if let gluesql_core::prelude::Payload::Select { labels: _, rows } = payload {
+                    for row in rows {
+                        if row.len() >= 6 {
+                            let memory = ValidatedMemory {
+                                id: match &row[0] {
+                                    Value::Str(s) => s.clone(),
+                                    _ => continue,
+                                },
+                                content: match &row[1] {
+                                    Value::Str(s) => s.clone(),
+                                    _ => continue,
+                                },
+                                timestamp: match &row[2] {
+                                    Value::I64(ts) => chrono::DateTime::from_timestamp(*ts, 0)
+                                        .unwrap_or_else(chrono::Utc::now),
+                                    _ => chrono::Utc::now(),
+                                },
+                                validation_hash: match &row[3] {
+                                    Value::Str(s) => hex::decode(s)
+                                        .unwrap_or_default()
+                                        .try_into()
+                                        .unwrap_or([0u8; 32]),
+                                    _ => [0u8; 32],
+                                },
+                                sources: match &row[4] {
+                                    Value::Str(s) => s.split(',').map(String::from).collect(),
+                                    _ => vec![],
+                                },
+                                confidence: match &row[5] {
+                                    Value::F64(f) => *f,
+                                    _ => 0.0,
+                                },
+                                cross_references: vec![],
+                            };
+                            memories.push(memory);
+                        }
                     }
                 }
             }
+
+            Ok(memories)
         }
-        
-        Ok(memories)
     }
 }

@@ -28,34 +28,40 @@ const PROLLY_CONFIG_FILE: &str = "prolly_config_tree_config";
 pub trait Storable: serde::Serialize + serde::de::DeserializeOwned + Clone {
     /// Get the table name for this type
     fn table_name() -> &'static str;
-    
+
     /// Get the unique identifier for this instance
     fn get_id(&self) -> String;
-    
+
     /// Store this instance to the database
-    async fn store_to_db(
+    fn store_to_db(
         &self,
         glue: &mut Glue<ProllyStorage<32>>,
         memory: &ValidatedMemory,
-    ) -> Result<()>;
-    
+    ) -> impl std::future::Future<Output = Result<()>>;
+
     /// Load instances from the database
-    async fn load_from_db(
+    fn load_from_db(
         glue: &mut Glue<ProllyStorage<32>>,
         limit: Option<usize>,
-    ) -> Result<Vec<ValidatedMemory>>;
-    
+    ) -> impl std::future::Future<Output = Result<Vec<ValidatedMemory>>>;
+
     /// Handle updates (default: delete and insert)
-    async fn update_in_db(
+    fn update_in_db(
         &self,
         glue: &mut Glue<ProllyStorage<32>>,
         memory: &ValidatedMemory,
-    ) -> Result<()> {
-        // Default implementation: delete existing and insert new
-        let delete_sql = format!("DELETE FROM {} WHERE id = '{}'", Self::table_name(), self.get_id());
-        let _ = glue.execute(&delete_sql).await; // Ignore error if doesn't exist
-        
-        self.store_to_db(glue, memory).await
+    ) -> impl std::future::Future<Output = Result<()>> {
+        async move {
+            // Default implementation: delete existing and insert new
+            let delete_sql = format!(
+                "DELETE FROM {} WHERE id = '{}'",
+                Self::table_name(),
+                self.get_id()
+            );
+            let _ = glue.execute(&delete_sql).await; // Ignore error if doesn't exist
+
+            self.store_to_db(glue, memory).await
+        }
     }
 }
 
@@ -207,7 +213,11 @@ impl MemoryStore {
     }
 
     /// Generic store method that uses the Storable trait
-    pub async fn store_typed<T: Storable>(&mut self, item: &T, memory: &ValidatedMemory) -> Result<String> {
+    pub async fn store_typed<T: Storable>(
+        &mut self,
+        item: &T,
+        memory: &ValidatedMemory,
+    ) -> Result<String> {
         let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(path)?
@@ -253,7 +263,9 @@ impl MemoryStore {
         // Try to determine type and delegate to typed methods
         if let Ok(rec) = serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
             self.store_typed(&rec, memory).await
-        } else if let Ok(profile) = serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content) {
+        } else if let Ok(profile) =
+            serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content)
+        {
             self.store_typed(&profile, memory).await
         } else {
             // Fallback to market data storage
@@ -274,15 +286,16 @@ impl MemoryStore {
         Self::init_schema(&mut glue).await?;
 
         // Determine symbol from JSON if possible
-        let symbol = if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&memory.content) {
-            json_value
-                .get("symbol")
-                .and_then(|s| s.as_str())
-                .unwrap_or("UNKNOWN")
-                .to_string()
-        } else {
-            "UNKNOWN".to_string()
-        };
+        let symbol =
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&memory.content) {
+                json_value
+                    .get("symbol")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("UNKNOWN")
+                    .to_string()
+            } else {
+                "UNKNOWN".to_string()
+            };
 
         let sql = format!(
             r#"INSERT INTO market_data
@@ -1040,31 +1053,29 @@ impl MemoryStore {
                             Value::Str(s) => s.clone(),
                             _ => "UNKNOWN".to_string(),
                         };
-                        
+
                         let reasoning = match &row[4] {
                             Value::Str(s) => s.clone(),
                             _ => "".to_string(),
                         };
-                        
+
                         let confidence = match &row[5] {
                             Value::F64(f) => *f,
                             _ => 0.0,
                         };
-                        
+
                         let memory_version = match &row[7] {
                             Value::Str(s) => s.clone(),
                             _ => "".to_string(),
                         };
-                        
+
                         let timestamp = match &row[8] {
-                            Value::I64(ts) => {
-                                DateTime::from_timestamp(*ts, 0)
-                                    .unwrap_or_else(Utc::now)
-                                    .to_rfc3339()
-                            },
+                            Value::I64(ts) => DateTime::from_timestamp(*ts, 0)
+                                .unwrap_or_else(Utc::now)
+                                .to_rfc3339(),
                             _ => Utc::now().to_rfc3339(),
                         };
-                        
+
                         let validation_hash = match &row[6] {
                             Value::Str(s) => hex::decode(s)
                                 .unwrap_or_default()
@@ -1072,7 +1083,7 @@ impl MemoryStore {
                                 .unwrap_or([0u8; 32]),
                             _ => [0u8; 32],
                         };
-                        
+
                         let content = serde_json::json!({
                             "id": id,
                             "client_id": client_id,
@@ -1235,7 +1246,7 @@ impl MemoryStore {
         if let Some(commit_hash) = commit {
             // Use the existing temporal query method
             let memories = self.get_recommendations_at_commit(commit_hash).await?;
-            
+
             let mut recommendations = Vec::new();
             for memory in memories {
                 match serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
@@ -1243,49 +1254,53 @@ impl MemoryStore {
                     Err(e) => eprintln!("Warning: Failed to parse recommendation: {e}"),
                 }
             }
-            
+
             // Apply limit if specified
             if let Some(limit) = limit {
                 recommendations.truncate(limit);
             }
-            
+
             return Ok(recommendations);
         }
-        
+
         // Handle branch-specific queries
         if let Some(branch_name) = branch {
             let current_branch = self.current_branch().to_string();
             let git_dir = Path::new(&self.store_path);
-            
+
             // Temporarily checkout the target branch
             let checkout_output = std::process::Command::new("git")
                 .args(["checkout", branch_name])
                 .current_dir(git_dir)
                 .output()
-                .map_err(|e| anyhow::anyhow!("Failed to checkout branch '{}': {}", branch_name, e))?;
-            
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to checkout branch '{}': {}", branch_name, e)
+                })?;
+
             if !checkout_output.status.success() {
                 let error = String::from_utf8_lossy(&checkout_output.stderr);
                 return Err(anyhow::anyhow!("Git checkout failed: {}", error));
             }
-            
+
             // Query recommendations on this branch (call internal method to avoid recursion)
             let result = self.get_recommendations_internal(limit).await;
-            
+
             // Restore original branch
             std::process::Command::new("git")
                 .args(["checkout", &current_branch])
                 .current_dir(git_dir)
                 .output()
-                .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
-            
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e)
+                })?;
+
             return result;
         }
 
         // Query current branch for recommendations
         self.get_recommendations_internal(limit).await
     }
-    
+
     /// Internal method to get recommendations from current branch (no branch/commit switching)
     async fn get_recommendations_internal(
         &self,
@@ -1303,7 +1318,7 @@ impl MemoryStore {
         };
 
         let mut glue = Glue::new(storage);
-        
+
         // Use the Storable trait method
         let memories = crate::advisor::Recommendation::load_from_db(&mut glue, limit).await?;
 
@@ -1442,7 +1457,7 @@ impl MemoryStore {
 
         // Use the Storable trait method
         let memories = crate::advisor::ClientProfile::load_from_db(&mut glue, Some(1)).await?;
-        
+
         if let Some(memory) = memories.first() {
             match serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content) {
                 Ok(profile) => Ok(Some(profile)),
