@@ -18,13 +18,31 @@ impl<'a> InteractiveSession<'a> {
     pub async fn run(mut self) -> Result<()> {
         self.show_welcome();
 
-        // Create a default client profile
-        let mut client = ClientProfile {
-            id: "demo-client".to_string(),
-            risk_tolerance: RiskTolerance::Moderate,
-            investment_goals: vec!["Growth".to_string(), "Income".to_string()],
-            time_horizon: "5-10 years".to_string(),
-            restrictions: vec![],
+        // Load existing client profile or create default
+        let mut client = match self.advisor.load_client_profile().await? {
+            Some(profile) => {
+                println!(
+                    "{} Loaded existing client profile: {}",
+                    "✅".green(),
+                    profile.id
+                );
+                profile
+            }
+            None => {
+                let default_profile = ClientProfile {
+                    id: "demo-client".to_string(),
+                    risk_tolerance: RiskTolerance::Moderate,
+                    investment_goals: vec!["Growth".to_string(), "Income".to_string()],
+                    time_horizon: "5-10 years".to_string(),
+                    restrictions: vec![],
+                };
+                println!(
+                    "{} Created new client profile: {}",
+                    "🆕".blue(),
+                    default_profile.id
+                );
+                default_profile
+            }
         };
 
         loop {
@@ -75,6 +93,14 @@ impl<'a> InteractiveSession<'a> {
             "risk <LEVEL>".cyan()
         );
         println!("  {} - Show recent recommendations", "history".cyan());
+        println!(
+            "  {} - Show recommendations at specific commit",
+            "history <commit>".cyan()
+        );
+        println!(
+            "  {} - Show recommendations on branch",
+            "history --branch <name>".cyan()
+        );
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
         println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
@@ -133,6 +159,12 @@ impl<'a> InteractiveSession<'a> {
                     }
                 };
 
+                // Save the updated profile
+                match self.advisor.store_client_profile(client).await {
+                    Ok(_) => println!("{} Profile saved successfully", "💾".green()),
+                    Err(e) => println!("{} Error: Failed to save profile: {}", "❌".red(), e),
+                }
+
                 println!(
                     "{} Risk tolerance set to: {:?}",
                     "✅".green(),
@@ -141,7 +173,16 @@ impl<'a> InteractiveSession<'a> {
             }
 
             "history" | "hist" => {
-                self.show_history().await?;
+                if parts.len() >= 2 {
+                    // history <commit_hash> or history --branch <branch_name>
+                    if parts[1] == "--branch" && parts.len() >= 3 {
+                        self.show_history_at_branch(&parts[2]).await?;
+                    } else {
+                        self.show_history_at_commit(&parts[1]).await?;
+                    }
+                } else {
+                    self.show_history().await?;
+                }
             }
 
             "memory" | "mem" => {
@@ -208,6 +249,14 @@ impl<'a> InteractiveSession<'a> {
             "risk <LEVEL>".cyan()
         );
         println!("  {} - Show recent recommendations", "history".cyan());
+        println!(
+            "  {} - Show recommendations at specific commit",
+            "history <commit>".cyan()
+        );
+        println!(
+            "  {} - Show recommendations on branch",
+            "history --branch <name>".cyan()
+        );
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
         println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
@@ -340,18 +389,109 @@ impl<'a> InteractiveSession<'a> {
 
     async fn show_history(&self) -> Result<()> {
         println!("{}", "📜 Recent Recommendations".blue().bold());
-        println!("{}", "━".repeat(30).dimmed());
+        println!("{}", "━".repeat(50).dimmed());
 
-        // In a real implementation, we'd query the memory store
-        println!(
-            "{} No previous recommendations in this session",
-            "ℹ️".blue()
-        );
-        println!(
-            "{} Use 'recommend <SYMBOL>' to generate recommendations",
-            "💡".yellow()
-        );
+        // Query recent recommendations from memory store
+        match self.advisor.get_recent_recommendations(10).await {
+            Ok(recommendations) => {
+                if recommendations.is_empty() {
+                    println!("{} No previous recommendations found", "ℹ️".blue());
+                    println!(
+                        "{} Use 'recommend <SYMBOL>' to generate recommendations",
+                        "💡".yellow()
+                    );
+                } else {
+                    self.display_recommendations(&recommendations).await?;
+                }
+            }
+            Err(e) => {
+                println!("{} Failed to retrieve history: {}", "❌".red(), e);
+            }
+        }
 
+        Ok(())
+    }
+
+    async fn show_history_at_commit(&self, commit: &str) -> Result<()> {
+        println!(
+            "{} at commit {}",
+            "📜 Recommendations".blue().bold(),
+            commit.dimmed()
+        );
+        println!("{}", "━".repeat(50).dimmed());
+
+        match self.advisor.get_recommendations_at_commit(commit, 10).await {
+            Ok(recommendations) => {
+                if recommendations.is_empty() {
+                    println!(
+                        "{} No recommendations found at commit {}",
+                        "ℹ️".blue(),
+                        commit
+                    );
+                } else {
+                    self.display_recommendations(&recommendations).await?;
+                }
+            }
+            Err(e) => {
+                println!(
+                    "{} Failed to retrieve history at commit {}: {}",
+                    "❌".red(),
+                    commit,
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn show_history_at_branch(&self, branch: &str) -> Result<()> {
+        println!(
+            "{} on branch {}",
+            "📜 Recommendations".blue().bold(),
+            branch.cyan()
+        );
+        println!("{}", "━".repeat(50).dimmed());
+
+        // For now, show current branch recommendations (could be extended to support branch switching)
+        println!(
+            "{} Branch-specific history not yet implemented, showing current branch",
+            "ℹ️".yellow()
+        );
+        self.show_history().await?;
+
+        Ok(())
+    }
+
+    async fn display_recommendations(
+        &self,
+        recommendations: &[crate::advisor::Recommendation],
+    ) -> Result<()> {
+        for (i, rec) in recommendations.iter().enumerate() {
+            println!();
+            println!("{} Recommendation #{}", "📊".green(), i + 1);
+            println!("  {}: {}", "Symbol".cyan(), rec.symbol);
+            println!(
+                "  {}: {}",
+                "Action".cyan(),
+                rec.recommendation_type.as_str().bold()
+            );
+            println!("  {}: {:.1}%", "Confidence".cyan(), rec.confidence * 100.0);
+            println!("  {}: {}", "Client ID".cyan(), rec.client_id);
+            println!(
+                "  {}: {}",
+                "Date".cyan(),
+                rec.timestamp.format("%Y-%m-%d %H:%M:%S")
+            );
+
+            // Show first line of reasoning
+            let reasoning_lines: Vec<&str> = rec.reasoning.lines().collect();
+            if !reasoning_lines.is_empty() {
+                println!("  {}: {}", "Summary".cyan(), reasoning_lines[0]);
+            }
+
+            println!("  {}: {}", "Version".dimmed(), rec.memory_version);
+        }
         Ok(())
     }
 
@@ -359,33 +499,137 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "🧠 Memory Status".blue().bold());
         println!("{}", "━".repeat(20).dimmed());
 
-        // Show memory consistency info
-        println!(
-            "{} Memory validation: {}",
-            "✅".green(),
-            "ACTIVE".bold().green()
-        );
-        println!(
-            "{} Security monitoring: {}",
-            "🛡️".blue(),
-            "ENABLED".bold().blue()
-        );
-        println!(
-            "{} Audit trail: {}",
-            "📝".yellow(),
-            "LOGGING".bold().yellow()
-        );
-        println!(
-            "{} Cross-validation: {}",
-            "🔍".cyan(),
-            "MULTI-SOURCE".bold().cyan()
-        );
+        // Get real memory status
+        match self.advisor.get_memory_status().await {
+            Ok(status) => {
+                // Show memory consistency info with real data
+                let validation_status = if status.validation_active {
+                    "ACTIVE".bold().green()
+                } else {
+                    "INACTIVE".bold().red()
+                };
+                println!("{} Memory validation: {}", "✅".green(), validation_status);
+
+                let security_status = if status.security_monitoring {
+                    "ENABLED".bold().blue()
+                } else {
+                    "DISABLED".bold().red()
+                };
+                println!("{} Security monitoring: {}", "🛡️".blue(), security_status);
+
+                let audit_status = if status.audit_enabled {
+                    "LOGGING".bold().yellow()
+                } else {
+                    "DISABLED".bold().red()
+                };
+                println!("{} Audit trail: {}", "📝".yellow(), audit_status);
+
+                let validation_mode = if status.storage_healthy && status.git_healthy {
+                    "MULTI-SOURCE".bold().cyan()
+                } else {
+                    "LIMITED".bold().yellow()
+                };
+                println!("{} Cross-validation: {}", "🔍".cyan(), validation_mode);
+
+                println!();
+                println!("{}", "System Information:".yellow());
+                println!(
+                    "  {} Current branch: {}",
+                    "🌿".green(),
+                    status.current_branch
+                );
+                println!("  {} Latest commit: {}", "📝".blue(), status.current_commit);
+                println!(
+                    "  {} Total branches: {}",
+                    "🌳".cyan(),
+                    status.total_branches
+                );
+                println!(
+                    "  {} Total commits: {}",
+                    "📊".yellow(),
+                    status.total_commits
+                );
+
+                println!();
+                println!("{}", "Memory Statistics:".yellow());
+                println!(
+                    "  {} Recommendations: {}",
+                    "💡".green(),
+                    status.recommendation_count
+                );
+                println!(
+                    "  {} Market data: {}",
+                    "📈".blue(),
+                    status.market_data_count
+                );
+                println!("  {} Audit entries: {}", "📋".yellow(), status.audit_count);
+
+                println!();
+                println!("{}", "Health Status:".yellow());
+                let storage_indicator = if status.storage_healthy { "✅" } else { "❌" };
+                println!(
+                    "  {} Storage system: {}",
+                    storage_indicator,
+                    if status.storage_healthy {
+                        "HEALTHY".green()
+                    } else {
+                        "ERROR".red()
+                    }
+                );
+                let git_indicator = if status.git_healthy { "✅" } else { "❌" };
+                println!(
+                    "  {} Git repository: {}",
+                    git_indicator,
+                    if status.git_healthy {
+                        "HEALTHY".green()
+                    } else {
+                        "ERROR".red()
+                    }
+                );
+            }
+            Err(e) => {
+                println!("{} Failed to retrieve memory status: {}", "❌".red(), e);
+                return Ok(());
+            }
+        }
 
         println!();
-        println!("{}", "Validation Sources:".yellow());
-        println!("  • Bloomberg (95% trust)");
-        println!("  • Yahoo Finance (85% trust)");
-        println!("  • Alpha Vantage (80% trust)");
+
+        // Get real validation sources
+        match self.advisor.get_validation_sources().await {
+            Ok(sources) => {
+                println!("{}", "Validation Sources:".yellow());
+                for source in sources {
+                    let status_indicator = match source.status {
+                        crate::memory::SourceStatus::Active => "🟢",
+                        crate::memory::SourceStatus::Inactive => "🟡",
+                        crate::memory::SourceStatus::Error => "🔴",
+                        crate::memory::SourceStatus::Unknown => "⚪",
+                    };
+
+                    let response_info = if let Some(ms) = source.response_time_ms {
+                        format!(" ({}ms)", ms)
+                    } else {
+                        String::new()
+                    };
+
+                    println!(
+                        "  {} {} ({:.0}% trust){}",
+                        status_indicator,
+                        source.name,
+                        source.trust_level * 100.0,
+                        response_info
+                    );
+                }
+            }
+            Err(e) => {
+                println!(
+                    "{} Failed to retrieve validation sources: {}",
+                    "❌".red(),
+                    e
+                );
+            }
+        }
 
         Ok(())
     }
@@ -394,16 +638,51 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "📋 Audit Trail".blue().bold());
         println!("{}", "━".repeat(20).dimmed());
 
-        // In a real implementation, query the actual audit trail
-        println!("{} Session started", "📅 2024-07-21 12:00:00".dimmed());
-        println!(
-            "{} Memory store initialized",
-            "🔧 2024-07-21 12:00:01".dimmed()
-        );
-        println!(
-            "{} Security monitor enabled",
-            "🛡️ 2024-07-21 12:00:01".dimmed()
-        );
+        // Query the real audit trail
+        match self.advisor.get_audit_trail().await {
+            Ok(entries) => {
+                if entries.is_empty() {
+                    println!("{} No audit entries found", "ℹ️".blue());
+                } else {
+                    println!("Showing last {} audit entries:", entries.len().min(10));
+                    println!();
+
+                    for (i, entry) in entries.iter().take(10).enumerate() {
+                        let icon = match entry.memory_type.as_str() {
+                            "Recommendation" => "💡",
+                            "MarketData" => "📈",
+                            "Audit" => "📋",
+                            "System" => "⚙️",
+                            _ => "📝",
+                        };
+
+                        println!(
+                            "{} {}",
+                            format!("{} {}", icon, entry.timestamp.format("%Y-%m-%d %H:%M:%S"))
+                                .dimmed(),
+                            entry.action,
+                        );
+
+                        if i >= 9 {
+                            // Only show first 10
+                            break;
+                        }
+                    }
+
+                    if entries.len() > 10 {
+                        println!();
+                        println!(
+                            "{} ... and {} more entries",
+                            "📝".dimmed(),
+                            entries.len() - 10
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                println!("{} Failed to retrieve audit trail: {}", "❌".red(), e);
+            }
+        }
 
         Ok(())
     }

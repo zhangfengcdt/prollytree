@@ -50,8 +50,11 @@ impl<const D: usize> ProllyStorage<D> {
     /// Initialize with a path
     #[allow(clippy::result_large_err)]
     pub fn init(path: &std::path::Path) -> Result<Self> {
-        let store = VersionedKvStore::init(path)
-            .map_err(|e| Error::StorageMsg(format!("Failed to initialize store: {e}")))?;
+        let dir = path.to_path_buf();
+        let dir_string = dir.to_string_lossy().to_string();
+        let store = VersionedKvStore::init(path).map_err(|e| {
+            Error::StorageMsg(format!("Failed to initialize store: {e} from {dir_string}"))
+        })?;
         Ok(Self::new(store))
     }
 
@@ -95,6 +98,15 @@ impl<const D: usize> ProllyStorage<D> {
         } else {
             Key::Str(key_part.to_string())
         }
+    }
+
+    /// Commit with a custom message
+    pub async fn commit_with_message(&mut self, message: &str) -> Result<()> {
+        // Commit changes to the git repository with custom message
+        self.store
+            .commit(message)
+            .map_err(|e| Error::StorageMsg(format!("Failed to commit: {e}")))?;
+        Ok(())
     }
 }
 

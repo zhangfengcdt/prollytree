@@ -72,6 +72,7 @@ pub struct FinancialAdvisor {
     api_key: String,
     verbose: bool,
     current_session: String,
+    session_recommendations: Vec<Recommendation>, // Keep recommendations in memory for the session
 }
 
 impl FinancialAdvisor {
@@ -93,6 +94,7 @@ impl FinancialAdvisor {
             api_key: api_key.to_string(),
             verbose: false,
             current_session: Uuid::new_v4().to_string(),
+            session_recommendations: Vec::new(),
         })
     }
 
@@ -148,6 +150,9 @@ impl FinancialAdvisor {
         // Step 5: Store recommendation with audit trail
         self.store_recommendation(&recommendation).await?;
 
+        // Keep in session memory for quick access
+        self.session_recommendations.push(recommendation.clone());
+
         Ok(recommendation)
     }
 
@@ -182,11 +187,6 @@ impl FinancialAdvisor {
             confidence: validation_result.confidence,
             cross_references: validation_result.cross_references,
         };
-
-        // Store in versioned memory
-        self.memory_store
-            .store(MemoryType::MarketData, &validated_memory)
-            .await?;
 
         Ok(validated_memory)
     }
@@ -245,19 +245,8 @@ impl FinancialAdvisor {
             )
             .await?;
 
-        // Commit to create immutable version
-        let version = self
-            .memory_store
-            .commit(&format!(
-                "Recommendation: {} {} for client {}",
-                recommendation.recommendation_type.as_str(),
-                recommendation.symbol,
-                recommendation.client_id,
-            ))
-            .await?;
-
         if self.verbose {
-            println!("✅ Recommendation stored at version: {version}");
+            println!("✅ Recommendation stored. ID: {}", recommendation.id);
         }
 
         Ok(())
@@ -274,6 +263,40 @@ impl FinancialAdvisor {
         to: Option<String>,
     ) -> Result<String> {
         compliance::generate_report(&self.memory_store, from, to).await
+    }
+
+    pub async fn get_recent_recommendations(&self, limit: usize) -> Result<Vec<Recommendation>> {
+        self.memory_store.get_recent_recommendations(limit).await
+    }
+
+    pub async fn get_recommendations_at_commit(
+        &self,
+        commit: &str,
+        limit: usize,
+    ) -> Result<Vec<Recommendation>> {
+        self.memory_store
+            .get_recommendations(None, Some(commit), Some(limit))
+            .await
+    }
+
+    pub async fn get_memory_status(&self) -> Result<crate::memory::MemoryStatus> {
+        self.memory_store.get_memory_status().await
+    }
+
+    pub async fn get_validation_sources(&self) -> Result<Vec<crate::memory::ValidationSource>> {
+        self.memory_store.get_validation_sources().await
+    }
+
+    pub async fn get_audit_trail(&self) -> Result<Vec<crate::memory::AuditEntry>> {
+        self.memory_store.get_audit_trail(None, None).await
+    }
+
+    pub async fn store_client_profile(&mut self, profile: &ClientProfile) -> Result<()> {
+        self.memory_store.store_client_profile(profile).await
+    }
+
+    pub async fn load_client_profile(&self) -> Result<Option<ClientProfile>> {
+        self.memory_store.load_client_profile().await
     }
 
     async fn generate_ai_reasoning(
