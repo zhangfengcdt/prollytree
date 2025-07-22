@@ -72,6 +72,7 @@ pub struct FinancialAdvisor {
     api_key: String,
     verbose: bool,
     current_session: String,
+    session_recommendations: Vec<Recommendation>, // Keep recommendations in memory for the session
 }
 
 impl FinancialAdvisor {
@@ -93,6 +94,7 @@ impl FinancialAdvisor {
             api_key: api_key.to_string(),
             verbose: false,
             current_session: Uuid::new_v4().to_string(),
+            session_recommendations: Vec::new(),
         })
     }
 
@@ -147,6 +149,9 @@ impl FinancialAdvisor {
 
         // Step 5: Store recommendation with audit trail
         self.store_recommendation(&recommendation).await?;
+        
+        // Also keep it in memory for this session
+        self.session_recommendations.push(recommendation.clone());
 
         Ok(recommendation)
     }
@@ -274,6 +279,19 @@ impl FinancialAdvisor {
         to: Option<String>,
     ) -> Result<String> {
         compliance::generate_report(&self.memory_store, from, to).await
+    }
+
+    pub async fn get_recent_recommendations(&self, limit: usize) -> Result<Vec<Recommendation>> {
+        // First try to get from session memory (faster and more reliable)
+        if !self.session_recommendations.is_empty() {
+            let mut recs = self.session_recommendations.clone();
+            recs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Most recent first
+            recs.truncate(limit);
+            return Ok(recs);
+        }
+        
+        // Fallback to database query
+        self.memory_store.get_recent_recommendations(limit).await
     }
 
     async fn generate_ai_reasoning(

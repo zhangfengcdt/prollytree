@@ -340,17 +340,44 @@ impl<'a> InteractiveSession<'a> {
 
     async fn show_history(&self) -> Result<()> {
         println!("{}", "📜 Recent Recommendations".blue().bold());
-        println!("{}", "━".repeat(30).dimmed());
+        println!("{}", "━".repeat(50).dimmed());
 
-        // In a real implementation, we'd query the memory store
-        println!(
-            "{} No previous recommendations in this session",
-            "ℹ️".blue()
-        );
-        println!(
-            "{} Use 'recommend <SYMBOL>' to generate recommendations",
-            "💡".yellow()
-        );
+        // Query recent recommendations from memory store
+        match self.advisor.get_recent_recommendations(10).await {
+            Ok(recommendations) => {
+                if recommendations.is_empty() {
+                    println!(
+                        "{} No previous recommendations found",
+                        "ℹ️".blue()
+                    );
+                    println!(
+                        "{} Use 'recommend <SYMBOL>' to generate recommendations",
+                        "💡".yellow()
+                    );
+                } else {
+                    for (i, rec) in recommendations.iter().enumerate() {
+                        println!();
+                        println!("{} Recommendation #{}", "📊".green(), i + 1);
+                        println!("  {}: {}", "Symbol".cyan(), rec.symbol);
+                        println!("  {}: {}", "Action".cyan(), rec.recommendation_type.as_str().bold());
+                        println!("  {}: {:.1}%", "Confidence".cyan(), rec.confidence * 100.0);
+                        println!("  {}: {}", "Client ID".cyan(), rec.client_id);
+                        println!("  {}: {}", "Date".cyan(), rec.timestamp.format("%Y-%m-%d %H:%M:%S"));
+                        
+                        // Show first line of reasoning
+                        let reasoning_lines: Vec<&str> = rec.reasoning.lines().collect();
+                        if !reasoning_lines.is_empty() {
+                            println!("  {}: {}", "Summary".cyan(), reasoning_lines[0]);
+                        }
+                        
+                        println!("  {}: {}", "Version".dimmed(), rec.memory_version);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("{} Failed to retrieve history: {}", "❌".red(), e);
+            }
+        }
 
         Ok(())
     }
@@ -483,4 +510,5 @@ impl<'a> InteractiveSession<'a> {
 
         Ok(())
     }
+    
 }

@@ -160,7 +160,7 @@ impl MemoryStore {
         if glue.execute(&check_sql).await.is_err() {
             // Table doesn't exist, create it
             glue.execute(create_sql).await?;
-            glue.storage.commit().await?;
+            glue.storage.commit_with_message(&format!("Create table: {}", table_name)).await?;
         }
         Ok(())
     }
@@ -196,7 +196,7 @@ impl MemoryStore {
                     memory.timestamp.timestamp()
                 );
                 glue.execute(&sql).await?;
-                glue.storage.commit().await?;
+                glue.storage.commit_with_message(&format!("Store market data for symbol: {}", self.extract_symbol(&memory.content)?)).await?;
             }
 
             MemoryType::Recommendation => {
@@ -218,7 +218,7 @@ impl MemoryStore {
                     rec.timestamp.timestamp()
                 );
                 glue.execute(&sql).await?;
-                glue.storage.commit().await?;
+                glue.storage.commit_with_message(&format!("Store recommendation for {} ({})", rec.symbol, rec.id)).await?;
             }
 
             _ => {}
@@ -240,7 +240,7 @@ impl MemoryStore {
                 memory.id, reference, memory.confidence
             );
             glue.execute(&sql).await?;
-            glue.storage.commit().await?;
+            glue.storage.commit_with_message(&format!("Store cross-reference: {} -> {}", memory.id, reference)).await?;
         }
 
         // Create version
@@ -428,7 +428,7 @@ impl MemoryStore {
         );
 
         glue.execute(&sql).await?;
-        glue.storage.commit().await?;
+        glue.storage.commit_with_message(&format!("Audit log: {}", action)).await?;
         Ok(())
     }
 
@@ -481,26 +481,48 @@ impl MemoryStore {
 
     /// Get commit history (simplified version of diff)
     pub async fn get_memory_history(&self, limit: Option<usize>) -> Result<Vec<MemoryCommit>> {
-        // For now, implement using git log to show commit history
-        // This follows the rig_versioned_memory pattern of showing version progression
+        // The git repository is in the parent directory (data), not dataset
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        
+        // First, check if git repository exists
+        if !git_dir.join(".git").exists() {
+            return Ok(vec![]); // Return empty history if no git repo
+        }
+
+        // Build git log command with proper limit
+        let mut args = vec![
+            "log",
+            "--format=%H|%s|%at|%an",
+        ];
+        
+        // Add limit if specified
+        let limit_str;
+        if let Some(limit) = limit {
+            limit_str = format!("-{}", limit);
+            args.insert(1, &limit_str);
+        }
+
         let log_output = std::process::Command::new("git")
-            .args(["log", "--oneline", "--format=%H|%s|%at"])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .args(&args)
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get git log: {}", e))?;
+
+        if !log_output.status.success() {
+            let error = String::from_utf8_lossy(&log_output.stderr);
+            // If no commits yet, return empty history
+            if error.contains("does not have any commits") || error.contains("bad revision") {
+                return Ok(vec![]);
+            }
+            return Err(anyhow::anyhow!("Git log failed: {}", error));
+        }
 
         let log_str = String::from_utf8_lossy(&log_output.stdout);
         let mut commits = Vec::new();
 
-        for (index, line) in log_str.lines().enumerate() {
-            if let Some(limit) = limit {
-                if index >= limit {
-                    break;
-                }
-            }
-
+        for line in log_str.lines() {
             let parts: Vec<&str> = line.split('|').collect();
-            if parts.len() >= 3 {
+            if parts.len() >= 4 {
                 let commit = MemoryCommit {
                     hash: parts[0].to_string(),
                     message: parts[1].to_string(),
@@ -516,7 +538,7 @@ impl MemoryStore {
             self.log_audit(
                 "Retrieved memory history",
                 MemoryType::System,
-                &format!("limit_{}", limit.unwrap_or(10)),
+                &format!("limit_{}", limit.unwrap_or_default()),
             )
             .await?;
         }
@@ -555,10 +577,12 @@ impl MemoryStore {
 
     /// Show basic information about a specific commit
     pub async fn show_memory_commit(&self, commit: &str) -> Result<MemoryCommitDetails> {
-        // Simple implementation using git show command
+        // Use the git directory (data), not dataset
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        
         let show_output = std::process::Command::new("git")
             .args(["show", "--format=%H|%s|%at|%an", "--name-only", commit])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to show commit '{}': {}", commit, e))?;
 
@@ -607,9 +631,10 @@ impl MemoryStore {
     /// Revert to a specific commit (simplified rollback)
     pub async fn revert_to_commit(&mut self, commit: &str) -> Result<String> {
         // Simple revert using git reset (following rig_versioned_memory pattern)
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
         let reset_output = std::process::Command::new("git")
             .args(["reset", "--hard", commit])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to reset to commit '{}': {}", commit, e))?;
 
@@ -636,9 +661,10 @@ impl MemoryStore {
 
     /// Get current commit ID
     pub async fn get_current_commit_id(&self) -> Result<String> {
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
         let output = std::process::Command::new("git")
             .args(["rev-parse", "HEAD"])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get commit ID: {}", e))?;
 
@@ -672,11 +698,12 @@ impl MemoryStore {
         // Save current state
         let _current_commit = self.get_current_commit_id().await?;
         let current_branch = self.current_branch().to_string();
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
 
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit '{}': {}", commit, e))?;
 
@@ -702,7 +729,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
 
@@ -727,11 +754,12 @@ impl MemoryStore {
         // Save current state
         let _current_commit = self.get_current_commit_id().await?;
         let current_branch = self.current_branch().to_string();
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
 
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit '{}': {}", commit, e))?;
 
@@ -761,7 +789,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
 
@@ -818,14 +846,17 @@ impl MemoryStore {
 
     /// Find commit hash closest to a specific time
     async fn find_commit_at_time(&self, target_time: DateTime<Utc>) -> Result<String> {
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
         let log_output = std::process::Command::new("git")
             .args([
                 "log",
                 "--format=%H|%at",
                 "--until",
                 &target_time.timestamp().to_string(),
+                "--",
+                DATASET_DIR,  // Only commits affecting dataset
             ])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get git log: {}", e))?;
 
@@ -852,11 +883,12 @@ impl MemoryStore {
     async fn get_audit_trail_at_commit(&self, commit: &str) -> Result<Vec<AuditEntry>> {
         // Save current state
         let current_branch = self.current_branch().to_string();
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
 
         // Temporarily checkout the target commit
         std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit for audit: {}", e))?;
 
@@ -866,7 +898,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(Path::new(&self.store_path).join(DATA_DIR))
+            .current_dir(&git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch for audit: {}", e))?;
 
@@ -1082,5 +1114,108 @@ impl MemoryStore {
         }
 
         Ok(entries)
+    }
+
+    /// Get recent recommendations from the current database state
+    pub async fn get_recent_recommendations(&self, limit: usize) -> Result<Vec<crate::advisor::Recommendation>> {
+        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
+            ProllyStorage::<32>::open(&path)?
+        } else {
+            ProllyStorage::<32>::init(&path)?
+        };
+        let mut glue = Glue::new(storage);
+
+        // Ensure schema exists
+        Self::init_schema(&mut glue).await?;
+
+        let sql = format!(
+            "SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp 
+             FROM recommendations 
+             ORDER BY timestamp DESC 
+             LIMIT {}",
+            limit
+        );
+
+        let results = glue.execute(&sql).await?;
+        
+        use gluesql_core::data::Value;
+        let mut recommendations = Vec::new();
+
+        for payload in results {
+            if let Payload::Select { labels: _, rows } = payload {
+                for row in rows {
+                    if row.len() >= 9 {
+                        let id = match &row[0] {
+                            Value::Str(s) => s.clone(),
+                            _ => continue,
+                        };
+                        
+                        let client_id = match &row[1] {
+                            Value::Str(s) => s.clone(),
+                            _ => continue,
+                        };
+                        
+                        let symbol = match &row[2] {
+                            Value::Str(s) => s.clone(),
+                            _ => continue,
+                        };
+                        
+                        let recommendation_type = match &row[3] {
+                            Value::Str(s) => match s.as_str() {
+                                "BUY" => crate::advisor::RecommendationType::Buy,
+                                "SELL" => crate::advisor::RecommendationType::Sell,
+                                "HOLD" => crate::advisor::RecommendationType::Hold,
+                                "REBALANCE" => crate::advisor::RecommendationType::Rebalance,
+                                _ => continue,
+                            },
+                            _ => continue,
+                        };
+                        
+                        let reasoning = match &row[4] {
+                            Value::Str(s) => s.clone(),
+                            _ => continue,
+                        };
+                        
+                        let confidence = match &row[5] {
+                            Value::F64(f) => *f,
+                            _ => 0.0,
+                        };
+                        
+                        let memory_version = match &row[7] {
+                            Value::Str(s) => s.clone(),
+                            _ => String::new(),
+                        };
+                        
+                        let timestamp = match &row[8] {
+                            Value::I64(ts) => DateTime::from_timestamp(*ts, 0).unwrap_or_else(Utc::now),
+                            _ => Utc::now(),
+                        };
+                        
+                        let recommendation = crate::advisor::Recommendation {
+                            id,
+                            client_id,
+                            symbol,
+                            recommendation_type,
+                            reasoning,
+                            confidence,
+                            timestamp,
+                            validation_result: crate::validation::ValidationResult {
+                                is_valid: true,
+                                confidence,
+                                issues: vec![],
+                                hash: [0u8; 32],
+                                cross_references: vec![],
+                            },
+                            memory_version,
+                        };
+                        
+                        recommendations.push(recommendation);
+                    }
+                }
+            }
+        }
+
+        Ok(recommendations)
     }
 }

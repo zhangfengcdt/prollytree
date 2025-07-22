@@ -96,6 +96,15 @@ impl<const D: usize> ProllyStorage<D> {
             Key::Str(key_part.to_string())
         }
     }
+    
+    /// Commit with a custom message
+    pub async fn commit_with_message(&mut self, message: &str) -> Result<()> {
+        // Commit changes to the git repository with custom message
+        self.store
+            .commit(message)
+            .map_err(|e| Error::StorageMsg(format!("Failed to commit: {e}")))?;
+        Ok(())
+    }
 }
 
 // Implement all the required traits
