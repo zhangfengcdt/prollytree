@@ -1,0 +1,44 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "prollytree"
+version = "0.2.1"
+description = "Python bindings for ProllyTree - a probabilistic tree for efficient storage and retrieval"
+readme = "python/README.md"
+requires-python = ">=3.8"
+keywords = ["prolly", "tree", "probabilistic", "merkle", "hash", "data-structures", "btree", "merkle-tree"]
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Feng Zhang", email = "f.feng.zhang@gmail.com"}
+]
+maintainers = [
+    {name = "Feng Zhang", email = "f.feng.zhang@gmail.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Database",
+    "Topic :: Security :: Cryptography",
+]
+
+[project.urls]
+Homepage = "https://github.com/zhangfengcdt/prollytree"
+Documentation = "https://docs.rs/prollytree"
+Repository = "https://github.com/zhangfengcdt/prollytree.git"
+"Bug Tracker" = "https://github.com/zhangfengcdt/prollytree/issues"
+
+[tool.maturin]
+features = ["python"]
+module-name = "prollytree"
+python-source = "python"
