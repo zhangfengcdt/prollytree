@@ -14,6 +14,9 @@ pub mod compliance;
 pub mod interactive;
 pub mod recommendations;
 
+#[cfg(test)]
+mod test_recommendations;
+
 use interactive::InteractiveSession;
 use recommendations::RecommendationEngine;
 
