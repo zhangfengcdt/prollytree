@@ -1,0 +1,17 @@
+# Environment variables
+.env
+
+# Demo agent memory storage
+demo_agent_memory/
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
