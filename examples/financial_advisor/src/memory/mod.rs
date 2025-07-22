@@ -1116,107 +1116,57 @@ impl MemoryStore {
         Ok(entries)
     }
 
-    /// Get recent recommendations from the current database state
+    /// Get recent recommendations from persistent storage (JSON file)
     pub async fn get_recent_recommendations(&self, limit: usize) -> Result<Vec<crate::advisor::Recommendation>> {
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
-        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
-            ProllyStorage::<32>::open(&path)?
-        } else {
-            ProllyStorage::<32>::init(&path)?
-        };
-        let mut glue = Glue::new(storage);
-
-        // Ensure schema exists
-        Self::init_schema(&mut glue).await?;
-
-        let sql = format!(
-            "SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp 
-             FROM recommendations 
-             ORDER BY timestamp DESC 
-             LIMIT {}",
-            limit
-        );
-
-        let results = glue.execute(&sql).await?;
+        let recommendations_file = Path::new(&self.store_path).join("recommendations.json");
         
-        use gluesql_core::data::Value;
-        let mut recommendations = Vec::new();
-
-        for payload in results {
-            if let Payload::Select { labels: _, rows } = payload {
-                for row in rows {
-                    if row.len() >= 9 {
-                        let id = match &row[0] {
-                            Value::Str(s) => s.clone(),
-                            _ => continue,
-                        };
-                        
-                        let client_id = match &row[1] {
-                            Value::Str(s) => s.clone(),
-                            _ => continue,
-                        };
-                        
-                        let symbol = match &row[2] {
-                            Value::Str(s) => s.clone(),
-                            _ => continue,
-                        };
-                        
-                        let recommendation_type = match &row[3] {
-                            Value::Str(s) => match s.as_str() {
-                                "BUY" => crate::advisor::RecommendationType::Buy,
-                                "SELL" => crate::advisor::RecommendationType::Sell,
-                                "HOLD" => crate::advisor::RecommendationType::Hold,
-                                "REBALANCE" => crate::advisor::RecommendationType::Rebalance,
-                                _ => continue,
-                            },
-                            _ => continue,
-                        };
-                        
-                        let reasoning = match &row[4] {
-                            Value::Str(s) => s.clone(),
-                            _ => continue,
-                        };
-                        
-                        let confidence = match &row[5] {
-                            Value::F64(f) => *f,
-                            _ => 0.0,
-                        };
-                        
-                        let memory_version = match &row[7] {
-                            Value::Str(s) => s.clone(),
-                            _ => String::new(),
-                        };
-                        
-                        let timestamp = match &row[8] {
-                            Value::I64(ts) => DateTime::from_timestamp(*ts, 0).unwrap_or_else(Utc::now),
-                            _ => Utc::now(),
-                        };
-                        
-                        let recommendation = crate::advisor::Recommendation {
-                            id,
-                            client_id,
-                            symbol,
-                            recommendation_type,
-                            reasoning,
-                            confidence,
-                            timestamp,
-                            validation_result: crate::validation::ValidationResult {
-                                is_valid: true,
-                                confidence,
-                                issues: vec![],
-                                hash: [0u8; 32],
-                                cross_references: vec![],
-                            },
-                            memory_version,
-                        };
-                        
-                        recommendations.push(recommendation);
-                    }
-                }
-            }
+        if !recommendations_file.exists() {
+            return Ok(vec![]);
         }
+        
+        let content = match std::fs::read_to_string(&recommendations_file) {
+            Ok(content) => content,
+            Err(_) => return Ok(vec![]),
+        };
+        
+        let mut all_recommendations: Vec<crate::advisor::Recommendation> = match serde_json::from_str(&content) {
+            Ok(recs) => recs,
+            Err(_) => return Ok(vec![]),
+        };
+        
+        // Sort by timestamp (most recent first) and limit
+        all_recommendations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        all_recommendations.truncate(limit);
+        
+        Ok(all_recommendations)
+    }
 
-        Ok(recommendations)
+    /// Store a recommendation persistently (JSON file)
+    pub async fn store_recommendation_persistent(&self, recommendation: &crate::advisor::Recommendation) -> Result<()> {
+        let recommendations_file = Path::new(&self.store_path).join("recommendations.json");
+        
+        // Load existing recommendations
+        let mut all_recommendations: Vec<crate::advisor::Recommendation> = if recommendations_file.exists() {
+            let content = std::fs::read_to_string(&recommendations_file)?;
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            vec![]
+        };
+        
+        // Add new recommendation
+        all_recommendations.push(recommendation.clone());
+        
+        // Keep only the last 1000 recommendations to prevent file from growing too large
+        if all_recommendations.len() > 1000 {
+            all_recommendations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            all_recommendations.truncate(1000);
+        }
+        
+        // Save back to file
+        let json_content = serde_json::to_string_pretty(&all_recommendations)?;
+        std::fs::write(&recommendations_file, json_content)?;
+        
+        Ok(())
     }
 
     /// Get memory system status information

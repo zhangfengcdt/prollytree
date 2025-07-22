@@ -150,7 +150,8 @@ impl FinancialAdvisor {
         // Step 5: Store recommendation with audit trail
         self.store_recommendation(&recommendation).await?;
         
-        // Also keep it in memory for this session
+        // Also store persistently and keep in session memory
+        self.memory_store.store_recommendation_persistent(&recommendation).await?;
         self.session_recommendations.push(recommendation.clone());
 
         Ok(recommendation)
@@ -282,7 +283,15 @@ impl FinancialAdvisor {
     }
 
     pub async fn get_recent_recommendations(&self, limit: usize) -> Result<Vec<Recommendation>> {
-        // First try to get from session memory (faster and more reliable)
+        // Try persistent storage first (works across sessions)
+        match self.memory_store.get_recent_recommendations(limit).await {
+            Ok(persistent_recs) if !persistent_recs.is_empty() => {
+                return Ok(persistent_recs);
+            }
+            _ => {}
+        }
+        
+        // Fallback to session memory if persistent storage is empty
         if !self.session_recommendations.is_empty() {
             let mut recs = self.session_recommendations.clone();
             recs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Most recent first
@@ -290,8 +299,7 @@ impl FinancialAdvisor {
             return Ok(recs);
         }
         
-        // Fallback to database query
-        self.memory_store.get_recent_recommendations(limit).await
+        Ok(vec![])
     }
 
     pub async fn get_memory_status(&self) -> Result<crate::memory::MemoryStatus> {
