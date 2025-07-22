@@ -20,7 +20,7 @@ use security::attack_simulator::AttackSimulator;
 #[command(about = "Financial Advisory AI with Versioned Memory - Demonstrating Memory Consistency")]
 struct Cli {
     /// Path to store the agent memory
-    #[arg(short, long, default_value = "./advisor_memory")]
+    #[arg(short, long, default_value = "./advisor_memory/data")]
     storage: String,
 
     #[command(subcommand)]

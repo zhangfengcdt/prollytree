@@ -188,11 +188,6 @@ impl FinancialAdvisor {
             cross_references: validation_result.cross_references,
         };
 
-        // Store in versioned memory
-        self.memory_store
-            .store(MemoryType::MarketData, &validated_memory)
-            .await?;
-
         Ok(validated_memory)
     }
 
@@ -250,19 +245,8 @@ impl FinancialAdvisor {
             )
             .await?;
 
-        // Commit to create immutable version
-        let version = self
-            .memory_store
-            .commit(&format!(
-                "Recommendation: {} {} for client {}",
-                recommendation.recommendation_type.as_str(),
-                recommendation.symbol,
-                recommendation.client_id,
-            ))
-            .await?;
-
         if self.verbose {
-            println!("✅ Recommendation stored at version: {version}");
+            println!("✅ Recommendation stored. ID: {}", recommendation.id);
         }
 
         Ok(())

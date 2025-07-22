@@ -50,8 +50,10 @@ impl<const D: usize> ProllyStorage<D> {
     /// Initialize with a path
     #[allow(clippy::result_large_err)]
     pub fn init(path: &std::path::Path) -> Result<Self> {
+        let dir = path.to_path_buf();
+        let dir_string = dir.to_string_lossy().to_string();
         let store = VersionedKvStore::init(path)
-            .map_err(|e| Error::StorageMsg(format!("Failed to initialize store: {e}")))?;
+            .map_err(|e| Error::StorageMsg(format!("Failed to initialize store: {e} from {dir_string}")))?;
         Ok(Self::new(store))
     }
 

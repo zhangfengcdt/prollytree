@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+use std::any::Any;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use gluesql_core::prelude::{Glue, Payload};
@@ -19,10 +20,8 @@ pub use types::{
     AuditEntry, MemoryCommit, MemoryCommitDetails, MemoryComparison, MemorySnapshot, MemoryStatus, 
     MemoryType, SourceStatus, ValidatedMemory, ValidationSource,
 };
+use crate::memory::MemoryType::Recommendation;
 
-// Constants for directory structure
-const DATA_DIR: &str = "advisedb";
-const DATASET_DIR: &str = "dataset";
 const PROLLY_CONFIG_FILE: &str = "prolly_config_tree_config";
 
 /// Core memory store with versioning capabilities
@@ -38,42 +37,33 @@ impl MemoryStore {
 
         // Create directory if it doesn't exist
         if !path.exists() {
+            println!("Creating {}", store_path);
             std::fs::create_dir_all(path)?;
         }
 
-        // Initialize ProllyTree storage with git-prolly integration
-        // Create data directory structure: data/dataset (git-prolly needs subdirectory)
-        let data_dir = path.join(DATA_DIR);
-        let dataset_dir = data_dir.join(DATASET_DIR);
-        if !dataset_dir.exists() {
-            std::fs::create_dir_all(&dataset_dir)?;
-        }
+        // change current directory to store path
+        std::env::set_current_dir(path)?;
 
-        // Initialize git repository in data directory if needed
-        let git_dir = data_dir.join(".git");
-        if !git_dir.exists() {
-            std::process::Command::new("git")
-                .args(["init"])
-                .current_dir(&data_dir)
-                .output()
-                .map_err(|e| anyhow::anyhow!("Failed to initialize git repo: {}", e))?;
-        }
+        // get current directory
+        let current_dir = std::env::current_dir()?;
 
         // Initialize VersionedKvStore in dataset subdirectory
         // Check if prolly tree config exists to determine if we should init or open
-        let versioned_store = if dataset_dir.join(PROLLY_CONFIG_FILE).exists() {
-            VersionedKvStore::<32>::open(&dataset_dir)
+        let versioned_store = if current_dir.join(PROLLY_CONFIG_FILE).exists() {
+            VersionedKvStore::<32>::open(&current_dir)
                 .map_err(|e| anyhow::anyhow!("Failed to open versioned store: {:?}", e))?
         } else {
-            VersionedKvStore::<32>::init(&dataset_dir)
+            VersionedKvStore::<32>::init(&current_dir)
                 .map_err(|e| anyhow::anyhow!("Failed to init versioned store: {:?}", e))?
         };
 
         // Initialize ProllyStorage - it will create its own VersionedKvStore accessing the same prolly tree files
-        let storage = if dataset_dir.join(PROLLY_CONFIG_FILE).exists() {
-            ProllyStorage::<32>::open(&dataset_dir)?
+        let storage = if current_dir.join(PROLLY_CONFIG_FILE).exists() {
+            println!("Opening existing storage: {}", PROLLY_CONFIG_FILE);
+            ProllyStorage::<32>::open(&current_dir)?
         } else {
-            ProllyStorage::<32>::init(&dataset_dir)?
+            println!("Creating new storage: {}", PROLLY_CONFIG_FILE);
+            ProllyStorage::<32>::init(&current_dir)?
         };
 
         let mut glue = Glue::new(storage);
@@ -82,7 +72,7 @@ impl MemoryStore {
         Ok(Self {
             store_path: store_path.to_string(),
             versioned_store,
-            audit_enabled: true,
+            audit_enabled: false,
         })
     }
 
@@ -179,48 +169,28 @@ impl MemoryStore {
         Ok(())
     }
 
-    pub async fn store(
-        &mut self,
-        memory_type: MemoryType,
-        memory: &ValidatedMemory,
-    ) -> Result<String> {
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+    pub async fn store(&mut self, memory: &ValidatedMemory) -> Result<String> {
+        let path = std::env::current_dir()?;
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
             ProllyStorage::<32>::init(&path)?
         };
+        // We need to load instead of creating a new Glue instance
         let mut glue = Glue::new(storage);
 
         // Ensure schema exists (this should be safe to run multiple times)
         Self::init_schema(&mut glue).await?;
 
-        match memory_type {
-            MemoryType::MarketData => {
+        // Try to parse content as JSON to determine memory type
+        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&memory.content) {
+            // Try to store as recommendation first
+            if let Ok(rec) = serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
                 let sql = format!(
-                    r#"INSERT INTO market_data 
-                    (id, symbol, content, validation_hash, sources, confidence, timestamp)
-                    VALUES ('{}', '{}', '{}', '{}', '{}', {}, {})"#,
-                    memory.id,
-                    self.extract_symbol(&memory.content)?,
-                    memory.content.replace('\'', "''"),
-                    hex::encode(memory.validation_hash),
-                    memory.sources.join(","),
-                    memory.confidence,
-                    memory.timestamp.timestamp()
-                );
-                glue.execute(&sql).await?;
-                glue.storage.commit_with_message(&format!("Commit market data for symbol: {}", self.extract_symbol(&memory.content)?)).await?;
-            }
-
-            MemoryType::Recommendation => {
-                // Parse recommendation from content
-                let rec: crate::advisor::Recommendation = serde_json::from_str(&memory.content)?;
-                let sql = format!(
-                    r#"INSERT INTO recommendations 
-                    (id, client_id, symbol, recommendation_type, reasoning, confidence, 
-                     validation_hash, memory_version, timestamp)
-                    VALUES ('{}', '{}', '{}', '{}', '{}', {}, '{}', '{}', {})"#,
+                    r#"INSERT INTO recommendations
+                (id, client_id, symbol, recommendation_type, reasoning, confidence,
+                 validation_hash, memory_version, timestamp)
+                VALUES ('{}', '{}', '{}', '{}', '{}', {}, '{}', '{}', {})"#,
                     rec.id,
                     rec.client_id,
                     rec.symbol,
@@ -232,14 +202,13 @@ impl MemoryStore {
                     rec.timestamp.timestamp()
                 );
                 glue.execute(&sql).await?;
-                glue.storage.commit_with_message(&format!("Commit recommendation for {} ({})", rec.symbol, rec.id)).await?;
             }
-
-            MemoryType::ClientProfile => {
+            // Try to store as client profile
+            else if let Ok(_profile) = serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content) {
                 let sql = format!(
-                    r#"INSERT INTO client_profiles 
-                    (id, content, timestamp, validation_hash, sources, confidence)
-                    VALUES ('{}', '{}', {}, '{}', '{}', {})"#,
+                    r#"INSERT INTO client_profiles
+                (id, content, timestamp, validation_hash, sources, confidence)
+                VALUES ('{}', '{}', {}, '{}', '{}', {})"#,
                     memory.id,
                     memory.content.replace('\'', "''"),
                     memory.timestamp.timestamp(),
@@ -248,10 +217,41 @@ impl MemoryStore {
                     memory.confidence
                 );
                 glue.execute(&sql).await?;
-                glue.storage.commit_with_message(&format!("Commit client profile: {}", memory.id)).await?;
             }
+            // Default to market data if it has a symbol field or fallback
+            else {
+                let symbol = json_value.get("symbol")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("UNKNOWN");
 
-            _ => {}
+                let sql = format!(
+                    r#"INSERT INTO market_data
+                (id, symbol, content, validation_hash, sources, confidence, timestamp)
+                VALUES ('{}', '{}', '{}', '{}', '{}', {}, {})"#,
+                    memory.id,
+                    symbol,
+                    memory.content.replace('\'', "''"),
+                    hex::encode(memory.validation_hash),
+                    memory.sources.join(","),
+                    memory.confidence,
+                    memory.timestamp.timestamp()
+                );
+                glue.execute(&sql).await?;
+            }
+        } else {
+            // If not valid JSON, store as market data with unknown symbol
+            let sql = format!(
+                r#"INSERT INTO market_data
+            (id, symbol, content, validation_hash, sources, confidence, timestamp)
+            VALUES ('{}', 'UNKNOWN', '{}', '{}', '{}', {}, {})"#,
+                memory.id,
+                memory.content.replace('\'', "''"),
+                hex::encode(memory.validation_hash),
+                memory.sources.join(","),
+                memory.confidence,
+                memory.timestamp.timestamp()
+            );
+            glue.execute(&sql).await?;
         }
 
         // Store cross-references
@@ -264,19 +264,16 @@ impl MemoryStore {
             let _ = glue.execute(&delete_sql).await; // Ignore if record doesn't exist
 
             let sql = format!(
-                r#"INSERT INTO cross_references 
-                (source_id, target_id, reference_type, confidence)
-                VALUES ('{}', '{}', 'validation', {})"#,
+                r#"INSERT INTO cross_references
+            (source_id, target_id, reference_type, confidence)
+            VALUES ('{}', '{}', 'validation', {})"#,
                 memory.id, reference, memory.confidence
             );
             glue.execute(&sql).await?;
-            glue.storage.commit_with_message(&format!("Commit cross-reference: {} -> {}", memory.id, reference)).await?;
         }
 
-        // Create version
-        let version = self
-            .create_version(&format!("Store {} memory: {}", memory_type, memory.id))
-            .await;
+        let version = memory.clone().id;
+        glue.storage.commit_with_message(&format!("Store memory: {}", memory.id)).await?;
 
         Ok(version)
     }
@@ -288,7 +285,7 @@ impl MemoryStore {
         action: &str,
     ) -> Result<String> {
         // Store the memory
-        let version = self.store(memory_type, memory).await?;
+        let version = self.store(memory).await?;
 
         // Log audit entry
         if self.audit_enabled {
@@ -299,7 +296,7 @@ impl MemoryStore {
     }
 
     pub async fn query_related(&self, content: &str, limit: usize) -> Result<Vec<ValidatedMemory>> {
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let path = std::env::current_dir()?;
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
@@ -349,15 +346,6 @@ impl MemoryStore {
 
         let commit_hex = commit_id.to_hex().to_string();
 
-        if self.audit_enabled {
-            self.log_audit(
-                &format!("Commit: {message}"),
-                MemoryType::System,
-                &commit_hex,
-            )
-            .await?;
-        }
-
         Ok(commit_hex)
     }
 
@@ -384,7 +372,7 @@ impl MemoryStore {
         from: Option<DateTime<Utc>>,
         to: Option<DateTime<Utc>>,
     ) -> Result<Vec<AuditEntry>> {
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let path = std::env::current_dir()?;
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
@@ -420,7 +408,7 @@ impl MemoryStore {
         memory_type: MemoryType,
         memory_id: &str,
     ) -> Result<()> {
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let path = std::env::current_dir()?;
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
@@ -462,7 +450,7 @@ impl MemoryStore {
         Ok(())
     }
 
-    async fn create_version(&mut self, message: &str) -> String {
+    async fn commit_version(&mut self, message: &str) -> String {
         // Create a real git commit
         match self.versioned_store.commit(message) {
             Ok(commit_id) => commit_id.to_hex().to_string(),
@@ -512,7 +500,7 @@ impl MemoryStore {
     /// Get commit history (simplified version of diff)
     pub async fn get_memory_history(&self, limit: Option<usize>) -> Result<Vec<MemoryCommit>> {
         // The git repository is in the parent directory (data), not dataset
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let git_dir = Path::new(&self.store_path);
         
         // First, check if git repository exists
         if !git_dir.join(".git").exists() {
@@ -608,8 +596,9 @@ impl MemoryStore {
     /// Show basic information about a specific commit
     pub async fn show_memory_commit(&self, commit: &str) -> Result<MemoryCommitDetails> {
         // Use the git directory (data), not dataset
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
-        
+        let current_dir = std::env::current_dir()?;
+        let git_dir = current_dir.parent().unwrap();
+
         let show_output = std::process::Command::new("git")
             .args(["show", "--format=%H|%s|%at|%an", "--name-only", commit])
             .current_dir(&git_dir)
@@ -661,7 +650,7 @@ impl MemoryStore {
     /// Revert to a specific commit (simplified rollback)
     pub async fn revert_to_commit(&mut self, commit: &str) -> Result<String> {
         // Simple revert using git reset (following rig_versioned_memory pattern)
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let git_dir = Path::new(&self.store_path);
         let reset_output = std::process::Command::new("git")
             .args(["reset", "--hard", commit])
             .current_dir(&git_dir)
@@ -691,7 +680,7 @@ impl MemoryStore {
 
     /// Get current commit ID
     pub async fn get_current_commit_id(&self) -> Result<String> {
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let git_dir = Path::new(&self.store_path);
         let output = std::process::Command::new("git")
             .args(["rev-parse", "HEAD"])
             .current_dir(&git_dir)
@@ -728,7 +717,7 @@ impl MemoryStore {
         // Save current state
         let _current_commit = self.get_current_commit_id().await?;
         let current_branch = self.current_branch().to_string();
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let git_dir = Path::new(&self.store_path);
 
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
@@ -743,7 +732,7 @@ impl MemoryStore {
         }
 
         // Query recommendations from this point in time
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
@@ -784,7 +773,7 @@ impl MemoryStore {
         // Save current state
         let _current_commit = self.get_current_commit_id().await?;
         let current_branch = self.current_branch().to_string();
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let git_dir = Path::new(&self.store_path);
 
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
@@ -799,7 +788,7 @@ impl MemoryStore {
         }
 
         // Query market data from this point in time
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(&path)?
         } else {
@@ -876,17 +865,15 @@ impl MemoryStore {
 
     /// Find commit hash closest to a specific time
     async fn find_commit_at_time(&self, target_time: DateTime<Utc>) -> Result<String> {
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let datadir = std::env::current_dir()?;
         let log_output = std::process::Command::new("git")
             .args([
                 "log",
                 "--format=%H|%at",
                 "--until",
                 &target_time.timestamp().to_string(),
-                "--",
-                DATASET_DIR,  // Only commits affecting dataset
             ])
-            .current_dir(&git_dir)
+            .current_dir(&datadir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get git log: {}", e))?;
 
@@ -913,7 +900,7 @@ impl MemoryStore {
     async fn get_audit_trail_at_commit(&self, commit: &str) -> Result<Vec<AuditEntry>> {
         // Save current state
         let current_branch = self.current_branch().to_string();
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let git_dir = Path::new(&self.store_path);
 
         // Temporarily checkout the target commit
         std::process::Command::new("git")
@@ -1166,7 +1153,7 @@ impl MemoryStore {
         }
         
         // Query current branch for recommendations
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let path = Path::new(&self.store_path);
         if !path.exists() {
             return Ok(vec![]);
         }
@@ -1224,11 +1211,11 @@ impl MemoryStore {
         }
         
         // Check if git repo exists and is healthy
-        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let git_dir = Path::new(&self.store_path);
         let git_healthy = git_dir.join(".git").exists();
         
         // Check if dataset directory exists
-        let dataset_dir = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let dataset_dir = Path::new(&self.store_path);
         let storage_healthy = dataset_dir.exists() && dataset_dir.join(PROLLY_CONFIG_FILE).exists();
         
         Ok(MemoryStatus {
@@ -1294,24 +1281,39 @@ impl MemoryStore {
             &validated_memory,
             &format!("Updated client profile for {}", profile.id),
         ).await?;
-        
+
         Ok(())
     }
 
     /// Load client profile from versioned memory using direct SQL query
     pub async fn load_client_profile(&self) -> Result<Option<crate::advisor::ClientProfile>> {
-        let path = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let path = Path::new(&self.store_path);
         if !path.exists() || !path.join(PROLLY_CONFIG_FILE).exists() {
             return Ok(None);
         }
         
+        // Create a fresh storage instance to ensure we see the latest committed state
         let storage = ProllyStorage::<32>::open(&path)?;
         let mut glue = Glue::new(storage);
+        
+        // First, let's test if the table exists and has any data
+        let count_sql = "SELECT COUNT(*) FROM client_profiles";
+        let count_results = glue.execute(&count_sql).await?;
+        
+        use gluesql_core::prelude::Payload;
+        if let Some(count_result) = count_results.first() {
+            if let Payload::Select { labels: _, rows } = count_result {
+                if let Some(row) = rows.first() {
+                    if let Some(count_value) = row.first() {
+                        eprintln!("Debug: client_profiles table has {:?} rows", count_value);
+                    }
+                }
+            }
+        }
         
         let sql = "SELECT content FROM client_profiles ORDER BY timestamp DESC LIMIT 1";
         let results = glue.execute(&sql).await?;
         
-        use gluesql_core::prelude::Payload;
         if let Some(result) = results.first() {
             match result {
                 Payload::Select { labels: _, rows } => {
