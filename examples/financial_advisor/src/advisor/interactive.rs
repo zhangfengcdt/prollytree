@@ -176,9 +176,9 @@ impl<'a> InteractiveSession<'a> {
                 if parts.len() >= 2 {
                     // history <commit_hash> or history --branch <branch_name>
                     if parts[1] == "--branch" && parts.len() >= 3 {
-                        self.show_history_at_branch(&parts[2]).await?;
+                        self.show_history_at_branch(parts[2]).await?;
                     } else {
-                        self.show_history_at_commit(&parts[1]).await?;
+                        self.show_history_at_commit(parts[1]).await?;
                     }
                 } else {
                     self.show_history().await?;
@@ -623,7 +623,7 @@ impl<'a> InteractiveSession<'a> {
                     };
 
                     let response_info = if let Some(ms) = source.response_time_ms {
-                        format!(" ({}ms)", ms)
+                        format!(" ({ms}ms)")
                     } else {
                         String::new()
                     };
