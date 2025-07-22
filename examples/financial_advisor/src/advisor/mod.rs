@@ -278,6 +278,16 @@ impl FinancialAdvisor {
             .get_recommendations(None, Some(commit), Some(limit))
             .await
     }
+    
+    pub async fn get_recommendations_at_branch(
+        &self,
+        branch: &str,
+        limit: usize,
+    ) -> Result<Vec<Recommendation>> {
+        self.memory_store
+            .get_recommendations(Some(branch), None, Some(limit))
+            .await
+    }
 
     pub async fn get_memory_status(&self) -> Result<crate::memory::MemoryStatus> {
         self.memory_store.get_memory_status().await

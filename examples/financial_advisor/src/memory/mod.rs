@@ -1198,17 +1198,69 @@ impl MemoryStore {
     /// Get recommendations with optional branch/commit and limit  
     pub async fn get_recommendations(
         &self,
-        _branch: Option<&str>,
+        branch: Option<&str>,
         commit: Option<&str>,
         limit: Option<usize>,
     ) -> Result<Vec<crate::advisor::Recommendation>> {
-        if let Some(_commit_hash) = commit {
-            // For now, temporal querying is complex - return empty for specific commits
-            // This could be implemented later with proper git checkout and query
-            return Ok(vec![]);
+        if let Some(commit_hash) = commit {
+            // Use the existing temporal query method
+            let memories = self.get_recommendations_at_commit(commit_hash).await?;
+            
+            let mut recommendations = Vec::new();
+            for memory in memories {
+                match serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
+                    Ok(rec) => recommendations.push(rec),
+                    Err(e) => eprintln!("Warning: Failed to parse recommendation: {}", e),
+                }
+            }
+            
+            // Apply limit if specified
+            if let Some(limit) = limit {
+                recommendations.truncate(limit);
+            }
+            
+            return Ok(recommendations);
+        }
+        
+        // Handle branch-specific queries
+        if let Some(branch_name) = branch {
+            let current_branch = self.current_branch().to_string();
+            let git_dir = Path::new(&self.store_path);
+            
+            // Temporarily checkout the target branch
+            let checkout_output = std::process::Command::new("git")
+                .args(["checkout", branch_name])
+                .current_dir(&git_dir)
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to checkout branch '{}': {}", branch_name, e))?;
+            
+            if !checkout_output.status.success() {
+                let error = String::from_utf8_lossy(&checkout_output.stderr);
+                return Err(anyhow::anyhow!("Git checkout failed: {}", error));
+            }
+            
+            // Query recommendations on this branch (call internal method to avoid recursion)
+            let result = self.get_recommendations_internal(limit).await;
+            
+            // Restore original branch
+            std::process::Command::new("git")
+                .args(["checkout", &current_branch])
+                .current_dir(&git_dir)
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
+            
+            return result;
         }
 
         // Query current branch for recommendations
+        self.get_recommendations_internal(limit).await
+    }
+    
+    /// Internal method to get recommendations from current branch (no branch/commit switching)
+    async fn get_recommendations_internal(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::advisor::Recommendation>> {
         let path = Path::new(&self.store_path);
         if !path.exists() {
             return Ok(vec![]);

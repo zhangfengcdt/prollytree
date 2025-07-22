@@ -453,12 +453,27 @@ impl<'a> InteractiveSession<'a> {
         );
         println!("{}", "━".repeat(50).dimmed());
 
-        // For now, show current branch recommendations (could be extended to support branch switching)
-        println!(
-            "{} Branch-specific history not yet implemented, showing current branch",
-            "ℹ️".yellow()
-        );
-        self.show_history().await?;
+        match self.advisor.get_recommendations_at_branch(branch, 10).await {
+            Ok(recommendations) => {
+                if recommendations.is_empty() {
+                    println!(
+                        "{} No recommendations found on branch {}",
+                        "ℹ️".blue(),
+                        branch
+                    );
+                } else {
+                    self.display_recommendations(&recommendations).await?;
+                }
+            }
+            Err(e) => {
+                println!(
+                    "{} Failed to retrieve history on branch {}: {}",
+                    "❌".red(),
+                    branch,
+                    e
+                );
+            }
+        }
 
         Ok(())
     }
