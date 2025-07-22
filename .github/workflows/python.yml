@@ -1,0 +1,67 @@
+name: Build Python Package
+
+on:
+  pull_request:
+    types: [ready_for_review, synchronize]
+    paths:
+      - 'python/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'python/**'
+
+jobs:
+  build-wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: auto
+#          - os: ubuntu-latest
+#            target: aarch64
+#            manylinux: auto
+#          # Windows
+#          - os: windows-latest
+#            target: x64
+#            manylinux: false
+#          - os: windows-latest
+#            target: x86
+#            manylinux: false
+#          # macOS
+#          - os: macos-latest
+#            target: x86_64
+#            manylinux: false
+#          - os: macos-14
+#            target: aarch64
+#            manylinux: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Build wheels (CPython only)
+      uses: PyO3/maturin-action@v1
+      env:
+        # Ensure PyO3 doesn't try to use PyPy
+        PYO3_CROSS_PYTHON_VERSION: "3.11"
+      with:
+        target: ${{ matrix.target }}
+        args: --release --out dist --features python --interpreter python3.11
+        sccache: 'true'
+        manylinux: ${{ matrix.manylinux }}
+        rust-toolchain: stable
+
+    - name: Upload wheels
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheels-${{ matrix.os }}-${{ matrix.target }}
+        path: dist
