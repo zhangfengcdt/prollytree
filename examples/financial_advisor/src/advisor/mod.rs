@@ -150,8 +150,7 @@ impl FinancialAdvisor {
         // Step 5: Store recommendation with audit trail
         self.store_recommendation(&recommendation).await?;
         
-        // Also store persistently and keep in session memory
-        self.memory_store.store_recommendation_persistent(&recommendation).await?;
+        // Keep in session memory for quick access
         self.session_recommendations.push(recommendation.clone());
 
         Ok(recommendation)
@@ -283,23 +282,11 @@ impl FinancialAdvisor {
     }
 
     pub async fn get_recent_recommendations(&self, limit: usize) -> Result<Vec<Recommendation>> {
-        // Try persistent storage first (works across sessions)
-        match self.memory_store.get_recent_recommendations(limit).await {
-            Ok(persistent_recs) if !persistent_recs.is_empty() => {
-                return Ok(persistent_recs);
-            }
-            _ => {}
-        }
-        
-        // Fallback to session memory if persistent storage is empty
-        if !self.session_recommendations.is_empty() {
-            let mut recs = self.session_recommendations.clone();
-            recs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Most recent first
-            recs.truncate(limit);
-            return Ok(recs);
-        }
-        
-        Ok(vec![])
+        self.memory_store.get_recent_recommendations(limit).await
+    }
+
+    pub async fn get_recommendations_at_commit(&self, commit: &str, limit: usize) -> Result<Vec<Recommendation>> {
+        self.memory_store.get_recommendations(None, Some(commit), Some(limit)).await
     }
 
     pub async fn get_memory_status(&self) -> Result<crate::memory::MemoryStatus> {
@@ -312,6 +299,14 @@ impl FinancialAdvisor {
 
     pub async fn get_audit_trail(&self) -> Result<Vec<crate::memory::AuditEntry>> {
         self.memory_store.get_audit_trail(None, None).await
+    }
+
+    pub async fn store_client_profile(&mut self, profile: &ClientProfile) -> Result<()> {
+        self.memory_store.store_client_profile(profile).await
+    }
+
+    pub async fn load_client_profile(&self) -> Result<Option<ClientProfile>> {
+        self.memory_store.load_client_profile().await
     }
 
     async fn generate_ai_reasoning(

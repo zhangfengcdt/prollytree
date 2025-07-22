@@ -18,13 +18,23 @@ impl<'a> InteractiveSession<'a> {
     pub async fn run(mut self) -> Result<()> {
         self.show_welcome();
 
-        // Create a default client profile
-        let mut client = ClientProfile {
-            id: "demo-client".to_string(),
-            risk_tolerance: RiskTolerance::Moderate,
-            investment_goals: vec!["Growth".to_string(), "Income".to_string()],
-            time_horizon: "5-10 years".to_string(),
-            restrictions: vec![],
+        // Load existing client profile or create default
+        let mut client = match self.advisor.load_client_profile().await? {
+            Some(profile) => {
+                println!("{} Loaded existing client profile: {}", "✅".green(), profile.id);
+                profile
+            }
+            None => {
+                let default_profile = ClientProfile {
+                    id: "demo-client".to_string(),
+                    risk_tolerance: RiskTolerance::Moderate,
+                    investment_goals: vec!["Growth".to_string(), "Income".to_string()],
+                    time_horizon: "5-10 years".to_string(),
+                    restrictions: vec![],
+                };
+                println!("{} Created new client profile: {}", "🆕".blue(), default_profile.id);
+                default_profile
+            }
         };
 
         loop {
@@ -75,6 +85,8 @@ impl<'a> InteractiveSession<'a> {
             "risk <LEVEL>".cyan()
         );
         println!("  {} - Show recent recommendations", "history".cyan());
+        println!("  {} - Show recommendations at specific commit", "history <commit>".cyan());
+        println!("  {} - Show recommendations on branch", "history --branch <name>".cyan());
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
         println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
@@ -133,6 +145,12 @@ impl<'a> InteractiveSession<'a> {
                     }
                 };
 
+                // Save the updated profile
+                match self.advisor.store_client_profile(client).await {
+                    Ok(_) => println!("{} Profile saved successfully", "💾".green()),
+                    Err(e) => println!("{} Error: Failed to save profile: {}", "❌".red(), e),
+                }
+
                 println!(
                     "{} Risk tolerance set to: {:?}",
                     "✅".green(),
@@ -141,7 +159,16 @@ impl<'a> InteractiveSession<'a> {
             }
 
             "history" | "hist" => {
-                self.show_history().await?;
+                if parts.len() >= 2 {
+                    // history <commit_hash> or history --branch <branch_name>
+                    if parts[1] == "--branch" && parts.len() >= 3 {
+                        self.show_history_at_branch(&parts[2]).await?;
+                    } else {
+                        self.show_history_at_commit(&parts[1]).await?;
+                    }
+                } else {
+                    self.show_history().await?;
+                }
             }
 
             "memory" | "mem" => {
@@ -208,6 +235,8 @@ impl<'a> InteractiveSession<'a> {
             "risk <LEVEL>".cyan()
         );
         println!("  {} - Show recent recommendations", "history".cyan());
+        println!("  {} - Show recommendations at specific commit", "history <commit>".cyan());
+        println!("  {} - Show recommendations on branch", "history --branch <name>".cyan());
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
         println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
@@ -355,23 +384,7 @@ impl<'a> InteractiveSession<'a> {
                         "💡".yellow()
                     );
                 } else {
-                    for (i, rec) in recommendations.iter().enumerate() {
-                        println!();
-                        println!("{} Recommendation #{}", "📊".green(), i + 1);
-                        println!("  {}: {}", "Symbol".cyan(), rec.symbol);
-                        println!("  {}: {}", "Action".cyan(), rec.recommendation_type.as_str().bold());
-                        println!("  {}: {:.1}%", "Confidence".cyan(), rec.confidence * 100.0);
-                        println!("  {}: {}", "Client ID".cyan(), rec.client_id);
-                        println!("  {}: {}", "Date".cyan(), rec.timestamp.format("%Y-%m-%d %H:%M:%S"));
-                        
-                        // Show first line of reasoning
-                        let reasoning_lines: Vec<&str> = rec.reasoning.lines().collect();
-                        if !reasoning_lines.is_empty() {
-                            println!("  {}: {}", "Summary".cyan(), reasoning_lines[0]);
-                        }
-                        
-                        println!("  {}: {}", "Version".dimmed(), rec.memory_version);
-                    }
+                    self.display_recommendations(&recommendations).await?;
                 }
             }
             Err(e) => {
@@ -379,6 +392,58 @@ impl<'a> InteractiveSession<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    async fn show_history_at_commit(&self, commit: &str) -> Result<()> {
+        println!("{} at commit {}", "📜 Recommendations".blue().bold(), commit.dimmed());
+        println!("{}", "━".repeat(50).dimmed());
+
+        match self.advisor.get_recommendations_at_commit(commit, 10).await {
+            Ok(recommendations) => {
+                if recommendations.is_empty() {
+                    println!("{} No recommendations found at commit {}", "ℹ️".blue(), commit);
+                } else {
+                    self.display_recommendations(&recommendations).await?;
+                }
+            }
+            Err(e) => {
+                println!("{} Failed to retrieve history at commit {}: {}", "❌".red(), commit, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn show_history_at_branch(&self, branch: &str) -> Result<()> {
+        println!("{} on branch {}", "📜 Recommendations".blue().bold(), branch.cyan());
+        println!("{}", "━".repeat(50).dimmed());
+        
+        // For now, show current branch recommendations (could be extended to support branch switching)
+        println!("{} Branch-specific history not yet implemented, showing current branch", "ℹ️".yellow());
+        self.show_history().await?;
+        
+        Ok(())
+    }
+
+    async fn display_recommendations(&self, recommendations: &[crate::advisor::Recommendation]) -> Result<()> {
+        for (i, rec) in recommendations.iter().enumerate() {
+            println!();
+            println!("{} Recommendation #{}", "📊".green(), i + 1);
+            println!("  {}: {}", "Symbol".cyan(), rec.symbol);
+            println!("  {}: {}", "Action".cyan(), rec.recommendation_type.as_str().bold());
+            println!("  {}: {:.1}%", "Confidence".cyan(), rec.confidence * 100.0);
+            println!("  {}: {}", "Client ID".cyan(), rec.client_id);
+            println!("  {}: {}", "Date".cyan(), rec.timestamp.format("%Y-%m-%d %H:%M:%S"));
+            
+            // Show first line of reasoning
+            let reasoning_lines: Vec<&str> = rec.reasoning.lines().collect();
+            if !reasoning_lines.is_empty() {
+                println!("  {}: {}", "Summary".cyan(), reasoning_lines[0]);
+            }
+            
+            println!("  {}: {}", "Version".dimmed(), rec.memory_version);
+        }
         Ok(())
     }
 
