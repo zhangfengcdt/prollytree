@@ -386,33 +386,98 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "🧠 Memory Status".blue().bold());
         println!("{}", "━".repeat(20).dimmed());
 
-        // Show memory consistency info
-        println!(
-            "{} Memory validation: {}",
-            "✅".green(),
-            "ACTIVE".bold().green()
-        );
-        println!(
-            "{} Security monitoring: {}",
-            "🛡️".blue(),
-            "ENABLED".bold().blue()
-        );
-        println!(
-            "{} Audit trail: {}",
-            "📝".yellow(),
-            "LOGGING".bold().yellow()
-        );
-        println!(
-            "{} Cross-validation: {}",
-            "🔍".cyan(),
-            "MULTI-SOURCE".bold().cyan()
-        );
+        // Get real memory status
+        match self.advisor.get_memory_status().await {
+            Ok(status) => {
+                // Show memory consistency info with real data
+                let validation_status = if status.validation_active {
+                    "ACTIVE".bold().green()
+                } else {
+                    "INACTIVE".bold().red()
+                };
+                println!("{} Memory validation: {}", "✅".green(), validation_status);
+
+                let security_status = if status.security_monitoring {
+                    "ENABLED".bold().blue()
+                } else {
+                    "DISABLED".bold().red()
+                };
+                println!("{} Security monitoring: {}", "🛡️".blue(), security_status);
+
+                let audit_status = if status.audit_enabled {
+                    "LOGGING".bold().yellow()
+                } else {
+                    "DISABLED".bold().red()
+                };
+                println!("{} Audit trail: {}", "📝".yellow(), audit_status);
+
+                let validation_mode = if status.storage_healthy && status.git_healthy {
+                    "MULTI-SOURCE".bold().cyan()
+                } else {
+                    "LIMITED".bold().yellow()
+                };
+                println!("{} Cross-validation: {}", "🔍".cyan(), validation_mode);
+
+                println!();
+                println!("{}", "System Information:".yellow());
+                println!("  {} Current branch: {}", "🌿".green(), status.current_branch);
+                println!("  {} Latest commit: {}", "📝".blue(), status.current_commit);
+                println!("  {} Total branches: {}", "🌳".cyan(), status.total_branches);
+                println!("  {} Total commits: {}", "📊".yellow(), status.total_commits);
+                
+                println!();
+                println!("{}", "Memory Statistics:".yellow());
+                println!("  {} Recommendations: {}", "💡".green(), status.recommendation_count);
+                println!("  {} Market data: {}", "📈".blue(), status.market_data_count);
+                println!("  {} Audit entries: {}", "📋".yellow(), status.audit_count);
+                
+                println!();
+                println!("{}", "Health Status:".yellow());
+                let storage_indicator = if status.storage_healthy { "✅" } else { "❌" };
+                println!("  {} Storage system: {}", storage_indicator, 
+                    if status.storage_healthy { "HEALTHY".green() } else { "ERROR".red() });
+                let git_indicator = if status.git_healthy { "✅" } else { "❌" };
+                println!("  {} Git repository: {}", git_indicator, 
+                    if status.git_healthy { "HEALTHY".green() } else { "ERROR".red() });
+            }
+            Err(e) => {
+                println!("{} Failed to retrieve memory status: {}", "❌".red(), e);
+                return Ok(());
+            }
+        }
 
         println!();
-        println!("{}", "Validation Sources:".yellow());
-        println!("  • Bloomberg (95% trust)");
-        println!("  • Yahoo Finance (85% trust)");
-        println!("  • Alpha Vantage (80% trust)");
+        
+        // Get real validation sources
+        match self.advisor.get_validation_sources().await {
+            Ok(sources) => {
+                println!("{}", "Validation Sources:".yellow());
+                for source in sources {
+                    let status_indicator = match source.status {
+                        crate::memory::SourceStatus::Active => "🟢",
+                        crate::memory::SourceStatus::Inactive => "🟡",
+                        crate::memory::SourceStatus::Error => "🔴",
+                        crate::memory::SourceStatus::Unknown => "⚪",
+                    };
+                    
+                    let response_info = if let Some(ms) = source.response_time_ms {
+                        format!(" ({}ms)", ms)
+                    } else {
+                        String::new()
+                    };
+                    
+                    println!("  {} {} ({:.0}% trust){}", 
+                        status_indicator, 
+                        source.name, 
+                        source.trust_level * 100.0,
+                        response_info
+                    );
+                }
+            }
+            Err(e) => {
+                println!("{} Failed to retrieve validation sources: {}", "❌".red(), e);
+            }
+        }
 
         Ok(())
     }
@@ -421,16 +486,45 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "📋 Audit Trail".blue().bold());
         println!("{}", "━".repeat(20).dimmed());
 
-        // In a real implementation, query the actual audit trail
-        println!("{} Session started", "📅 2024-07-21 12:00:00".dimmed());
-        println!(
-            "{} Memory store initialized",
-            "🔧 2024-07-21 12:00:01".dimmed()
-        );
-        println!(
-            "{} Security monitor enabled",
-            "🛡️ 2024-07-21 12:00:01".dimmed()
-        );
+        // Query the real audit trail
+        match self.advisor.get_audit_trail().await {
+            Ok(entries) => {
+                if entries.is_empty() {
+                    println!("{} No audit entries found", "ℹ️".blue());
+                } else {
+                    println!("Showing last {} audit entries:", entries.len().min(10));
+                    println!();
+                    
+                    for (i, entry) in entries.iter().take(10).enumerate() {
+                        let icon = match entry.memory_type.as_str() {
+                            "Recommendation" => "💡",
+                            "MarketData" => "📈",
+                            "Audit" => "📋",
+                            "System" => "⚙️",
+                            _ => "📝",
+                        };
+                        
+                        println!(
+                            "{} {}",
+                            format!("{} {}", icon, entry.timestamp.format("%Y-%m-%d %H:%M:%S")).dimmed(),
+                            entry.action,
+                        );
+                        
+                        if i >= 9 { // Only show first 10
+                            break;
+                        }
+                    }
+                    
+                    if entries.len() > 10 {
+                        println!();
+                        println!("{} ... and {} more entries", "📝".dimmed(), entries.len() - 10);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("{} Failed to retrieve audit trail: {}", "❌".red(), e);
+            }
+        }
 
         Ok(())
     }

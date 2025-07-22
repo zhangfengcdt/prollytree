@@ -16,8 +16,8 @@ pub mod types;
 
 pub use consistency::MemoryConsistencyChecker;
 pub use types::{
-    AuditEntry, MemoryCommit, MemoryCommitDetails, MemoryComparison, MemorySnapshot, MemoryType,
-    ValidatedMemory,
+    AuditEntry, MemoryCommit, MemoryCommitDetails, MemoryComparison, MemorySnapshot, MemoryStatus, 
+    MemoryType, SourceStatus, ValidatedMemory, ValidationSource,
 };
 
 // Constants for directory structure
@@ -1217,5 +1217,82 @@ impl MemoryStore {
         }
 
         Ok(recommendations)
+    }
+
+    /// Get memory system status information
+    pub async fn get_memory_status(&self) -> Result<MemoryStatus> {
+        let current_commit = self.get_current_commit_id().await.unwrap_or_else(|_| "unknown".to_string());
+        let branches = self.list_branches().unwrap_or_default();
+        let current_branch = self.current_branch();
+        
+        // Get memory stats
+        let history = self.get_memory_history(Some(100)).await.unwrap_or_default();
+        let total_commits = history.len();
+        
+        // Count by type
+        let mut recommendation_count = 0;
+        let mut market_data_count = 0;
+        let mut audit_count = 0;
+        
+        for commit in &history {
+            match commit.memory_type {
+                MemoryType::Recommendation => recommendation_count += 1,
+                MemoryType::MarketData => market_data_count += 1,
+                MemoryType::Audit => audit_count += 1,
+                _ => {}
+            }
+        }
+        
+        // Check if git repo exists and is healthy
+        let git_dir = Path::new(&self.store_path).join(DATA_DIR);
+        let git_healthy = git_dir.join(".git").exists();
+        
+        // Check if dataset directory exists
+        let dataset_dir = Path::new(&self.store_path).join(DATA_DIR).join(DATASET_DIR);
+        let storage_healthy = dataset_dir.exists() && dataset_dir.join(PROLLY_CONFIG_FILE).exists();
+        
+        Ok(MemoryStatus {
+            validation_active: storage_healthy && git_healthy,
+            audit_enabled: self.audit_enabled,
+            security_monitoring: true, // Always enabled for this demo
+            current_branch: current_branch.to_string(),
+            current_commit: current_commit[..8.min(current_commit.len())].to_string(),
+            total_branches: branches.len(),
+            total_commits,
+            recommendation_count,
+            market_data_count,
+            audit_count,
+            storage_healthy,
+            git_healthy,
+        })
+    }
+
+    /// Get validation sources with their current status
+    pub async fn get_validation_sources(&self) -> Result<Vec<ValidationSource>> {
+        // In a real implementation, we would check the actual health of each source
+        // For now, simulate checking each source
+        Ok(vec![
+            ValidationSource {
+                name: "Bloomberg".to_string(),
+                trust_level: 0.95,
+                status: SourceStatus::Active,
+                last_checked: Some(Utc::now()),
+                response_time_ms: Some(45),
+            },
+            ValidationSource {
+                name: "Yahoo Finance".to_string(),
+                trust_level: 0.85,
+                status: SourceStatus::Active,
+                last_checked: Some(Utc::now()),
+                response_time_ms: Some(120),
+            },
+            ValidationSource {
+                name: "Alpha Vantage".to_string(),
+                trust_level: 0.80,
+                status: SourceStatus::Active,
+                last_checked: Some(Utc::now()),
+                response_time_ms: Some(200),
+            },
+        ])
     }
 }

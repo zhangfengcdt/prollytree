@@ -107,3 +107,39 @@ pub struct MemoryComparison {
     pub total_memory_change: i64,
     pub summary: String,
 }
+
+/// Real-time memory system status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryStatus {
+    pub validation_active: bool,
+    pub audit_enabled: bool,
+    pub security_monitoring: bool,
+    pub current_branch: String,
+    pub current_commit: String,
+    pub total_branches: usize,
+    pub total_commits: usize,
+    pub recommendation_count: usize,
+    pub market_data_count: usize,
+    pub audit_count: usize,
+    pub storage_healthy: bool,
+    pub git_healthy: bool,
+}
+
+/// Validation source status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationSource {
+    pub name: String,
+    pub trust_level: f64,
+    pub status: SourceStatus,
+    pub last_checked: Option<DateTime<Utc>>,
+    pub response_time_ms: Option<u32>,
+}
+
+/// Source health status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SourceStatus {
+    Active,
+    Inactive,
+    Error,
+    Unknown,
+}

@@ -294,6 +294,18 @@ impl FinancialAdvisor {
         self.memory_store.get_recent_recommendations(limit).await
     }
 
+    pub async fn get_memory_status(&self) -> Result<crate::memory::MemoryStatus> {
+        self.memory_store.get_memory_status().await
+    }
+
+    pub async fn get_validation_sources(&self) -> Result<Vec<crate::memory::ValidationSource>> {
+        self.memory_store.get_validation_sources().await
+    }
+
+    pub async fn get_audit_trail(&self) -> Result<Vec<crate::memory::AuditEntry>> {
+        self.memory_store.get_audit_trail(None, None).await
+    }
+
     async fn generate_ai_reasoning(
         &self,
         symbol: &str,
