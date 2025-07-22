@@ -631,6 +631,9 @@ impl<const N: usize> VersionedKvStore<N> {
     fn commit_prolly_metadata(&self, additional_message: &str) -> Result<(), GitKvError> {
         // Get relative paths to the prolly files from git root
         let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        let git_root = git_root.canonicalize().map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to canonicalize git root: {e}"))
+        })?;
         let current_dir = std::env::current_dir().map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
         })?;
@@ -659,6 +662,7 @@ impl<const N: usize> VersionedKvStore<N> {
         }
 
         if files_to_stage.is_empty() {
+            println!("staging is empty, nothing to commit");
             return Ok(()); // Nothing to commit
         }
 
