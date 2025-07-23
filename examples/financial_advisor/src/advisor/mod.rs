@@ -333,6 +333,15 @@ impl FinancialAdvisor {
         Ok(())
     }
 
+    pub fn branch_exists(&self, name: &str) -> bool {
+        // Check if branch exists by listing all branches
+        if let Ok(branches) = self.memory_store.list_branches() {
+            branches.contains(&name.to_string())
+        } else {
+            false
+        }
+    }
+
     async fn generate_ai_reasoning(
         &self,
         symbol: &str,

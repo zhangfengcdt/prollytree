@@ -36,11 +36,25 @@ impl<'a> InteractiveSession<'a> {
                     time_horizon: "5-10 years".to_string(),
                     restrictions: vec![],
                 };
-                println!(
-                    "{} Created new client profile: {}",
-                    "🆕".blue(),
-                    default_profile.id
-                );
+                
+                // Save the default profile so it persists
+                match self.advisor.store_client_profile(&default_profile).await {
+                    Ok(_) => {
+                        println!(
+                            "{} Created and saved new client profile: {}",
+                            "🆕".blue(),
+                            default_profile.id
+                        );
+                    }
+                    Err(e) => {
+                        println!(
+                            "{} Created client profile but failed to save: {}",
+                            "⚠️".yellow(),
+                            e
+                        );
+                    }
+                }
+                
                 default_profile
             }
         };
@@ -110,7 +124,7 @@ impl<'a> InteractiveSession<'a> {
         println!("  {} - Show memory tree visualization", "visualize".cyan());
         println!("  {} - Create and switch to memory branch", "branch <NAME>".cyan());
         println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
-        println!("  {} - Show branch information", "branch-info".cyan());
+        println!("  {} - List all branches", "list-branches".cyan());
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
@@ -242,6 +256,10 @@ impl<'a> InteractiveSession<'a> {
                 println!("Result: '{}'", actual);
             }
 
+            "list-branches" | "lb" => {
+                self.list_branches();
+            }
+
             "exit" | "quit" | "q" => {
                 return Ok(false);
             }
@@ -288,7 +306,7 @@ impl<'a> InteractiveSession<'a> {
         println!("  {} - Show memory tree visualization", "visualize".cyan());
         println!("  {} - Create and switch to memory branch", "branch <NAME>".cyan());
         println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
-        println!("  {} - Show branch information", "branch-info".cyan());
+        println!("  {} - List all branches", "list-branches".cyan());
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
@@ -793,6 +811,13 @@ impl<'a> InteractiveSession<'a> {
     }
 
     async fn create_branch(&mut self, name: &str) -> Result<()> {
+        // Check if branch already exists
+        if self.advisor.branch_exists(name) {
+            println!("{} Branch '{}' already exists!", "⚠️".yellow(), name.bold());
+            println!("{} Use 'switch {}' to switch to the existing branch", "💡".blue(), name);
+            return Ok(());
+        }
+
         println!("{} Creating memory branch: {}", "🌿".green(), name.bold());
 
         // Create the branch using the memory store
@@ -815,6 +840,13 @@ impl<'a> InteractiveSession<'a> {
     }
 
     async fn switch_branch(&mut self, name: &str) -> Result<()> {
+        // Check if branch exists before trying to switch
+        if !self.advisor.branch_exists(name) {
+            println!("{} Branch '{}' does not exist!", "❌".red(), name.bold());
+            println!("{} Use 'branch {}' to create a new branch", "💡".blue(), name);
+            return Ok(());
+        }
+
         println!("{} Switching to branch: {}", "🔀".blue(), name.bold());
 
         match self.advisor.switch_to_branch(name).await {
@@ -831,20 +863,62 @@ impl<'a> InteractiveSession<'a> {
     }
 
     fn show_branch_info(&self) {
-        println!("{}", "🌿 Branch Information".green().bold());
-        println!("{}", "━".repeat(25).dimmed());
+        // Show all branches like git branch command
+        match self.advisor.memory_store.list_branches() {
+            Ok(branches) => {
+                let current_branch = self.advisor.get_actual_current_branch();
+                
+                if branches.is_empty() {
+                    println!("No branches found");
+                } else {
+                    for branch in branches {
+                        if branch == current_branch {
+                            println!("* {}", branch.green());
+                        } else {
+                            println!("  {}", branch);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!("error: Failed to list branches: {}", e);
+            }
+        }
         
+        // Show sync status if there's a mismatch
         let cached_branch = self.advisor.current_branch();
         let actual_branch = self.advisor.get_actual_current_branch();
         
-        println!("{}: {}", "Cached branch".cyan(), cached_branch);
-        println!("{}: {}", "Actual git branch".cyan(), actual_branch);
-        
         if cached_branch != actual_branch {
-            println!("{} Branch mismatch detected!", "⚠️".yellow());
-            println!("This might indicate external git operations or sync issues.");
-        } else {
-            println!("{} Branches are in sync", "✅".green());
+            println!();
+            println!("{} Branch mismatch: cached='{}', actual='{}'", 
+                     "warning:".yellow(), cached_branch, actual_branch);
+        }
+    }
+
+    fn list_branches(&self) {
+        println!("{}", "🌳 Available Branches".green().bold());
+        println!("{}", "━".repeat(25).dimmed());
+        
+        match self.advisor.memory_store.list_branches() {
+            Ok(branches) => {
+                let current_branch = self.advisor.get_actual_current_branch();
+                
+                if branches.is_empty() {
+                    println!("{} No branches found", "ℹ️".blue());
+                } else {
+                    for branch in branches {
+                        if branch == current_branch {
+                            println!("  {} {} (current)", "●".green(), branch.bold());
+                        } else {
+                            println!("  {} {}", "○".dimmed(), branch);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!("{} Failed to list branches: {}", "❌".red(), e);
+            }
         }
     }
 }
