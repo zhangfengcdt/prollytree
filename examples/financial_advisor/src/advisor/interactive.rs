@@ -120,7 +120,7 @@ impl<'a> InteractiveSession<'a> {
         );
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
-        println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
+        println!("  {} - Test injection attack", "test-inject <TEXT> [-- notes]".cyan());
         println!("  {} - Show memory tree visualization", "visualize".cyan());
         println!(
             "  {} - Create and switch to memory branch",
@@ -222,12 +222,25 @@ impl<'a> InteractiveSession<'a> {
 
             "test-inject" | "inject" => {
                 if parts.len() < 2 {
-                    println!("{} Usage: test-inject <malicious text>", "❓".yellow());
+                    println!("{} Usage: test-inject <malicious text> [-- notes]", "❓".yellow());
                     return Ok(true);
                 }
 
-                let payload = parts[1..].join(" ");
-                self.test_injection_attack(&payload).await?;
+                // Find if there's a "--" separator for notes
+                let separator_pos = parts.iter().position(|&p| p == "--");
+                let (payload, notes) = if let Some(pos) = separator_pos {
+                    let payload = parts[1..pos].join(" ");
+                    let notes = if pos + 1 < parts.len() {
+                        Some(parts[pos + 1..].join(" "))
+                    } else {
+                        None
+                    };
+                    (payload, notes)
+                } else {
+                    (parts[1..].join(" "), None)
+                };
+                
+                self.test_injection_attack(&payload, notes).await?;
             }
 
             "visualize" | "vis" => {
@@ -310,7 +323,7 @@ impl<'a> InteractiveSession<'a> {
         );
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
-        println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
+        println!("  {} - Test injection attack", "test-inject <TEXT> [-- notes]".cyan());
         println!("  {} - Show memory tree visualization", "visualize".cyan());
         println!(
             "  {} - Create and switch to memory branch",
@@ -729,6 +742,7 @@ impl<'a> InteractiveSession<'a> {
                             "MarketData" => "📈",
                             "Audit" => "📋",
                             "System" => "⚙️",
+                            "Security" => "🛡️",
                             _ => "📝",
                         };
 
@@ -763,7 +777,7 @@ impl<'a> InteractiveSession<'a> {
         Ok(())
     }
 
-    async fn test_injection_attack(&mut self, payload: &str) -> Result<()> {
+    async fn test_injection_attack(&mut self, payload: &str, notes: Option<String>) -> Result<()> {
         println!("{}", "🚨 Testing Injection Attack".red().bold());
         println!("{}", "━".repeat(30).dimmed());
         println!("{}: {}", "Payload".yellow(), payload);
@@ -790,6 +804,16 @@ impl<'a> InteractiveSession<'a> {
                 println!(
                     "This shows how ProllyTree's versioned memory prevents injection attacks!"
                 );
+
+                // Store the security test result
+                match self.advisor.store_security_test(payload, &alert, notes).await {
+                    Ok(_) => {
+                        println!("{} Security test result saved to memory", "💾".green());
+                    }
+                    Err(e) => {
+                        println!("{} Failed to save security test: {}", "⚠️".yellow(), e);
+                    }
+                }
             }
             Err(e) => {
                 println!("{} Error during attack simulation: {}", "❌".red(), e);

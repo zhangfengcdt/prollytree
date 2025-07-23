@@ -415,6 +415,7 @@ async fn run_memory_command(storage: &str, git_command: GitCommand) -> Result<()
                     financial_advisor::memory::MemoryType::Audit => "📋",
                     financial_advisor::memory::MemoryType::ClientProfile => "👤",
                     financial_advisor::memory::MemoryType::System => "⚙️",
+                    financial_advisor::memory::MemoryType::Security => "🛡️",
                 };
 
                 println!(
@@ -638,6 +639,7 @@ async fn run_memory_command(storage: &str, git_command: GitCommand) -> Result<()
                     financial_advisor::memory::MemoryType::Audit => "📋",
                     financial_advisor::memory::MemoryType::ClientProfile => "👤",
                     financial_advisor::memory::MemoryType::System => "⚙️",
+                    financial_advisor::memory::MemoryType::Security => "🛡️",
                 };
 
                 let connector = if i == 0 { " " } else { "│" };
@@ -736,6 +738,7 @@ async fn run_memory_command(storage: &str, git_command: GitCommand) -> Result<()
                     financial_advisor::memory::MemoryType::Audit => "📋",
                     financial_advisor::memory::MemoryType::ClientProfile => "👤",
                     financial_advisor::memory::MemoryType::System => "⚙️",
+                    financial_advisor::memory::MemoryType::Security => "🛡️",
                 };
 
                 let bar_length = (percentage / 100.0 * 30.0) as usize;
