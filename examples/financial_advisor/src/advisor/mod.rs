@@ -106,6 +106,7 @@ impl FinancialAdvisor {
         &mut self,
         symbol: &str,
         client_profile: &ClientProfile,
+        notes: Option<String>,
     ) -> Result<Recommendation> {
         if self.verbose {
             println!("🔍 Fetching market data for {symbol}...");
@@ -148,7 +149,7 @@ impl FinancialAdvisor {
         );
 
         // Step 5: Store recommendation with audit trail
-        self.store_recommendation(&recommendation).await?;
+        self.store_recommendation(&recommendation, notes).await?;
 
         // Keep in session memory for quick access
         self.session_recommendations.push(recommendation.clone());
@@ -219,7 +220,11 @@ impl FinancialAdvisor {
         Ok(())
     }
 
-    async fn store_recommendation(&mut self, recommendation: &Recommendation) -> Result<()> {
+    async fn store_recommendation(
+        &mut self,
+        recommendation: &Recommendation,
+        notes: Option<String>,
+    ) -> Result<()> {
         let memory = ValidatedMemory {
             id: recommendation.id.clone(),
             content: serde_json::to_string(recommendation)?,
@@ -232,9 +237,19 @@ impl FinancialAdvisor {
             cross_references: vec![],
         };
 
-        // Store with full audit trail
+        // Create custom commit message based on notes
+        let commit_message = if let Some(user_notes) = notes {
+            format!(
+                "Finance Advisor: recommend {} ({})",
+                recommendation.symbol, user_notes
+            )
+        } else {
+            format!("Finance Advisor: recommend {}", recommendation.symbol)
+        };
+
+        // Store with full audit trail and custom commit message
         self.memory_store
-            .store_with_audit(
+            .store_with_audit_and_commit(
                 MemoryType::Recommendation,
                 &memory,
                 &format!(
@@ -242,6 +257,7 @@ impl FinancialAdvisor {
                     recommendation.recommendation_type.as_str(),
                     recommendation.symbol
                 ),
+                &commit_message,
             )
             .await?;
 

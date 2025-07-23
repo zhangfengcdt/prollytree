@@ -102,7 +102,7 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "Available commands:".yellow());
         println!(
             "  {} - Get recommendation for a stock symbol",
-            "recommend <SYMBOL>".cyan()
+            "recommend <SYMBOL> [notes]".cyan()
         );
         println!("  {} - Show client profile", "profile".cyan());
         println!(
@@ -147,12 +147,17 @@ impl<'a> InteractiveSession<'a> {
 
             "recommend" | "r" => {
                 if parts.len() < 2 {
-                    println!("{} Usage: recommend <SYMBOL>", "❓".yellow());
+                    println!("{} Usage: recommend <SYMBOL> [notes]", "❓".yellow());
                     return Ok(true);
                 }
 
                 let symbol = parts[1].to_uppercase();
-                self.handle_recommendation(&symbol, client).await?;
+                let notes = if parts.len() > 2 {
+                    Some(parts[2..].join(" "))
+                } else {
+                    None
+                };
+                self.handle_recommendation(&symbol, client, notes).await?;
             }
 
             "profile" | "p" => {
@@ -287,7 +292,7 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "Available commands:".yellow());
         println!(
             "  {} - Get recommendation for a stock symbol",
-            "recommend <SYMBOL>".cyan()
+            "recommend <SYMBOL> [notes]".cyan()
         );
         println!("  {} - Show client profile", "profile".cyan());
         println!(
@@ -343,14 +348,19 @@ impl<'a> InteractiveSession<'a> {
         println!();
     }
 
-    async fn handle_recommendation(&mut self, symbol: &str, client: &ClientProfile) -> Result<()> {
+    async fn handle_recommendation(
+        &mut self,
+        symbol: &str,
+        client: &ClientProfile,
+        notes: Option<String>,
+    ) -> Result<()> {
         println!(
             "{} Generating recommendation for {}...",
             "🔍".yellow(),
             symbol
         );
 
-        match self.advisor.get_recommendation(symbol, client).await {
+        match self.advisor.get_recommendation(symbol, client, notes).await {
             Ok(recommendation) => {
                 println!();
                 println!("{}", "📊 Recommendation Generated".green().bold());
