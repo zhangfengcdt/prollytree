@@ -505,7 +505,9 @@ impl MemoryStore {
         commit_message: &str,
     ) -> Result<String> {
         // Store using typed storage with custom commit message
-        let version = self.store_typed_with_commit(item, memory, commit_message).await?;
+        let version = self
+            .store_typed_with_commit(item, memory, commit_message)
+            .await?;
 
         // Log audit entry
         if self.audit_enabled {

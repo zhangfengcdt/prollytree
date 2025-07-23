@@ -120,7 +120,10 @@ impl<'a> InteractiveSession<'a> {
         );
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
-        println!("  {} - Test injection attack", "test-inject <TEXT> [-- notes]".cyan());
+        println!(
+            "  {} - Test injection attack",
+            "test-inject <TEXT> [-- notes]".cyan()
+        );
         println!("  {} - Show memory tree visualization", "visualize".cyan());
         println!(
             "  {} - Create and switch to memory branch",
@@ -222,7 +225,10 @@ impl<'a> InteractiveSession<'a> {
 
             "test-inject" | "inject" => {
                 if parts.len() < 2 {
-                    println!("{} Usage: test-inject <malicious text> [-- notes]", "❓".yellow());
+                    println!(
+                        "{} Usage: test-inject <malicious text> [-- notes]",
+                        "❓".yellow()
+                    );
                     return Ok(true);
                 }
 
@@ -239,7 +245,7 @@ impl<'a> InteractiveSession<'a> {
                 } else {
                     (parts[1..].join(" "), None)
                 };
-                
+
                 self.test_injection_attack(&payload, notes).await?;
             }
 
@@ -323,7 +329,10 @@ impl<'a> InteractiveSession<'a> {
         );
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
-        println!("  {} - Test injection attack", "test-inject <TEXT> [-- notes]".cyan());
+        println!(
+            "  {} - Test injection attack",
+            "test-inject <TEXT> [-- notes]".cyan()
+        );
         println!("  {} - Show memory tree visualization", "visualize".cyan());
         println!(
             "  {} - Create and switch to memory branch",
@@ -806,7 +815,11 @@ impl<'a> InteractiveSession<'a> {
                 );
 
                 // Store the security test result
-                match self.advisor.store_security_test(payload, &alert, notes).await {
+                match self
+                    .advisor
+                    .store_security_test(payload, &alert, notes)
+                    .await
+                {
                     Ok(_) => {
                         println!("{} Security test result saved to memory", "💾".green());
                     }

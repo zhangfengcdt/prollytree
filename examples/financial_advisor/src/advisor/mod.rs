@@ -269,10 +269,15 @@ impl FinancialAdvisor {
         Ok(())
     }
 
-    async fn store_security_test(&mut self, payload: &str, alert: &crate::security::SecurityAlert, notes: Option<String>) -> Result<()> {
+    async fn store_security_test(
+        &mut self,
+        payload: &str,
+        alert: &crate::security::SecurityAlert,
+        notes: Option<String>,
+    ) -> Result<()> {
         use crate::memory::MemoryType;
         use uuid::Uuid;
-        
+
         let security_test = serde_json::json!({
             "id": Uuid::new_v4().to_string(),
             "payload": payload,
@@ -288,9 +293,7 @@ impl FinancialAdvisor {
             id: Uuid::new_v4().to_string(),
             content: security_test.to_string(),
             timestamp: Utc::now(),
-            validation_hash: self
-                .validator
-                .hash_content(&security_test.to_string()),
+            validation_hash: self.validator.hash_content(&security_test.to_string()),
             sources: vec!["security_monitor".to_string()],
             confidence: alert.confidence,
             cross_references: vec![],
@@ -298,7 +301,7 @@ impl FinancialAdvisor {
 
         // Create custom commit message based on notes
         let commit_message = if let Some(user_notes) = notes {
-            format!("Finance Advisor: security test ({})", user_notes)
+            format!("Finance Advisor: security test ({user_notes})")
         } else {
             "Finance Advisor: security test".to_string()
         };
