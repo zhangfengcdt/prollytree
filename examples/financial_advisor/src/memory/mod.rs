@@ -24,6 +24,47 @@ pub use types::{
 
 const PROLLY_CONFIG_FILE: &str = "prolly_config_tree_config";
 
+/// Trait for types that can be stored in versioned memory
+pub trait Storable: serde::Serialize + serde::de::DeserializeOwned + Clone {
+    /// Get the table name for this type
+    fn table_name() -> &'static str;
+
+    /// Get the unique identifier for this instance
+    fn get_id(&self) -> String;
+
+    /// Store this instance to the database
+    fn store_to_db(
+        &self,
+        glue: &mut Glue<ProllyStorage<32>>,
+        memory: &ValidatedMemory,
+    ) -> impl std::future::Future<Output = Result<()>>;
+
+    /// Load instances from the database
+    fn load_from_db(
+        glue: &mut Glue<ProllyStorage<32>>,
+        limit: Option<usize>,
+    ) -> impl std::future::Future<Output = Result<Vec<ValidatedMemory>>>;
+
+    /// Handle updates (default: delete and insert)
+    fn update_in_db(
+        &self,
+        glue: &mut Glue<ProllyStorage<32>>,
+        memory: &ValidatedMemory,
+    ) -> impl std::future::Future<Output = Result<()>> {
+        async move {
+            // Default implementation: delete existing and insert new
+            let delete_sql = format!(
+                "DELETE FROM {} WHERE id = '{}'",
+                Self::table_name(),
+                self.get_id()
+            );
+            let _ = glue.execute(&delete_sql).await; // Ignore error if doesn't exist
+
+            self.store_to_db(glue, memory).await
+        }
+    }
+}
+
 /// Core memory store with versioning capabilities
 pub struct MemoryStore {
     store_path: String,
@@ -37,7 +78,7 @@ impl MemoryStore {
 
         // Create directory if it doesn't exist
         if !path.exists() {
-            println!("Creating {}", store_path);
+            println!("Creating {store_path}");
             std::fs::create_dir_all(path)?;
         }
 
@@ -59,10 +100,10 @@ impl MemoryStore {
 
         // Initialize ProllyStorage - it will create its own VersionedKvStore accessing the same prolly tree files
         let storage = if current_dir.join(PROLLY_CONFIG_FILE).exists() {
-            println!("Opening existing storage: {}", PROLLY_CONFIG_FILE);
+            println!("Opening existing storage: {PROLLY_CONFIG_FILE}");
             ProllyStorage::<32>::open(&current_dir)?
         } else {
-            println!("Creating new storage: {}", PROLLY_CONFIG_FILE);
+            println!("Creating new storage: {PROLLY_CONFIG_FILE}");
             ProllyStorage::<32>::init(&current_dir)?
         };
 
@@ -165,100 +206,110 @@ impl MemoryStore {
             // Table doesn't exist, create it
             glue.execute(create_sql).await?;
             glue.storage
-                .commit_with_message(&format!("Create table: {}", table_name))
+                .commit_with_message(&format!("Create table: {table_name}"))
                 .await?;
         }
         Ok(())
     }
 
-    pub async fn store(&mut self, memory: &ValidatedMemory) -> Result<String> {
-        let path = std::env::current_dir()?;
+    /// Generic store method that uses the Storable trait
+    pub async fn store_typed<T: Storable>(
+        &mut self,
+        item: &T,
+        memory: &ValidatedMemory,
+    ) -> Result<String> {
+        let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
-            ProllyStorage::<32>::open(&path)?
+            ProllyStorage::<32>::open(path)?
         } else {
-            ProllyStorage::<32>::init(&path)?
+            ProllyStorage::<32>::init(path)?
         };
-        // We need to load instead of creating a new Glue instance
         let mut glue = Glue::new(storage);
 
-        // Ensure schema exists (this should be safe to run multiple times)
+        // Ensure schema exists
         Self::init_schema(&mut glue).await?;
 
-        // Try to parse content as JSON to determine memory type
-        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&memory.content) {
-            // Try to store as recommendation first
-            if let Ok(rec) = serde_json::from_str::<crate::advisor::Recommendation>(&memory.content)
-            {
-                let sql = format!(
-                    r#"INSERT INTO recommendations
-                (id, client_id, symbol, recommendation_type, reasoning, confidence,
-                 validation_hash, memory_version, timestamp)
-                VALUES ('{}', '{}', '{}', '{}', '{}', {}, '{}', '{}', {})"#,
-                    rec.id,
-                    rec.client_id,
-                    rec.symbol,
-                    rec.recommendation_type.as_str(),
-                    rec.reasoning.replace('\'', "''"),
-                    rec.confidence,
-                    hex::encode(memory.validation_hash),
-                    rec.memory_version,
-                    rec.timestamp.timestamp()
-                );
-                glue.execute(&sql).await?;
-            }
-            // Try to store as client profile
-            else if let Ok(_profile) =
-                serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content)
-            {
-                let sql = format!(
-                    r#"INSERT INTO client_profiles
-                (id, content, timestamp, validation_hash, sources, confidence)
-                VALUES ('{}', '{}', {}, '{}', '{}', {})"#,
-                    memory.id,
-                    memory.content.replace('\'', "''"),
-                    memory.timestamp.timestamp(),
-                    hex::encode(memory.validation_hash),
-                    memory.sources.join(","),
-                    memory.confidence
-                );
-                glue.execute(&sql).await?;
-            }
-            // Default to market data if it has a symbol field or fallback
-            else {
-                let symbol = json_value
-                    .get("symbol")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("UNKNOWN");
+        // Use the item's update method to handle storage
+        item.update_in_db(&mut glue, memory).await?;
 
-                let sql = format!(
-                    r#"INSERT INTO market_data
-                (id, symbol, content, validation_hash, sources, confidence, timestamp)
-                VALUES ('{}', '{}', '{}', '{}', '{}', {}, {})"#,
-                    memory.id,
-                    symbol,
-                    memory.content.replace('\'', "''"),
-                    hex::encode(memory.validation_hash),
-                    memory.sources.join(","),
-                    memory.confidence,
-                    memory.timestamp.timestamp()
-                );
-                glue.execute(&sql).await?;
-            }
-        } else {
-            // If not valid JSON, store as market data with unknown symbol
+        // Store cross-references
+        for reference in &memory.cross_references {
+            // First try to delete if exists, then insert (GlueSQL doesn't support UPSERT)
+            let delete_sql = format!(
+                "DELETE FROM cross_references WHERE source_id = '{}' AND target_id = '{}'",
+                memory.id, reference
+            );
+            let _ = glue.execute(&delete_sql).await; // Ignore if record doesn't exist
+
             let sql = format!(
-                r#"INSERT INTO market_data
-            (id, symbol, content, validation_hash, sources, confidence, timestamp)
-            VALUES ('{}', 'UNKNOWN', '{}', '{}', '{}', {}, {})"#,
-                memory.id,
-                memory.content.replace('\'', "''"),
-                hex::encode(memory.validation_hash),
-                memory.sources.join(","),
-                memory.confidence,
-                memory.timestamp.timestamp()
+                r#"INSERT INTO cross_references
+            (source_id, target_id, reference_type, confidence)
+            VALUES ('{}', '{}', 'validation', {})"#,
+                memory.id, reference, memory.confidence
             );
             glue.execute(&sql).await?;
         }
+
+        let version = memory.clone().id;
+        glue.storage
+            .commit_with_message(&format!("Store memory: {}", memory.id))
+            .await?;
+
+        Ok(version)
+    }
+
+    /// Legacy store method for backward compatibility
+    pub async fn store(&mut self, memory: &ValidatedMemory) -> Result<String> {
+        // Try to determine type and delegate to typed methods
+        if let Ok(rec) = serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
+            self.store_typed(&rec, memory).await
+        } else if let Ok(profile) =
+            serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content)
+        {
+            self.store_typed(&profile, memory).await
+        } else {
+            // Fallback to market data storage
+            self.store_as_market_data(memory).await
+        }
+    }
+
+    /// Fallback method for market data and unknown types
+    async fn store_as_market_data(&mut self, memory: &ValidatedMemory) -> Result<String> {
+        let path = Path::new(&self.store_path);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
+            ProllyStorage::<32>::open(path)?
+        } else {
+            ProllyStorage::<32>::init(path)?
+        };
+        let mut glue = Glue::new(storage);
+
+        Self::init_schema(&mut glue).await?;
+
+        // Determine symbol from JSON if possible
+        let symbol =
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&memory.content) {
+                json_value
+                    .get("symbol")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("UNKNOWN")
+                    .to_string()
+            } else {
+                "UNKNOWN".to_string()
+            };
+
+        let sql = format!(
+            r#"INSERT INTO market_data
+            (id, symbol, content, validation_hash, sources, confidence, timestamp)
+            VALUES ('{}', '{}', '{}', '{}', '{}', {}, {})"#,
+            memory.id,
+            &symbol,
+            memory.content.replace('\'', "''"),
+            hex::encode(memory.validation_hash),
+            memory.sources.join(","),
+            memory.confidence,
+            memory.timestamp.timestamp()
+        );
+        glue.execute(&sql).await?;
 
         // Store cross-references
         for reference in &memory.cross_references {
@@ -304,11 +355,11 @@ impl MemoryStore {
     }
 
     pub async fn query_related(&self, content: &str, limit: usize) -> Result<Vec<ValidatedMemory>> {
-        let path = std::env::current_dir()?;
+        let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
-            ProllyStorage::<32>::open(&path)?
+            ProllyStorage::<32>::open(path)?
         } else {
-            ProllyStorage::<32>::init(&path)?
+            ProllyStorage::<32>::init(path)?
         };
         let mut glue = Glue::new(storage);
 
@@ -455,7 +506,7 @@ impl MemoryStore {
 
         glue.execute(&sql).await?;
         glue.storage
-            .commit_with_message(&format!("Commit Audit log: {}", action))
+            .commit_with_message(&format!("Commit Audit log: {action}"))
             .await?;
         Ok(())
     }
@@ -523,13 +574,13 @@ impl MemoryStore {
         // Add limit if specified
         let limit_str;
         if let Some(limit) = limit {
-            limit_str = format!("-{}", limit);
+            limit_str = format!("-{limit}");
             args.insert(1, &limit_str);
         }
 
         let log_output = std::process::Command::new("git")
             .args(&args)
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get git log: {}", e))?;
 
@@ -608,7 +659,7 @@ impl MemoryStore {
 
         let show_output = std::process::Command::new("git")
             .args(["show", "--format=%H|%s|%at|%an", "--name-only", commit])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to show commit '{}': {}", commit, e))?;
 
@@ -660,7 +711,7 @@ impl MemoryStore {
         let git_dir = Path::new(&self.store_path);
         let reset_output = std::process::Command::new("git")
             .args(["reset", "--hard", commit])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to reset to commit '{}': {}", commit, e))?;
 
@@ -690,7 +741,7 @@ impl MemoryStore {
         let git_dir = Path::new(&self.store_path);
         let output = std::process::Command::new("git")
             .args(["rev-parse", "HEAD"])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get commit ID: {}", e))?;
 
@@ -729,7 +780,7 @@ impl MemoryStore {
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit '{}': {}", commit, e))?;
 
@@ -741,9 +792,9 @@ impl MemoryStore {
         // Query recommendations from this point in time
         let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
-            ProllyStorage::<32>::open(&path)?
+            ProllyStorage::<32>::open(path)?
         } else {
-            ProllyStorage::<32>::init(&path)?
+            ProllyStorage::<32>::init(path)?
         };
         let mut glue = Glue::new(storage);
 
@@ -755,7 +806,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
 
@@ -785,7 +836,7 @@ impl MemoryStore {
         // Temporarily checkout the target commit
         let checkout_output = std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit '{}': {}", commit, e))?;
 
@@ -797,9 +848,9 @@ impl MemoryStore {
         // Query market data from this point in time
         let path = Path::new(&self.store_path);
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
-            ProllyStorage::<32>::open(&path)?
+            ProllyStorage::<32>::open(path)?
         } else {
-            ProllyStorage::<32>::init(&path)?
+            ProllyStorage::<32>::init(path)?
         };
         let mut glue = Glue::new(storage);
 
@@ -815,7 +866,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e))?;
 
@@ -912,7 +963,7 @@ impl MemoryStore {
         // Temporarily checkout the target commit
         std::process::Command::new("git")
             .args(["checkout", commit])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to checkout commit for audit: {}", e))?;
 
@@ -922,7 +973,7 @@ impl MemoryStore {
         // Restore original state
         std::process::Command::new("git")
             .args(["checkout", &current_branch])
-            .current_dir(&git_dir)
+            .current_dir(git_dir)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to restore branch for audit: {}", e))?;
 
@@ -998,27 +1049,64 @@ impl MemoryStore {
                         };
 
                         // Create content from recommendation fields
+                        let recommendation_type = match &row[3] {
+                            Value::Str(s) => s.clone(),
+                            _ => "UNKNOWN".to_string(),
+                        };
+
+                        let reasoning = match &row[4] {
+                            Value::Str(s) => s.clone(),
+                            _ => "".to_string(),
+                        };
+
+                        let confidence = match &row[5] {
+                            Value::F64(f) => *f,
+                            _ => 0.0,
+                        };
+
+                        let memory_version = match &row[7] {
+                            Value::Str(s) => s.clone(),
+                            _ => "".to_string(),
+                        };
+
+                        let timestamp = match &row[8] {
+                            Value::I64(ts) => DateTime::from_timestamp(*ts, 0)
+                                .unwrap_or_else(Utc::now)
+                                .to_rfc3339(),
+                            _ => Utc::now().to_rfc3339(),
+                        };
+
+                        let validation_hash = match &row[6] {
+                            Value::Str(s) => hex::decode(s)
+                                .unwrap_or_default()
+                                .try_into()
+                                .unwrap_or([0u8; 32]),
+                            _ => [0u8; 32],
+                        };
+
                         let content = serde_json::json!({
                             "id": id,
                             "client_id": client_id,
                             "symbol": symbol,
-                            "recommendation_type": row[3],
-                            "reasoning": row[4],
-                            "confidence": row[5],
-                            "memory_version": row[7]
+                            "recommendation_type": recommendation_type,
+                            "reasoning": reasoning,
+                            "confidence": confidence,
+                            "memory_version": memory_version,
+                            "timestamp": timestamp,
+                            "validation_result": {
+                                "is_valid": true,
+                                "confidence": confidence,
+                                "hash": validation_hash.to_vec(),
+                                "cross_references": [],
+                                "issues": []
+                            }
                         })
                         .to_string();
 
                         let memory = ValidatedMemory {
                             id,
                             content,
-                            validation_hash: match &row[6] {
-                                Value::Str(s) => hex::decode(s)
-                                    .unwrap_or_default()
-                                    .try_into()
-                                    .unwrap_or([0u8; 32]),
-                                _ => [0u8; 32],
-                            },
+                            validation_hash,
                             sources: vec!["recommendation_engine".to_string()],
                             confidence: match &row[5] {
                                 Value::F64(f) => *f,
@@ -1151,43 +1239,94 @@ impl MemoryStore {
     /// Get recommendations with optional branch/commit and limit  
     pub async fn get_recommendations(
         &self,
-        _branch: Option<&str>,
+        branch: Option<&str>,
         commit: Option<&str>,
         limit: Option<usize>,
     ) -> Result<Vec<crate::advisor::Recommendation>> {
-        if let Some(_commit_hash) = commit {
-            // For now, temporal querying is complex - return empty for specific commits
-            // This could be implemented later with proper git checkout and query
-            return Ok(vec![]);
+        if let Some(commit_hash) = commit {
+            // Use the existing temporal query method
+            let memories = self.get_recommendations_at_commit(commit_hash).await?;
+
+            let mut recommendations = Vec::new();
+            for memory in memories {
+                match serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
+                    Ok(rec) => recommendations.push(rec),
+                    Err(e) => eprintln!("Warning: Failed to parse recommendation: {e}"),
+                }
+            }
+
+            // Apply limit if specified
+            if let Some(limit) = limit {
+                recommendations.truncate(limit);
+            }
+
+            return Ok(recommendations);
+        }
+
+        // Handle branch-specific queries
+        if let Some(branch_name) = branch {
+            let current_branch = self.current_branch().to_string();
+            let git_dir = Path::new(&self.store_path);
+
+            // Temporarily checkout the target branch
+            let checkout_output = std::process::Command::new("git")
+                .args(["checkout", branch_name])
+                .current_dir(git_dir)
+                .output()
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to checkout branch '{}': {}", branch_name, e)
+                })?;
+
+            if !checkout_output.status.success() {
+                let error = String::from_utf8_lossy(&checkout_output.stderr);
+                return Err(anyhow::anyhow!("Git checkout failed: {}", error));
+            }
+
+            // Query recommendations on this branch (call internal method to avoid recursion)
+            let result = self.get_recommendations_internal(limit).await;
+
+            // Restore original branch
+            std::process::Command::new("git")
+                .args(["checkout", &current_branch])
+                .current_dir(git_dir)
+                .output()
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to restore branch '{}': {}", current_branch, e)
+                })?;
+
+            return result;
         }
 
         // Query current branch for recommendations
+        self.get_recommendations_internal(limit).await
+    }
+
+    /// Internal method to get recommendations from current branch (no branch/commit switching)
+    async fn get_recommendations_internal(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::advisor::Recommendation>> {
         let path = Path::new(&self.store_path);
         if !path.exists() {
             return Ok(vec![]);
         }
 
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
-            ProllyStorage::<32>::open(&path)?
+            ProllyStorage::<32>::open(path)?
         } else {
             return Ok(vec![]);
         };
 
         let mut glue = Glue::new(storage);
-        let sql = if let Some(limit) = limit {
-            format!("SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp FROM recommendations ORDER BY timestamp DESC LIMIT {}", limit)
-        } else {
-            "SELECT id, client_id, symbol, recommendation_type, reasoning, confidence, validation_hash, memory_version, timestamp FROM recommendations ORDER BY timestamp DESC".to_string()
-        };
 
-        let results = glue.execute(&sql).await?;
-        let memories = self.parse_recommendation_results(results)?;
+        // Use the Storable trait method
+        let memories = crate::advisor::Recommendation::load_from_db(&mut glue, limit).await?;
 
         let mut recommendations = Vec::new();
         for memory in memories {
             match serde_json::from_str::<crate::advisor::Recommendation>(&memory.content) {
                 Ok(rec) => recommendations.push(rec),
-                Err(e) => eprintln!("Warning: Failed to parse recommendation: {}", e),
+                Err(e) => eprintln!("Warning: Failed to parse recommendation: {e}"),
             }
         }
 
@@ -1274,7 +1413,7 @@ impl MemoryStore {
         ])
     }
 
-    /// Store client profile in versioned memory
+    /// Store client profile in versioned memory using the Storable trait
     pub async fn store_client_profile(
         &mut self,
         profile: &crate::advisor::ClientProfile,
@@ -1289,18 +1428,23 @@ impl MemoryStore {
             cross_references: vec![],
         };
 
-        // Store in versioned memory with audit trail
-        self.store_with_audit(
-            MemoryType::ClientProfile,
-            &validated_memory,
-            &format!("Updated client profile for {}", profile.id),
-        )
-        .await?;
+        // Store using the typed method
+        self.store_typed(profile, &validated_memory).await?;
+
+        // Log audit entry if enabled
+        if self.audit_enabled {
+            self.log_audit(
+                &format!("Updated client profile for {}", profile.id),
+                MemoryType::ClientProfile,
+                &profile.id,
+            )
+            .await?;
+        }
 
         Ok(())
     }
 
-    /// Load client profile from versioned memory using direct SQL query
+    /// Load client profile from versioned memory using the Storable trait
     pub async fn load_client_profile(&self) -> Result<Option<crate::advisor::ClientProfile>> {
         let path = Path::new(&self.store_path);
         if !path.exists() || !path.join(PROLLY_CONFIG_FILE).exists() {
@@ -1308,44 +1452,23 @@ impl MemoryStore {
         }
 
         // Create a fresh storage instance to ensure we see the latest committed state
-        let storage = ProllyStorage::<32>::open(&path)?;
+        let storage = ProllyStorage::<32>::open(path)?;
         let mut glue = Glue::new(storage);
 
-        // First, let's test if the table exists and has any data
-        let count_sql = "SELECT COUNT(*) FROM client_profiles";
-        let count_results = glue.execute(&count_sql).await?;
+        // Use the Storable trait method
+        let memories = crate::advisor::ClientProfile::load_from_db(&mut glue, Some(1)).await?;
 
-        use gluesql_core::prelude::Payload;
-        if let Some(count_result) = count_results.first() {
-            if let Payload::Select { labels: _, rows } = count_result {
-                if let Some(row) = rows.first() {
-                    if let Some(count_value) = row.first() {
-                        eprintln!("Debug: client_profiles table has {:?} rows", count_value);
-                    }
+        if let Some(memory) = memories.first() {
+            match serde_json::from_str::<crate::advisor::ClientProfile>(&memory.content) {
+                Ok(profile) => Ok(Some(profile)),
+                Err(e) => {
+                    eprintln!("Warning: Failed to parse client profile: {e}");
+                    Ok(None)
                 }
             }
+        } else {
+            Ok(None)
         }
-
-        let sql = "SELECT content FROM client_profiles ORDER BY timestamp DESC LIMIT 1";
-        let results = glue.execute(&sql).await?;
-
-        if let Some(result) = results.first() {
-            match result {
-                Payload::Select { labels: _, rows } => {
-                    if let Some(row) = rows.first() {
-                        if let Some(content_value) = row.first() {
-                            if let gluesql_core::data::Value::Str(content) = content_value {
-                                let profile: crate::advisor::ClientProfile =
-                                    serde_json::from_str(content)?;
-                                return Ok(Some(profile));
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(None)
     }
 
     /// Simple content hashing for validation
