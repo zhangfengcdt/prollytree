@@ -312,10 +312,10 @@ impl FinancialAdvisor {
     pub async fn create_and_switch_branch(&mut self, name: &str) -> Result<()> {
         // Create the branch
         self.memory_store.create_branch(name).await?;
-        
+
         // Switch to the newly created branch
         self.memory_store.checkout(name).await?;
-        
+
         Ok(())
     }
 

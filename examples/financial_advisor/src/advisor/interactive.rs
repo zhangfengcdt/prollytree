@@ -36,7 +36,7 @@ impl<'a> InteractiveSession<'a> {
                     time_horizon: "5-10 years".to_string(),
                     restrictions: vec![],
                 };
-                
+
                 // Save the default profile so it persists
                 match self.advisor.store_client_profile(&default_profile).await {
                     Ok(_) => {
@@ -54,7 +54,7 @@ impl<'a> InteractiveSession<'a> {
                         );
                     }
                 }
-                
+
                 default_profile
             }
         };
@@ -62,7 +62,7 @@ impl<'a> InteractiveSession<'a> {
         loop {
             let actual_branch = self.advisor.get_actual_current_branch();
             let branch_display = format!(" [{}]", actual_branch.cyan());
-            
+
             print!("\n{}{} ", "🏦".blue(), branch_display);
             io::stdout().flush()?;
 
@@ -122,7 +122,10 @@ impl<'a> InteractiveSession<'a> {
         println!("  {} - Show audit trail", "audit".cyan());
         println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
         println!("  {} - Show memory tree visualization", "visualize".cyan());
-        println!("  {} - Create and switch to memory branch", "branch <NAME>".cyan());
+        println!(
+            "  {} - Create and switch to memory branch",
+            "branch <NAME>".cyan()
+        );
         println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
         println!("  {} - List all branches", "list-branches".cyan());
         println!("  {} - Show this help", "help".cyan());
@@ -253,7 +256,7 @@ impl<'a> InteractiveSession<'a> {
             "debug-branch" | "db" => {
                 println!("DEBUG: Testing git branch reading...");
                 let actual = self.advisor.get_actual_current_branch();
-                println!("Result: '{}'", actual);
+                println!("Result: '{actual}'");
             }
 
             "list-branches" | "lb" => {
@@ -304,7 +307,10 @@ impl<'a> InteractiveSession<'a> {
         println!("  {} - Show audit trail", "audit".cyan());
         println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
         println!("  {} - Show memory tree visualization", "visualize".cyan());
-        println!("  {} - Create and switch to memory branch", "branch <NAME>".cyan());
+        println!(
+            "  {} - Create and switch to memory branch",
+            "branch <NAME>".cyan()
+        );
         println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
         println!("  {} - List all branches", "list-branches".cyan());
         println!("  {} - Show this help", "help".cyan());
@@ -814,7 +820,11 @@ impl<'a> InteractiveSession<'a> {
         // Check if branch already exists
         if self.advisor.branch_exists(name) {
             println!("{} Branch '{}' already exists!", "⚠️".yellow(), name.bold());
-            println!("{} Use 'switch {}' to switch to the existing branch", "💡".blue(), name);
+            println!(
+                "{} Use 'switch {}' to switch to the existing branch",
+                "💡".blue(),
+                name
+            );
             return Ok(());
         }
 
@@ -843,7 +853,11 @@ impl<'a> InteractiveSession<'a> {
         // Check if branch exists before trying to switch
         if !self.advisor.branch_exists(name) {
             println!("{} Branch '{}' does not exist!", "❌".red(), name.bold());
-            println!("{} Use 'branch {}' to create a new branch", "💡".blue(), name);
+            println!(
+                "{} Use 'branch {}' to create a new branch",
+                "💡".blue(),
+                name
+            );
             return Ok(());
         }
 
@@ -867,7 +881,7 @@ impl<'a> InteractiveSession<'a> {
         match self.advisor.memory_store.list_branches() {
             Ok(branches) => {
                 let current_branch = self.advisor.get_actual_current_branch();
-                
+
                 if branches.is_empty() {
                     println!("No branches found");
                 } else {
@@ -875,35 +889,39 @@ impl<'a> InteractiveSession<'a> {
                         if branch == current_branch {
                             println!("* {}", branch.green());
                         } else {
-                            println!("  {}", branch);
+                            println!("  {branch}");
                         }
                     }
                 }
             }
             Err(e) => {
-                println!("error: Failed to list branches: {}", e);
+                println!("error: Failed to list branches: {e}");
             }
         }
-        
+
         // Show sync status if there's a mismatch
         let cached_branch = self.advisor.current_branch();
         let actual_branch = self.advisor.get_actual_current_branch();
-        
+
         if cached_branch != actual_branch {
             println!();
-            println!("{} Branch mismatch: cached='{}', actual='{}'", 
-                     "warning:".yellow(), cached_branch, actual_branch);
+            println!(
+                "{} Branch mismatch: cached='{}', actual='{}'",
+                "warning:".yellow(),
+                cached_branch,
+                actual_branch
+            );
         }
     }
 
     fn list_branches(&self) {
         println!("{}", "🌳 Available Branches".green().bold());
         println!("{}", "━".repeat(25).dimmed());
-        
+
         match self.advisor.memory_store.list_branches() {
             Ok(branches) => {
                 let current_branch = self.advisor.get_actual_current_branch();
-                
+
                 if branches.is_empty() {
                     println!("{} No branches found", "ℹ️".blue());
                 } else {
