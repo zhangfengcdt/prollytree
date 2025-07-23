@@ -247,9 +247,10 @@ impl FinancialAdvisor {
             format!("Finance Advisor: recommend {}", recommendation.symbol)
         };
 
-        // Store with full audit trail and custom commit message
+        // Store with full audit trail and custom commit message using typed storage
         self.memory_store
-            .store_with_audit_and_commit(
+            .store_typed_with_audit_and_commit(
+                recommendation,
                 MemoryType::Recommendation,
                 &memory,
                 &format!(

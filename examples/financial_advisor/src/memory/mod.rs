@@ -417,6 +417,50 @@ impl MemoryStore {
         Ok(version)
     }
 
+    pub async fn store_typed_with_commit<T: Storable>(
+        &mut self,
+        item: &T,
+        memory: &ValidatedMemory,
+        commit_message: &str,
+    ) -> Result<String> {
+        let path = Path::new(&self.store_path);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
+            ProllyStorage::<32>::open(path)?
+        } else {
+            ProllyStorage::<32>::init(path)?
+        };
+        let mut glue = Glue::new(storage);
+
+        // Ensure schema exists
+        Self::init_schema(&mut glue).await?;
+
+        // Use the item's store method to handle storage
+        item.store_to_db(&mut glue, memory).await?;
+
+        // Store cross-references
+        for reference in &memory.cross_references {
+            // First try to delete if exists, then insert (GlueSQL doesn't support UPSERT)
+            let delete_sql = format!(
+                "DELETE FROM cross_references WHERE source_id = '{}' AND target_id = '{}'",
+                memory.id, reference
+            );
+            let _ = glue.execute(&delete_sql).await; // Ignore if record doesn't exist
+
+            let sql = format!(
+                r#"INSERT INTO cross_references
+            (source_id, target_id, reference_type, confidence)
+            VALUES ('{}', '{}', 'validation', {})"#,
+                memory.id, reference, memory.confidence
+            );
+            glue.execute(&sql).await?;
+        }
+
+        let version = memory.clone().id;
+        glue.storage.commit_with_message(commit_message).await?;
+
+        Ok(version)
+    }
+
     pub async fn store_with_audit(
         &mut self,
         memory_type: MemoryType,
@@ -443,6 +487,25 @@ impl MemoryStore {
     ) -> Result<String> {
         // Store the memory with custom commit message
         let version = self.store_with_commit(memory, commit_message).await?;
+
+        // Log audit entry
+        if self.audit_enabled {
+            self.log_audit(action, memory_type, &memory.id).await?;
+        }
+
+        Ok(version)
+    }
+
+    pub async fn store_typed_with_audit_and_commit<T: Storable>(
+        &mut self,
+        item: &T,
+        memory_type: MemoryType,
+        memory: &ValidatedMemory,
+        action: &str,
+        commit_message: &str,
+    ) -> Result<String> {
+        // Store using typed storage with custom commit message
+        let version = self.store_typed_with_commit(item, memory, commit_message).await?;
 
         // Log audit entry
         if self.audit_enabled {
