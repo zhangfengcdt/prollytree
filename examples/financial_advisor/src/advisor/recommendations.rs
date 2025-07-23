@@ -580,7 +580,7 @@ impl RecommendationEngine {
 
         // Cap confidence and add some symbol-specific variance
         let symbol_variance = (symbol.len() % 7) as f64 * 0.02;
-        let final_confidence = (base_confidence + symbol_variance).min(0.95).max(0.30);
+        let final_confidence = (base_confidence + symbol_variance).clamp(0.30, 0.95);
 
         (rec_type, final_confidence)
     }

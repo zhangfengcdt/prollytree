@@ -825,7 +825,10 @@ mod tests {
         // Verify the prolly metadata files exist in the dataset directory
         let config_path = dataset_dir.join("prolly_config_tree_config");
         let mapping_path = dataset_dir.join("prolly_hash_mappings");
-        assert!(config_path.exists(), "prolly_config_tree_config should exist");
+        assert!(
+            config_path.exists(),
+            "prolly_config_tree_config should exist"
+        );
         assert!(mapping_path.exists(), "prolly_hash_mappings should exist");
     }
 }
