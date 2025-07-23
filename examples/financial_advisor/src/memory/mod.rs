@@ -219,6 +219,16 @@ impl MemoryStore {
         memory: &ValidatedMemory,
     ) -> Result<String> {
         let path = Path::new(&self.store_path);
+        
+        // Debug: Check for branch mismatch (external git operations)
+        let cached_branch = self.current_branch();
+        let actual_branch = self.get_actual_current_branch();
+        
+        if cached_branch != actual_branch {
+            println!("DEBUG: ⚠️ Branch mismatch: cached='{}', actual='{}' (external git operation?)", 
+                     cached_branch, actual_branch);
+        }
+        
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(path)?
         } else {
@@ -388,6 +398,9 @@ impl MemoryStore {
             .create_branch(name)
             .map_err(|e| anyhow::anyhow!("Failed to create branch '{}': {:?}", name, e))?;
 
+        // Important: We need to ensure any ProllyStorage instances created after this
+        // will see the branch. The versioned_store has created the branch but hasn't switched to it.
+        
         if self.audit_enabled {
             self.log_audit(&format!("Created branch: {name}"), MemoryType::System, name)
                 .await?;
@@ -528,6 +541,43 @@ impl MemoryStore {
         self.versioned_store.current_branch()
     }
 
+    /// Get the actual current branch from git HEAD (not cached)
+    pub fn get_actual_current_branch(&self) -> String {
+        let store_path = Path::new(&self.store_path);
+        
+        // Try multiple possible git directory locations
+        // Git repository is typically in the parent directory of the store path
+        let possible_git_dirs = vec![
+            store_path.parent().unwrap().join(".git"),  // /tmp/advisor/.git
+            store_path.join(".git"),                    // /tmp/advisor/data7/.git
+            std::env::current_dir().unwrap().join(".git"), // current working directory
+        ];
+        
+        for git_dir in possible_git_dirs {
+            let head_file = git_dir.join("HEAD");
+            
+            if head_file.exists() {
+                // Read the HEAD file
+                if let Ok(head_content) = std::fs::read_to_string(&head_file) {
+                    let head_content = head_content.trim();
+                    
+                    // Check if HEAD points to a branch (ref: refs/heads/branch_name)
+                    if let Some(branch_ref) = head_content.strip_prefix("ref: refs/heads/") {
+                        return branch_ref.to_string();
+                    }
+                    
+                    // If HEAD contains a commit hash (detached HEAD), show first 8 chars
+                    if head_content.len() >= 8 && head_content.chars().all(|c| c.is_ascii_hexdigit()) {
+                        return format!("detached@{}", &head_content[..8]);
+                    }
+                }
+            }
+        }
+        
+        // Fallback to cached branch name if git read fails
+        self.versioned_store.current_branch().to_string()
+    }
+
     /// List all branches
     pub fn list_branches(&self) -> Result<Vec<String>> {
         self.versioned_store
@@ -542,9 +592,13 @@ impl MemoryStore {
 
     /// Checkout branch or commit
     pub async fn checkout(&mut self, branch_or_commit: &str) -> Result<()> {
+        println!("DEBUG: Checking out from branch '{}' to '{}'", self.current_branch(), branch_or_commit);
+        
         self.versioned_store
             .checkout(branch_or_commit)
             .map_err(|e| anyhow::anyhow!("Failed to checkout '{}': {:?}", branch_or_commit, e))?;
+
+        println!("DEBUG: Successfully checked out to branch '{}'", self.current_branch());
 
         if self.audit_enabled {
             self.log_audit(
@@ -1478,4 +1532,5 @@ impl MemoryStore {
         hasher.update(content.as_bytes());
         hasher.finalize().into()
     }
+
 }

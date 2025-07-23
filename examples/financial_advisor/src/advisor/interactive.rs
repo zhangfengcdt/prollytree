@@ -46,7 +46,10 @@ impl<'a> InteractiveSession<'a> {
         };
 
         loop {
-            print!("\n{} ", "🏦>".blue().bold());
+            let actual_branch = self.advisor.get_actual_current_branch();
+            let branch_display = format!(" [{}]", actual_branch.cyan());
+            
+            print!("\n{}{} ", "🏦".blue(), branch_display);
             io::stdout().flush()?;
 
             let mut input = String::new();
@@ -105,7 +108,9 @@ impl<'a> InteractiveSession<'a> {
         println!("  {} - Show audit trail", "audit".cyan());
         println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
         println!("  {} - Show memory tree visualization", "visualize".cyan());
-        println!("  {} - Create memory branch", "branch <NAME>".cyan());
+        println!("  {} - Create and switch to memory branch", "branch <NAME>".cyan());
+        println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
+        println!("  {} - Show branch information", "branch-info".cyan());
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
@@ -217,6 +222,26 @@ impl<'a> InteractiveSession<'a> {
                 self.create_branch(branch_name).await?;
             }
 
+            "switch" | "sw" => {
+                if parts.len() < 2 {
+                    println!("{} Usage: switch <branch>", "❓".yellow());
+                    return Ok(true);
+                }
+
+                let branch_name = parts[1];
+                self.switch_branch(branch_name).await?;
+            }
+
+            "branch-info" | "bi" => {
+                self.show_branch_info();
+            }
+
+            "debug-branch" | "db" => {
+                println!("DEBUG: Testing git branch reading...");
+                let actual = self.advisor.get_actual_current_branch();
+                println!("Result: '{}'", actual);
+            }
+
             "exit" | "quit" | "q" => {
                 return Ok(false);
             }
@@ -261,7 +286,9 @@ impl<'a> InteractiveSession<'a> {
         println!("  {} - Show audit trail", "audit".cyan());
         println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
         println!("  {} - Show memory tree visualization", "visualize".cyan());
-        println!("  {} - Create memory branch", "branch <NAME>".cyan());
+        println!("  {} - Create and switch to memory branch", "branch <NAME>".cyan());
+        println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
+        println!("  {} - Show branch information", "branch-info".cyan());
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
@@ -768,13 +795,56 @@ impl<'a> InteractiveSession<'a> {
     async fn create_branch(&mut self, name: &str) -> Result<()> {
         println!("{} Creating memory branch: {}", "🌿".green(), name.bold());
 
-        // In real implementation, use the memory store
-        println!("{} Branch '{}' created successfully", "✅".green(), name);
-        println!(
-            "{} You can now safely test scenarios without affecting main memory",
-            "💡".yellow()
-        );
+        // Create the branch using the memory store
+        match self.advisor.create_and_switch_branch(name).await {
+            Ok(_) => {
+                println!("{} Branch '{}' created successfully", "✅".green(), name);
+                println!("{} Switched to branch '{}'", "🔀".blue(), name);
+                println!(
+                    "{} You can now safely test scenarios without affecting main memory",
+                    "💡".yellow()
+                );
+            }
+            Err(e) => {
+                println!("{} Failed to create/switch branch: {}", "❌".red(), e);
+                return Err(e);
+            }
+        }
 
         Ok(())
+    }
+
+    async fn switch_branch(&mut self, name: &str) -> Result<()> {
+        println!("{} Switching to branch: {}", "🔀".blue(), name.bold());
+
+        match self.advisor.switch_to_branch(name).await {
+            Ok(_) => {
+                println!("{} Switched to branch '{}'", "✅".green(), name);
+            }
+            Err(e) => {
+                println!("{} Failed to switch to branch: {}", "❌".red(), e);
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn show_branch_info(&self) {
+        println!("{}", "🌿 Branch Information".green().bold());
+        println!("{}", "━".repeat(25).dimmed());
+        
+        let cached_branch = self.advisor.current_branch();
+        let actual_branch = self.advisor.get_actual_current_branch();
+        
+        println!("{}: {}", "Cached branch".cyan(), cached_branch);
+        println!("{}: {}", "Actual git branch".cyan(), actual_branch);
+        
+        if cached_branch != actual_branch {
+            println!("{} Branch mismatch detected!", "⚠️".yellow());
+            println!("This might indicate external git operations or sync issues.");
+        } else {
+            println!("{} Branches are in sync", "✅".green());
+        }
     }
 }

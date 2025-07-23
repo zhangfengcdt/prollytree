@@ -309,6 +309,30 @@ impl FinancialAdvisor {
         self.memory_store.load_client_profile().await
     }
 
+    pub async fn create_and_switch_branch(&mut self, name: &str) -> Result<()> {
+        // Create the branch
+        self.memory_store.create_branch(name).await?;
+        
+        // Switch to the newly created branch
+        self.memory_store.checkout(name).await?;
+        
+        Ok(())
+    }
+
+    pub fn current_branch(&self) -> &str {
+        self.memory_store.current_branch()
+    }
+
+    pub fn get_actual_current_branch(&self) -> String {
+        self.memory_store.get_actual_current_branch()
+    }
+
+    pub async fn switch_to_branch(&mut self, name: &str) -> Result<()> {
+        // Just switch to the branch (no creation)
+        self.memory_store.checkout(name).await?;
+        Ok(())
+    }
+
     async fn generate_ai_reasoning(
         &self,
         symbol: &str,
