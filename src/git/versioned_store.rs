@@ -104,11 +104,8 @@ impl<const N: usize> VersionedKvStore<N> {
         // Save initial configuration
         let _ = store.tree.save_config();
 
-        // Create initial commit
+        // Create initial commit (which will include prolly metadata files)
         store.commit("Initial commit")?;
-
-        // Auto-commit prolly metadata files after initialization
-        store.commit_prolly_metadata(" after init")?;
 
         Ok(store)
     }
@@ -275,7 +272,7 @@ impl<const N: usize> VersionedKvStore<N> {
             .save_config()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
 
-        // Create tree object in Git
+        // Create tree object in Git (this will include prolly metadata files)
         let tree_id = self.create_git_tree()?;
 
         // Create commit
@@ -286,9 +283,6 @@ impl<const N: usize> VersionedKvStore<N> {
 
         // Clear staging area file since we've committed
         self.save_staging_area()?;
-
-        // Auto-commit prolly metadata files to git
-        self.commit_prolly_metadata(&format!(" after commit: {message}"))?;
 
         Ok(commit_id)
     }
@@ -484,21 +478,58 @@ impl<const N: usize> VersionedKvStore<N> {
 
     /// Create a Git tree object from the current ProllyTree state
     fn create_git_tree(&self) -> Result<gix::ObjectId, GitKvError> {
-        // Create an empty tree - the ProllyTree state is managed through GitNodeStorage
-        // We don't need to create a prolly_tree_root file since the tree structure
-        // is stored in Git blobs and managed through the NodeStorage interface
-        let tree_entries = vec![];
+        // Actually, we should let git handle the tree creation properly
+        // Use git's index to stage files and create tree from the index
+        
+        // Get the git root directory
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        let current_dir = std::env::current_dir().map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
+        })?;
+        
+        // Get relative path from git root to current directory
+        let relative_dir = current_dir.strip_prefix(&git_root).unwrap_or(&current_dir);
+        
+        // Stage the prolly metadata files using git add
+        let config_file = "prolly_config_tree_config";
+        let mapping_file = "prolly_hash_mappings";
+        
+        for filename in &[config_file, mapping_file] {
+            let file_path = current_dir.join(filename);
+            if file_path.exists() {
+                // Get relative path from git root
+                let relative_path = relative_dir.join(filename);
+                let relative_path_str = relative_path.to_string_lossy();
+                
+                let add_cmd = std::process::Command::new("git")
+                    .args(["add", &relative_path_str])
+                    .current_dir(&git_root)
+                    .output()
+                    .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
 
-        let tree = gix::objs::Tree {
-            entries: tree_entries,
-        };
-
-        let tree_id = self
-            .git_repo
-            .objects
-            .write(&tree)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write tree: {e}")))?;
-
+                if !add_cmd.status.success() {
+                    let stderr = String::from_utf8_lossy(&add_cmd.stderr);
+                    eprintln!("Warning: git add failed for {}: {}", filename, stderr);
+                }
+            }
+        }
+        
+        // Use git write-tree to create tree from the current index
+        let write_tree_cmd = std::process::Command::new("git")
+            .args(["write-tree"])
+            .current_dir(&git_root)
+            .output()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git write-tree: {e}")))?;
+        
+        if !write_tree_cmd.status.success() {
+            let stderr = String::from_utf8_lossy(&write_tree_cmd.stderr);
+            return Err(GitKvError::GitObjectError(format!("git write-tree failed: {}", stderr)));
+        }
+        
+        let tree_hash = String::from_utf8_lossy(&write_tree_cmd.stdout).trim().to_string();
+        let tree_id = gix::ObjectId::from_hex(tree_hash.as_bytes())
+            .map_err(|e| GitKvError::GitObjectError(format!("Invalid tree hash: {e}")))?;
+        
         Ok(tree_id)
     }
 
@@ -627,81 +658,7 @@ impl<const N: usize> VersionedKvStore<N> {
         Ok(())
     }
 
-    /// Stage and commit prolly metadata files to git
-    fn commit_prolly_metadata(&self, additional_message: &str) -> Result<(), GitKvError> {
-        // Get relative paths to the prolly files from git root
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
-        let git_root = git_root.canonicalize().map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to canonicalize git root: {e}"))
-        })?;
-        let current_dir = std::env::current_dir().map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
-        })?;
 
-        let config_file = "prolly_config_tree_config";
-        let mapping_file = "prolly_hash_mappings";
-
-        // Check if files exist before trying to stage them
-        let config_path = current_dir.join(config_file);
-        let mapping_path = current_dir.join(mapping_file);
-
-        let mut files_to_stage = Vec::new();
-
-        if config_path.exists() {
-            // Get relative path from git root
-            if let Ok(relative_path) = config_path.strip_prefix(&git_root) {
-                files_to_stage.push(relative_path.to_string_lossy().to_string());
-            }
-        }
-
-        if mapping_path.exists() {
-            // Get relative path from git root
-            if let Ok(relative_path) = mapping_path.strip_prefix(&git_root) {
-                files_to_stage.push(relative_path.to_string_lossy().to_string());
-            }
-        }
-
-        if files_to_stage.is_empty() {
-            println!("staging is empty, nothing to commit");
-            return Ok(()); // Nothing to commit
-        }
-
-        // Stage the files using git add
-        for file in &files_to_stage {
-            let add_cmd = std::process::Command::new("git")
-                .args(["add", file])
-                .current_dir(&git_root)
-                .output()
-                .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
-
-            if !add_cmd.status.success() {
-                let stderr = String::from_utf8_lossy(&add_cmd.stderr);
-                return Err(GitKvError::GitObjectError(format!(
-                    "git add failed: {stderr}"
-                )));
-            }
-        }
-
-        // Commit the staged files
-        let commit_message = format!("Update prolly metadata{additional_message}");
-        let commit_cmd = std::process::Command::new("git")
-            .args(["commit", "-m", &commit_message])
-            .current_dir(&git_root)
-            .output()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git commit: {e}")))?;
-
-        if !commit_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&commit_cmd.stderr);
-            // It's okay if there's nothing to commit
-            if !stderr.is_empty() && !stderr.contains("nothing to commit") {
-                return Err(GitKvError::GitObjectError(format!(
-                    "git commit failed: {stderr}"
-                )));
-            }
-        }
-
-        Ok(())
-    }
 
     /// Load the staging area from a file
     fn load_staging_area(&mut self) -> Result<(), GitKvError> {
@@ -814,5 +771,76 @@ mod tests {
         // Check that staging area is clear
         let status = store.status();
         assert_eq!(status.len(), 0);
+    }
+    
+    #[test]
+    fn test_single_commit_with_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+        
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        
+        let mut store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        
+        // Get initial commit count
+        let log_output = std::process::Command::new("git")
+            .args(&["log", "--oneline"])
+            .current_dir(temp_dir.path())
+            .output()
+            .unwrap();
+        let initial_commits = String::from_utf8_lossy(&log_output.stdout).lines().count();
+        
+        // Insert some data and commit
+        store.insert(b"test_key".to_vec(), b"test_value".to_vec()).unwrap();
+        store.commit("Test single commit").unwrap();
+        
+        // Get commit count after our commit
+        let log_output = std::process::Command::new("git")
+            .args(&["log", "--oneline"])
+            .current_dir(temp_dir.path())
+            .output()
+            .unwrap();
+        let log_str = String::from_utf8_lossy(&log_output.stdout);
+        println!("Git log after commit:\n{}", log_str);
+        let final_commits = log_str.lines().count();
+        
+        // Should have exactly one more commit (no separate metadata commit)
+        assert_eq!(final_commits, initial_commits + 1, 
+            "Expected exactly one new commit, but got {} new commits", 
+            final_commits - initial_commits);
+        
+        // Verify the commit includes the prolly metadata files
+        let show_output = std::process::Command::new("git")
+            .args(&["show", "--name-only", "--pretty=format:", "HEAD"])
+            .current_dir(temp_dir.path())
+            .output()
+            .unwrap();
+        
+        let files_in_commit = String::from_utf8_lossy(&show_output.stdout);
+        
+        // Also check what's in the dataset directory
+        let files_in_dir = std::fs::read_dir(&dataset_dir).unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        println!("Files in dataset dir: {:?}", files_in_dir);
+        
+        // Check git status
+        let status_output = std::process::Command::new("git")
+            .args(&["status", "--porcelain"])
+            .current_dir(temp_dir.path())
+            .output()
+            .unwrap();
+        println!("Git status: {}", String::from_utf8_lossy(&status_output.stdout));
+        
+        println!("Files in commit: '{}'", files_in_commit);
+        
+        assert!(files_in_commit.contains("prolly_config_tree_config"), 
+            "Commit should include prolly_config_tree_config, but got: {}", files_in_commit);
+        assert!(files_in_commit.contains("prolly_hash_mappings"), 
+            "Commit should include prolly_hash_mappings, but got: {}", files_in_commit);
     }
 }
