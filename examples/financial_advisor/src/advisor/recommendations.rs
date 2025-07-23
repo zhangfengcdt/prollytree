@@ -118,14 +118,15 @@ impl RecommendationEngine {
 
         // Get stock-specific data for more detailed analysis
         let stock_data = self.get_stock_specific_data(symbol);
-        
+
         // Sector-based analysis with realistic weightings
         let sector_score = self.analyze_sector_outlook(&stock_data.sector, symbol, pe_ratio);
         score += sector_score.0;
         factors.push(sector_score.1);
 
         // Company-specific fundamental analysis
-        let fundamental_score = self.analyze_fundamentals(symbol, price, pe_ratio, &stock_data.sector);
+        let fundamental_score =
+            self.analyze_fundamentals(symbol, price, pe_ratio, &stock_data.sector);
         score += fundamental_score.0;
         factors.push(fundamental_score.1);
 
@@ -140,7 +141,8 @@ impl RecommendationEngine {
         factors.push(valuation_score.1);
 
         // Determine recommendation with more nuanced thresholds
-        let (recommendation_type, confidence) = self.determine_recommendation(score, symbol, &stock_data.sector);
+        let (recommendation_type, confidence) =
+            self.determine_recommendation(score, symbol, &stock_data.sector);
 
         let reasoning = format!(
             "Analysis of {} (${:.2}, P/E: {:.1}) in {} sector: {}. \
@@ -151,7 +153,8 @@ impl RecommendationEngine {
             pe_ratio,
             stock_data.sector,
             match recommendation_type {
-                RecommendationType::Buy => "Strong positive outlook with favorable risk-reward ratio",
+                RecommendationType::Buy =>
+                    "Strong positive outlook with favorable risk-reward ratio",
                 RecommendationType::Sell => "Concerns about valuation and sector headwinds",
                 RecommendationType::Hold => "Balanced outlook, current position appropriate",
                 RecommendationType::Rebalance => "Portfolio optimization opportunity identified",
@@ -255,65 +258,118 @@ impl RecommendationEngine {
         }
     }
 
-    fn analyze_sector_outlook(&self, sector: &str, symbol: &str, pe_ratio: f64) -> (f64, &'static str) {
+    fn analyze_sector_outlook(
+        &self,
+        sector: &str,
+        symbol: &str,
+        pe_ratio: f64,
+    ) -> (f64, &'static str) {
         match sector {
-            "Technology" => {
-                match symbol {
-                    "AAPL" => (0.15, "Technology leader with strong ecosystem and services growth"),
-                    "MSFT" => (0.25, "Cloud dominance and enterprise AI positioning driving growth"),
-                    "GOOGL" => (0.10, "Search monopoly but facing AI disruption challenges"),
-                    "META" => (0.05, "Metaverse investments weighing on near-term profitability"),
-                    "NVDA" => (0.35, "AI semiconductor leader with unprecedented demand"),
-                    "INTC" => (-0.15, "Struggling to compete in advanced chip manufacturing"),
-                    "ADBE" => (0.20, "Creative software dominance with growing AI integration"),
-                    "CRM" => (0.10, "Enterprise software growth but increased competition"),
-                    _ => (0.05, "Technology sector showing mixed fundamentals")
-                }
-            }
+            "Technology" => match symbol {
+                "AAPL" => (
+                    0.15,
+                    "Technology leader with strong ecosystem and services growth",
+                ),
+                "MSFT" => (
+                    0.25,
+                    "Cloud dominance and enterprise AI positioning driving growth",
+                ),
+                "GOOGL" => (0.10, "Search monopoly but facing AI disruption challenges"),
+                "META" => (
+                    0.05,
+                    "Metaverse investments weighing on near-term profitability",
+                ),
+                "NVDA" => (0.35, "AI semiconductor leader with unprecedented demand"),
+                "INTC" => (
+                    -0.15,
+                    "Struggling to compete in advanced chip manufacturing",
+                ),
+                "ADBE" => (
+                    0.20,
+                    "Creative software dominance with growing AI integration",
+                ),
+                "CRM" => (0.10, "Enterprise software growth but increased competition"),
+                _ => (0.05, "Technology sector showing mixed fundamentals"),
+            },
             "Healthcare" => {
                 if pe_ratio < 20.0 {
-                    (0.20, "Healthcare defensive characteristics with reasonable valuation")
+                    (
+                        0.20,
+                        "Healthcare defensive characteristics with reasonable valuation",
+                    )
                 } else {
                     (0.10, "Healthcare stability but premium valuation concerns")
                 }
             }
-            "Financial Services" => {
-                match symbol {
-                    "JPM" => (0.15, "Benefiting from higher interest rates and strong credit quality"),
-                    "V" | "MA" => (0.25, "Payment network dominance with recession-resistant model"),
-                    "PYPL" => (-0.10, "Facing increased competition in digital payments"),
-                    _ => (0.05, "Financial sector mixed amid rate environment")
-                }
-            }
-            "Consumer Discretionary" => {
-                match symbol {
-                    "AMZN" => (0.10, "E-commerce leader but cloud growth slowing"),
-                    "TSLA" => (-0.05, "EV pioneer but intensifying competition and valuation concerns"),
-                    "HD" => (0.15, "Home improvement demand resilient despite economic headwinds"),
-                    "DIS" => (0.00, "Streaming wars and theme park recovery offsetting each other"),
-                    _ => (-0.05, "Consumer discretionary facing economic headwinds")
-                }
-            }
-            "Consumer Staples" => (0.10, "Defensive characteristics attractive in uncertain environment"),
-            "Communication Services" => (0.05, "Mixed outlook with streaming competition intensifying"),
+            "Financial Services" => match symbol {
+                "JPM" => (
+                    0.15,
+                    "Benefiting from higher interest rates and strong credit quality",
+                ),
+                "V" | "MA" => (
+                    0.25,
+                    "Payment network dominance with recession-resistant model",
+                ),
+                "PYPL" => (-0.10, "Facing increased competition in digital payments"),
+                _ => (0.05, "Financial sector mixed amid rate environment"),
+            },
+            "Consumer Discretionary" => match symbol {
+                "AMZN" => (0.10, "E-commerce leader but cloud growth slowing"),
+                "TSLA" => (
+                    -0.05,
+                    "EV pioneer but intensifying competition and valuation concerns",
+                ),
+                "HD" => (
+                    0.15,
+                    "Home improvement demand resilient despite economic headwinds",
+                ),
+                "DIS" => (
+                    0.00,
+                    "Streaming wars and theme park recovery offsetting each other",
+                ),
+                _ => (-0.05, "Consumer discretionary facing economic headwinds"),
+            },
+            "Consumer Staples" => (
+                0.10,
+                "Defensive characteristics attractive in uncertain environment",
+            ),
+            "Communication Services" => (
+                0.05,
+                "Mixed outlook with streaming competition intensifying",
+            ),
             "Automotive" => (-0.10, "Traditional auto facing EV transition challenges"),
-            _ => (0.00, "Sector outlook neutral")
+            _ => (0.00, "Sector outlook neutral"),
         }
     }
 
-    fn analyze_fundamentals(&self, symbol: &str, _price: f64, pe_ratio: f64, _sector: &str) -> (f64, &'static str) {
+    fn analyze_fundamentals(
+        &self,
+        symbol: &str,
+        _price: f64,
+        pe_ratio: f64,
+        _sector: &str,
+    ) -> (f64, &'static str) {
         // Symbol-specific fundamental analysis
         match symbol {
             "AAPL" => {
                 if pe_ratio > 30.0 {
-                    (-0.10, "Premium valuation limits upside despite strong fundamentals")
+                    (
+                        -0.10,
+                        "Premium valuation limits upside despite strong fundamentals",
+                    )
                 } else {
-                    (0.20, "Strong balance sheet and ecosystem moat justify valuation")
+                    (
+                        0.20,
+                        "Strong balance sheet and ecosystem moat justify valuation",
+                    )
                 }
             }
             "MSFT" => {
                 if pe_ratio < 35.0 {
-                    (0.25, "Exceptional fundamentals with AI and cloud leadership")
+                    (
+                        0.25,
+                        "Exceptional fundamentals with AI and cloud leadership",
+                    )
                 } else {
                     (0.10, "Strong fundamentals but valuation becoming stretched")
                 }
@@ -322,50 +378,80 @@ impl RecommendationEngine {
                 if pe_ratio < 25.0 {
                     (0.15, "Search dominance and attractive valuation multiple")
                 } else {
-                    (0.05, "Core business strong but AI disruption risks emerging")
+                    (
+                        0.05,
+                        "Core business strong but AI disruption risks emerging",
+                    )
                 }
             }
             "NVDA" => {
                 if pe_ratio > 60.0 {
-                    (0.10, "Revolutionary AI demand but extreme valuation multiples")
+                    (
+                        0.10,
+                        "Revolutionary AI demand but extreme valuation multiples",
+                    )
                 } else {
                     (0.30, "AI revolution driving unprecedented earnings growth")
                 }
             }
             "TSLA" => {
                 if pe_ratio > 50.0 {
-                    (-0.20, "Growth slowing while valuation remains extremely high")
+                    (
+                        -0.20,
+                        "Growth slowing while valuation remains extremely high",
+                    )
                 } else {
-                    (0.10, "EV leadership position but facing increased competition")
+                    (
+                        0.10,
+                        "EV leadership position but facing increased competition",
+                    )
                 }
             }
             "AMZN" => {
                 if pe_ratio < 50.0 {
-                    (0.15, "E-commerce dominance and cloud profitability improving")
+                    (
+                        0.15,
+                        "E-commerce dominance and cloud profitability improving",
+                    )
                 } else {
                     (0.05, "Growth slowing and competition intensifying")
                 }
             }
             "JPM" => {
                 if pe_ratio < 15.0 {
-                    (0.20, "Strong credit quality and attractive valuation in rate environment")
+                    (
+                        0.20,
+                        "Strong credit quality and attractive valuation in rate environment",
+                    )
                 } else {
-                    (0.10, "Solid fundamentals but limited upside at current levels")
+                    (
+                        0.10,
+                        "Solid fundamentals but limited upside at current levels",
+                    )
                 }
             }
             "META" => {
                 if pe_ratio < 25.0 {
                     (0.15, "Social media dominance and efficiency improvements")
                 } else {
-                    (0.00, "Metaverse investments creating uncertainty about returns")
+                    (
+                        0.00,
+                        "Metaverse investments creating uncertainty about returns",
+                    )
                 }
             }
             _ => {
                 // Generic P/E analysis for unknown stocks
                 if pe_ratio < 15.0 {
-                    (0.15, "Attractive valuation multiple suggests potential upside")
+                    (
+                        0.15,
+                        "Attractive valuation multiple suggests potential upside",
+                    )
                 } else if pe_ratio > 30.0 {
-                    (-0.10, "High valuation multiple limits risk-adjusted returns")
+                    (
+                        -0.10,
+                        "High valuation multiple limits risk-adjusted returns",
+                    )
                 } else {
                     (0.05, "Valuation multiple within reasonable range")
                 }
@@ -373,44 +459,76 @@ impl RecommendationEngine {
         }
     }
 
-    fn analyze_risk_alignment(&self, client: &ClientProfile, pe_ratio: f64, sector: &str, symbol: &str) -> (f64, &'static str) {
+    fn analyze_risk_alignment(
+        &self,
+        client: &ClientProfile,
+        pe_ratio: f64,
+        sector: &str,
+        symbol: &str,
+    ) -> (f64, &'static str) {
         match client.risk_tolerance {
-            RiskTolerance::Conservative => {
-                match sector {
-                    "Healthcare" | "Consumer Staples" | "Financial Services" => {
-                        if pe_ratio < 20.0 {
-                            (0.15, "Defensive sector characteristics align with conservative approach")
-                        } else {
-                            (0.05, "Defensive sector but valuation limits conservative appeal")
-                        }
+            RiskTolerance::Conservative => match sector {
+                "Healthcare" | "Consumer Staples" | "Financial Services" => {
+                    if pe_ratio < 20.0 {
+                        (
+                            0.15,
+                            "Defensive sector characteristics align with conservative approach",
+                        )
+                    } else {
+                        (
+                            0.05,
+                            "Defensive sector but valuation limits conservative appeal",
+                        )
                     }
-                    "Technology" => {
-                        match symbol {
-                            "AAPL" | "MSFT" => (0.10, "Quality tech names suitable for conservative growth"),
-                            _ => (-0.15, "Technology volatility exceeds conservative risk parameters")
-                        }
-                    }
-                    _ => (-0.10, "Sector volatility may not align with conservative objectives")
                 }
-            }
+                "Technology" => match symbol {
+                    "AAPL" | "MSFT" => {
+                        (0.10, "Quality tech names suitable for conservative growth")
+                    }
+                    _ => (
+                        -0.15,
+                        "Technology volatility exceeds conservative risk parameters",
+                    ),
+                },
+                _ => (
+                    -0.10,
+                    "Sector volatility may not align with conservative objectives",
+                ),
+            },
             RiskTolerance::Moderate => {
                 if pe_ratio > 40.0 {
-                    (0.00, "Moderate risk tolerance accommodates some growth premium")
+                    (
+                        0.00,
+                        "Moderate risk tolerance accommodates some growth premium",
+                    )
                 } else {
-                    (0.10, "Balanced risk-reward profile fits moderate investment approach")
+                    (
+                        0.10,
+                        "Balanced risk-reward profile fits moderate investment approach",
+                    )
                 }
             }
-            RiskTolerance::Aggressive => {
-                match symbol {
-                    "NVDA" | "TSLA" | "META" => (0.20, "High growth potential aligns with aggressive risk appetite"),
-                    _ if pe_ratio > 30.0 => (0.15, "Growth premium acceptable for aggressive strategy"),
-                    _ => (0.05, "May lack sufficient growth potential for aggressive allocation")
-                }
-            }
+            RiskTolerance::Aggressive => match symbol {
+                "NVDA" | "TSLA" | "META" => (
+                    0.20,
+                    "High growth potential aligns with aggressive risk appetite",
+                ),
+                _ if pe_ratio > 30.0 => (0.15, "Growth premium acceptable for aggressive strategy"),
+                _ => (
+                    0.05,
+                    "May lack sufficient growth potential for aggressive allocation",
+                ),
+            },
         }
     }
 
-    fn analyze_valuation(&self, _symbol: &str, _price: f64, pe_ratio: f64, sector: &str) -> (f64, &'static str) {
+    fn analyze_valuation(
+        &self,
+        _symbol: &str,
+        _price: f64,
+        pe_ratio: f64,
+        sector: &str,
+    ) -> (f64, &'static str) {
         // More sophisticated valuation analysis
         let sector_avg_pe = match sector {
             "Technology" => 28.0,
@@ -425,9 +543,15 @@ impl RecommendationEngine {
         let pe_premium = pe_ratio / sector_avg_pe;
 
         if pe_premium < 0.8 {
-            (0.20, "Trading at discount to sector average suggests value opportunity")
+            (
+                0.20,
+                "Trading at discount to sector average suggests value opportunity",
+            )
         } else if pe_premium > 1.5 {
-            (-0.15, "Significant premium to sector average limits margin of safety")
+            (
+                -0.15,
+                "Significant premium to sector average limits margin of safety",
+            )
         } else if pe_premium > 1.2 {
             (-0.05, "Modest premium to sector average warrants caution")
         } else {
@@ -435,7 +559,12 @@ impl RecommendationEngine {
         }
     }
 
-    fn determine_recommendation(&self, score: f64, symbol: &str, _sector: &str) -> (RecommendationType, f64) {
+    fn determine_recommendation(
+        &self,
+        score: f64,
+        symbol: &str,
+        _sector: &str,
+    ) -> (RecommendationType, f64) {
         // More nuanced recommendation logic with symbol-specific thresholds
         let (rec_type, base_confidence) = if score > 0.4 {
             (RecommendationType::Buy, 0.75 + (score - 0.4) * 0.5)
@@ -459,11 +588,15 @@ impl RecommendationEngine {
     fn get_risk_alignment_summary(&self, client: &ClientProfile, sector: &str) -> &'static str {
         match (&client.risk_tolerance, sector) {
             (RiskTolerance::Conservative, "Healthcare") => "matches defensive investment criteria",
-            (RiskTolerance::Conservative, "Consumer Staples") => "aligns with stability requirements",
-            (RiskTolerance::Conservative, "Technology") => "requires careful selection within sector",
+            (RiskTolerance::Conservative, "Consumer Staples") => {
+                "aligns with stability requirements"
+            }
+            (RiskTolerance::Conservative, "Technology") => {
+                "requires careful selection within sector"
+            }
             (RiskTolerance::Aggressive, "Technology") => "leverages high-growth sector exposure",
             (RiskTolerance::Moderate, _) => "provides balanced risk-reward profile",
-            _ => "consideration of risk parameters integrated"
+            _ => "consideration of risk parameters integrated",
         }
     }
 }
