@@ -682,20 +682,9 @@ impl MemoryStore {
 
     /// Checkout branch or commit
     pub async fn checkout(&mut self, branch_or_commit: &str) -> Result<()> {
-        println!(
-            "DEBUG: Checking out from branch '{}' to '{}'",
-            self.current_branch(),
-            branch_or_commit
-        );
-
         self.versioned_store
             .checkout(branch_or_commit)
             .map_err(|e| anyhow::anyhow!("Failed to checkout '{}': {:?}", branch_or_commit, e))?;
-
-        println!(
-            "DEBUG: Successfully checked out to branch '{}'",
-            self.current_branch()
-        );
 
         if self.audit_enabled {
             self.log_audit(
