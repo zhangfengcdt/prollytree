@@ -52,9 +52,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
 
         Ok(RocksDBNodeStorage {
             db: Arc::new(db),
-            cache: Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(1000).unwrap(),
-            ))),
+            cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap()))),
         })
     }
 
@@ -64,9 +62,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
 
         Ok(RocksDBNodeStorage {
             db: Arc::new(db),
-            cache: Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(1000).unwrap(),
-            ))),
+            cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap()))),
         })
     }
 

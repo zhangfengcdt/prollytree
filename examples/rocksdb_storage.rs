@@ -52,7 +52,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Re-open the storage
     let storage2 = RocksDBNodeStorage::<32>::new(temp_dir.path().join("prolly_rocksdb"))?;
     let config2 = TreeConfig::<32>::default();
-    let tree2 = ProllyTree::load_from_storage(storage2, config2).expect("Failed to load tree from storage");
+    let tree2 =
+        ProllyTree::load_from_storage(storage2, config2).expect("Failed to load tree from storage");
 
     // Verify data is still there
     println!("Verifying persistence...");
@@ -63,7 +64,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Find the key in the node and get its corresponding value
             if let Some(idx) = node.keys.iter().position(|k| k == key.as_bytes()) {
                 let value = &node.values[idx];
-                println!("  {} -> {} (persisted)", key, String::from_utf8_lossy(value));
+                println!(
+                    "  {} -> {} (persisted)",
+                    key,
+                    String::from_utf8_lossy(value)
+                );
             }
         }
     }

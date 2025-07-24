@@ -80,6 +80,10 @@ name = "git_prolly_bench"
 harness = false
 required-features = ["git", "sql"]
 
+[[bench]]
+name = "storage_bench"
+harness = false
+
 [[example]]
 name = "proof_visualization"
 path = "examples/proof_visualization.rs"
