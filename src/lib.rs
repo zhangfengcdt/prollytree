@@ -54,6 +54,8 @@ pub mod node;
 pub mod proof;
 #[cfg(feature = "python")]
 pub mod python;
+#[cfg(feature = "rocksdb_storage")]
+pub mod rocksdb;
 #[cfg(feature = "sql")]
 pub mod sql;
 pub mod storage;

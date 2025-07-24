@@ -32,6 +32,19 @@ Git versioning and SQL integration:
 - **Time travel queries**: Historical data queries
 - **Concurrent operations**: Parallel table operations
 
+### 4. Storage Backend Comparison (`storage_bench.rs`)
+Compares different storage backend implementations:
+- **Insert performance**: Sequential inserts across storage backends
+- **Read performance**: Random key lookups
+- **Batch operations**: Bulk insert performance
+- **Direct node operations**: Low-level storage API performance
+
+Supported backends:
+- InMemoryNodeStorage (default)
+- FileNodeStorage (default)
+- RocksDBNodeStorage (requires `rocksdb_storage` feature)
+- GitNodeStorage (requires `git` feature)
+
 ## Running Benchmarks
 
 ### Run all benchmarks:
@@ -49,6 +62,12 @@ cargo bench --bench sql_bench --features sql
 
 # Git-Prolly benchmarks (requires both git and sql features)
 cargo bench --bench git_prolly_bench --features git,sql
+
+# Storage backend benchmarks
+cargo bench --bench storage_bench
+
+# Storage benchmarks with RocksDB included
+cargo bench --bench storage_bench --features rocksdb_storage
 ```
 
 ### Run specific benchmark within a suite:
