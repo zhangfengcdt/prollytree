@@ -206,13 +206,13 @@ For detailed documentation and examples, please visit [docs.rs/prollytree](https
 ## Roadmap
 
 The following features are for Prolly tree library for Version 0.1.0:
-- [X] Implement basic Prolly Tree structure
-- [X] Implement insertion and deletion operations
-- [X] Implement tree traversal and search
-- [X] Implement tree size and depth calculation
-- [X] Implement tree configuration and tree meta data handling
-- [X] Implement proof generation and verification
-- [X] Batch insertion and deletion
+- [X] implement basic Prolly Tree structure
+- [X] implement insertion and deletion operations
+- [X] implement tree traversal and search
+- [X] implement tree size and depth calculation
+- [X] implement tree configuration and tree meta data handling
+- [X] implement proof generation and verification
+- [X] batch insertion and deletion
 
 The following features are for Prolly tree library for Version 0.2.0:
 - [X] Arrow block encoding and decoding
@@ -220,17 +220,14 @@ The following features are for Prolly tree library for Version 0.2.0:
 
 The following features are for Prolly tree library for Version 0.2.1:
 - [X] tree diffing and merging examples
-- [X] show history of changes of the Prolly tree (git logs style) using `gitoxide` crate
-- [ ] support gluesql as a kv store
-
-The following features are for Prolly tree library for Version 0.2.2:
-- [ ] version-controlled databases
-  - [ ] support for IPFS (InterPlanetary File System) for distributed storage
-  - [ ] advanced probabilistic splitting algorithms
-- [ ] decentralized databases
-  - [ ] add support for cryptographic hash functions like SHA-256, BLAKE3, etc.
-  - [ ] support ZK-friendly hashes such as Poseidon, MiMC, etc.
-  - [ ] supporting a rollup-style L2 for a decentralized database
+- [X] show history of changes of the Prolly tree
+- [X] support python bindings for Prolly Tree
+- [X] support sql query based on gluesql as a query engine
+- [X] add usage examples for git-prolly use cases
+- [X] add usage examples for AI agent memory use cases
+- [X] support rocksdb as storage backend
+- [ ] support IPDL as storage backend
+- [X] generic storage backend support for VersionedKvStore
 
 ## Contributing
 
