@@ -60,18 +60,18 @@ fn bench_git_versioned_commits(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let temp_dir = TempDir::new().unwrap();
-                    
+
                     // Initialize git repository first
                     std::process::Command::new("git")
                         .args(&["init"])
                         .current_dir(temp_dir.path())
                         .output()
                         .unwrap();
-                    
+
                     // Create dataset subdirectory
                     let dataset_dir = temp_dir.path().join("dataset");
                     std::fs::create_dir_all(&dataset_dir).unwrap();
-                    
+
                     let store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
                     (store, temp_dir, generate_versioned_data(5, size))
                 },
@@ -202,18 +202,18 @@ fn bench_git_branch_operations(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let temp_dir = TempDir::new().unwrap();
-                    
+
                     // Initialize git repository first
                     std::process::Command::new("git")
                         .args(&["init"])
                         .current_dir(temp_dir.path())
                         .output()
                         .unwrap();
-                    
+
                     // Create dataset subdirectory
                     let dataset_dir = temp_dir.path().join("dataset");
                     std::fs::create_dir_all(&dataset_dir).unwrap();
-                    
+
                     let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
                     // Initialize with some data
