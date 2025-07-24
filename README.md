@@ -221,16 +221,12 @@ The following features are for Prolly tree library for Version 0.2.0:
 The following features are for Prolly tree library for Version 0.2.1:
 - [X] tree diffing and merging examples
 - [X] show history of changes of the Prolly tree (git logs style) using `gitoxide` crate
-- [ ] support gluesql as a kv store
-
-The following features are for Prolly tree library for Version 0.2.2:
-- [ ] version-controlled databases
-  - [ ] support for IPFS (InterPlanetary File System) for distributed storage
-  - [ ] advanced probabilistic splitting algorithms
-- [ ] decentralized databases
-  - [ ] add support for cryptographic hash functions like SHA-256, BLAKE3, etc.
-  - [ ] support ZK-friendly hashes such as Poseidon, MiMC, etc.
-  - [ ] supporting a rollup-style L2 for a decentralized database
+- [X] support python bindings for Prolly Tree
+- [X] support sql query based on gluesql as a query engine
+- [X] add usage examples for git-prolly use cases
+- [X] add usage examples for ai agent memory use cases
+- [X] support rocksdb as storage backend
+- [ ] support ipdl as storage backend
 
 ## Contributing
 
