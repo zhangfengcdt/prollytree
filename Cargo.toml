@@ -51,7 +51,7 @@ tempfile = "3.0"
 tokio = { version = "1.0", features = ["full"] }
 
 [features]
-default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql", "rocksdb_storage"]
+default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql"]
 tracing = ["dep:tracing"]
 digest_base64 = ["dep:base64"]
 prolly_balance_max_nodes = []

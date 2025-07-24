@@ -21,7 +21,7 @@ use prollytree::config::TreeConfig;
 #[cfg(all(feature = "git", feature = "sql"))]
 use prollytree::git::GitNodeStorage;
 #[cfg(all(feature = "git", feature = "sql"))]
-use prollytree::git::VersionedKvStore;
+use prollytree::git::GitVersionedKvStore;
 #[cfg(all(feature = "git", feature = "sql"))]
 use prollytree::sql::ProllyStorage;
 #[cfg(all(feature = "git", feature = "sql"))]
@@ -60,7 +60,19 @@ fn bench_git_versioned_commits(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let temp_dir = TempDir::new().unwrap();
-                    let store = VersionedKvStore::<32>::init(temp_dir.path()).unwrap();
+                    
+                    // Initialize git repository first
+                    std::process::Command::new("git")
+                        .args(&["init"])
+                        .current_dir(temp_dir.path())
+                        .output()
+                        .unwrap();
+                    
+                    // Create dataset subdirectory
+                    let dataset_dir = temp_dir.path().join("dataset");
+                    std::fs::create_dir_all(&dataset_dir).unwrap();
+                    
+                    let store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
                     (store, temp_dir, generate_versioned_data(5, size))
                 },
                 |(mut store, _temp_dir, data)| {
@@ -190,7 +202,19 @@ fn bench_git_branch_operations(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let temp_dir = TempDir::new().unwrap();
-                    let mut store = VersionedKvStore::<32>::init(temp_dir.path()).unwrap();
+                    
+                    // Initialize git repository first
+                    std::process::Command::new("git")
+                        .args(&["init"])
+                        .current_dir(temp_dir.path())
+                        .output()
+                        .unwrap();
+                    
+                    // Create dataset subdirectory
+                    let dataset_dir = temp_dir.path().join("dataset");
+                    std::fs::create_dir_all(&dataset_dir).unwrap();
+                    
+                    let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
                     // Initialize with some data
                     for i in 0..size {
