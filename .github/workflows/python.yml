@@ -2,7 +2,7 @@ name: Build Python Package
 
 on:
   pull_request:
-    types: [ready_for_review, synchronize]
+    types: [opened, ready_for_review, synchronize]
     paths:
       - 'python/**'
   push:
