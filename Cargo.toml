@@ -40,6 +40,7 @@ uuid = { version = "1.0", optional = true }
 futures = { version = "0.3", optional = true }
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"], optional = true }
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+rocksdb = { version = "0.22", optional = true }
 
 [dev-dependencies]
 bytes = "1.10.1"
@@ -50,7 +51,7 @@ tempfile = "3.0"
 tokio = { version = "1.0", features = ["full"] }
 
 [features]
-default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql"]
+default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql", "rocksdb_storage"]
 tracing = ["dep:tracing"]
 digest_base64 = ["dep:base64"]
 prolly_balance_max_nodes = []
@@ -58,6 +59,7 @@ prolly_balance_rolling_hash = []
 git = ["dep:gix", "dep:clap", "dep:lru", "dep:hex", "dep:chrono"]
 sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures", "dep:tokio"]
 python = ["dep:pyo3"]
+rocksdb_storage = ["dep:rocksdb", "dep:lru"]
 
 [[bin]]
 name = "git-prolly"
@@ -96,6 +98,11 @@ required-features = ["git"]
 name = "git_merge"
 path = "examples/git_merge.rs"
 required-features = ["git"]
+
+[[example]]
+name = "rocksdb_storage"
+path = "examples/rocksdb_storage.rs"
+required-features = ["rocksdb_storage"]
 
 [workspace]
 members = ["examples/rig_versioned_memory", "examples/financial_advisor"]
