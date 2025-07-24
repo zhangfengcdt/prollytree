@@ -15,7 +15,7 @@ limitations under the License.
 use clap::{Parser, Subcommand};
 #[cfg(feature = "sql")]
 use gluesql_core::{executor::Payload, prelude::Glue};
-use prollytree::git::{DiffOperation, GitOperations, MergeResult, VersionedKvStore};
+use prollytree::git::{DiffOperation, GitOperations, GitVersionedKvStore, MergeResult};
 #[cfg(feature = "sql")]
 use prollytree::sql::ProllyStorage;
 use prollytree::tree::Tree;
@@ -218,7 +218,7 @@ fn handle_init(path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> 
 
     println!("Initializing ProllyTree KV store in {target_path:?}...");
 
-    let _store = VersionedKvStore::<32>::init(&target_path)?;
+    let _store = GitVersionedKvStore::<32>::init(&target_path)?;
 
     println!("✓ Initialized empty ProllyTree KV store");
     println!("✓ Git repository initialized");
@@ -229,7 +229,7 @@ fn handle_init(path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> 
 
 fn handle_set(key: String, value: String) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+    let mut store = GitVersionedKvStore::<32>::open(&current_dir)?;
 
     store.insert(key.as_bytes().to_vec(), value.as_bytes().to_vec())?;
 
@@ -241,7 +241,7 @@ fn handle_set(key: String, value: String) -> Result<(), Box<dyn std::error::Erro
 
 fn handle_get(key: String) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
 
     match store.get(key.as_bytes()) {
         Some(value) => {
@@ -258,7 +258,7 @@ fn handle_get(key: String) -> Result<(), Box<dyn std::error::Error>> {
 
 fn handle_delete(key: String) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+    let mut store = GitVersionedKvStore::<32>::open(&current_dir)?;
 
     if store.delete(key.as_bytes())? {
         println!("✓ Staged deletion: {key}");
@@ -273,7 +273,7 @@ fn handle_delete(key: String) -> Result<(), Box<dyn std::error::Error>> {
 
 fn handle_list(show_values: bool, show_graph: bool) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+    let mut store = GitVersionedKvStore::<32>::open(&current_dir)?;
 
     if show_graph {
         // Show the prolly tree structure
@@ -311,7 +311,7 @@ fn handle_list(show_values: bool, show_graph: bool) -> Result<(), Box<dyn std::e
 
 fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
 
     let status = store.status();
     let current_branch = store.current_branch();
@@ -340,7 +340,7 @@ fn handle_status() -> Result<(), Box<dyn std::error::Error>> {
 
 fn handle_commit(message: String) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+    let mut store = GitVersionedKvStore::<32>::open(&current_dir)?;
 
     let status = store.status();
     if status.is_empty() {
@@ -376,7 +376,7 @@ fn handle_diff(
     _keys: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
     let ops = GitOperations::new(store);
 
     let diffs = ops.diff(&from, &to)?;
@@ -483,7 +483,7 @@ fn handle_diff(
 
 fn handle_show(commit: Option<String>, keys_only: bool) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
     let ops = GitOperations::new(store);
 
     let commit_ref = commit.unwrap_or_else(|| "HEAD".to_string());
@@ -537,7 +537,7 @@ fn handle_merge(
     _strategy: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
     let mut ops = GitOperations::new(store);
 
     println!("Merging branch '{branch}'...");
@@ -572,7 +572,7 @@ fn handle_merge(
 
 fn handle_stats(commit: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
-    let store = VersionedKvStore::<32>::open(&current_dir)?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
 
     let target = commit.unwrap_or_else(|| "HEAD".to_string());
 
@@ -626,14 +626,14 @@ fn handle_clear(confirm: bool, keep_history: bool) -> Result<(), Box<dyn std::er
     println!("🧹 Clearing ProllyTree dataset...");
 
     // Open the store to get access to internal structures
-    let mut store = VersionedKvStore::<32>::open(&current_dir)?;
+    let mut store = GitVersionedKvStore::<32>::open(&current_dir)?;
 
     // Clear staging area first
     println!("  ↳ Clearing staging changes...");
     let status = store.status();
     if !status.is_empty() {
         // Reset staging area by recreating the store
-        store = VersionedKvStore::<32>::open(&current_dir)?;
+        store = GitVersionedKvStore::<32>::open(&current_dir)?;
         println!("    ✓ Cleared {} staged changes", status.len());
     } else {
         println!("    ✓ No staged changes to clear");

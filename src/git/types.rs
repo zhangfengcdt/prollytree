@@ -111,6 +111,33 @@ pub struct KvStorageMetadata {
     pub last_commit: Option<gix::ObjectId>,
 }
 
+/// Storage backend types supported by VersionedKvStore
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum StorageBackend {
+    /// In-memory storage (volatile, fastest)
+    InMemory,
+    /// File-based storage (persistent, simple)
+    File,
+    /// RocksDB storage (persistent, high-performance)
+    #[cfg(feature = "rocksdb_storage")]
+    RocksDB,
+    /// Git object storage (development only, default)
+    #[default]
+    Git,
+}
+
+impl std::fmt::Display for StorageBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StorageBackend::InMemory => write!(f, "InMemory"),
+            StorageBackend::File => write!(f, "File"),
+            #[cfg(feature = "rocksdb_storage")]
+            StorageBackend::RocksDB => write!(f, "RocksDB"),
+            StorageBackend::Git => write!(f, "Git"),
+        }
+    }
+}
+
 impl fmt::Display for DiffOperation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
