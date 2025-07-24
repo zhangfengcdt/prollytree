@@ -67,46 +67,46 @@ path = "src/bin/git-prolly.rs"
 required-features = ["git", "sql"]
 
 [[bench]]
-name = "prollytree_bench"
+name = "tree"
 harness = false
 
 [[bench]]
-name = "sql_bench"
+name = "sql"
 harness = false
 required-features = ["sql"]
 
 [[bench]]
-name = "git_prolly_bench"
+name = "git_prolly"
 harness = false
 required-features = ["git", "sql"]
 
 [[bench]]
-name = "storage_bench"
+name = "storage"
 harness = false
 
 [[example]]
-name = "proof_visualization"
-path = "examples/proof_visualization.rs"
+name = "proof"
+path = "examples/proof.rs"
 
 [[example]]
-name = "git_sql"
-path = "examples/git_sql.rs"
+name = "sql"
+path = "examples/sql.rs"
 required-features = ["sql"]
 
 [[example]]
-name = "git_diff"
-path = "examples/git_diff.rs"
+name = "diff"
+path = "examples/diff.rs"
 required-features = ["git"]
 
 [[example]]
-name = "git_merge"
-path = "examples/git_merge.rs"
+name = "merge"
+path = "examples/merge.rs"
 required-features = ["git"]
 
 [[example]]
-name = "rocksdb_storage"
-path = "examples/rocksdb_storage.rs"
+name = "torage"
+path = "examples/storage.rs"
 required-features = ["rocksdb_storage"]
 
 [workspace]
-members = ["examples/rig_versioned_memory", "examples/financial_advisor"]
+members = ["examples/financial_advisor"]
