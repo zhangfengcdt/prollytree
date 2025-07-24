@@ -106,6 +106,7 @@ impl FinancialAdvisor {
         &mut self,
         symbol: &str,
         client_profile: &ClientProfile,
+        notes: Option<String>,
     ) -> Result<Recommendation> {
         if self.verbose {
             println!("🔍 Fetching market data for {symbol}...");
@@ -148,7 +149,7 @@ impl FinancialAdvisor {
         );
 
         // Step 5: Store recommendation with audit trail
-        self.store_recommendation(&recommendation).await?;
+        self.store_recommendation(&recommendation, notes).await?;
 
         // Keep in session memory for quick access
         self.session_recommendations.push(recommendation.clone());
@@ -219,7 +220,11 @@ impl FinancialAdvisor {
         Ok(())
     }
 
-    async fn store_recommendation(&mut self, recommendation: &Recommendation) -> Result<()> {
+    async fn store_recommendation(
+        &mut self,
+        recommendation: &Recommendation,
+        notes: Option<String>,
+    ) -> Result<()> {
         let memory = ValidatedMemory {
             id: recommendation.id.clone(),
             content: serde_json::to_string(recommendation)?,
@@ -232,9 +237,20 @@ impl FinancialAdvisor {
             cross_references: vec![],
         };
 
-        // Store with full audit trail
+        // Create custom commit message based on notes
+        let commit_message = if let Some(user_notes) = notes {
+            format!(
+                "Finance Advisor: recommend {} ({})",
+                recommendation.symbol, user_notes
+            )
+        } else {
+            format!("Finance Advisor: recommend {}", recommendation.symbol)
+        };
+
+        // Store with full audit trail and custom commit message using typed storage
         self.memory_store
-            .store_with_audit(
+            .store_typed_with_audit_and_commit(
+                recommendation,
                 MemoryType::Recommendation,
                 &memory,
                 &format!(
@@ -242,11 +258,66 @@ impl FinancialAdvisor {
                     recommendation.recommendation_type.as_str(),
                     recommendation.symbol
                 ),
+                &commit_message,
             )
             .await?;
 
         if self.verbose {
             println!("✅ Recommendation stored. ID: {}", recommendation.id);
+        }
+
+        Ok(())
+    }
+
+    async fn store_security_test(
+        &mut self,
+        payload: &str,
+        alert: &crate::security::SecurityAlert,
+        notes: Option<String>,
+    ) -> Result<()> {
+        use crate::memory::MemoryType;
+        use uuid::Uuid;
+
+        let security_test = serde_json::json!({
+            "id": Uuid::new_v4().to_string(),
+            "payload": payload,
+            "alert_level": format!("{:?}", alert.level),
+            "alert_type": format!("{:?}", alert.alert_type),
+            "description": alert.description,
+            "confidence": alert.confidence,
+            "recommendations": alert.recommendations,
+            "timestamp": Utc::now().to_rfc3339(),
+        });
+
+        let memory = ValidatedMemory {
+            id: Uuid::new_v4().to_string(),
+            content: security_test.to_string(),
+            timestamp: Utc::now(),
+            validation_hash: self.validator.hash_content(&security_test.to_string()),
+            sources: vec!["security_monitor".to_string()],
+            confidence: alert.confidence,
+            cross_references: vec![],
+        };
+
+        // Create custom commit message based on notes
+        let commit_message = if let Some(user_notes) = notes {
+            format!("Finance Advisor: security test ({user_notes})")
+        } else {
+            "Finance Advisor: security test".to_string()
+        };
+
+        // Store with full audit trail and custom commit message
+        self.memory_store
+            .store_with_audit_and_commit(
+                MemoryType::Security,
+                &memory,
+                &format!("Security test: {}", alert.description),
+                &commit_message,
+            )
+            .await?;
+
+        if self.verbose {
+            println!("✅ Security test stored. ID: {}", memory.id);
         }
 
         Ok(())
@@ -307,6 +378,39 @@ impl FinancialAdvisor {
 
     pub async fn load_client_profile(&self) -> Result<Option<ClientProfile>> {
         self.memory_store.load_client_profile().await
+    }
+
+    pub async fn create_and_switch_branch(&mut self, name: &str) -> Result<()> {
+        // Create the branch
+        self.memory_store.create_branch(name).await?;
+
+        // Switch to the newly created branch
+        self.memory_store.checkout(name).await?;
+
+        Ok(())
+    }
+
+    pub fn current_branch(&self) -> &str {
+        self.memory_store.current_branch()
+    }
+
+    pub fn get_actual_current_branch(&self) -> String {
+        self.memory_store.get_actual_current_branch()
+    }
+
+    pub async fn switch_to_branch(&mut self, name: &str) -> Result<()> {
+        // Just switch to the branch (no creation)
+        self.memory_store.checkout(name).await?;
+        Ok(())
+    }
+
+    pub fn branch_exists(&self, name: &str) -> bool {
+        // Check if branch exists by listing all branches
+        if let Ok(branches) = self.memory_store.list_branches() {
+            branches.contains(&name.to_string())
+        } else {
+            false
+        }
     }
 
     async fn generate_ai_reasoning(

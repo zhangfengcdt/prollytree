@@ -36,17 +36,34 @@ impl<'a> InteractiveSession<'a> {
                     time_horizon: "5-10 years".to_string(),
                     restrictions: vec![],
                 };
-                println!(
-                    "{} Created new client profile: {}",
-                    "🆕".blue(),
-                    default_profile.id
-                );
+
+                // Save the default profile so it persists
+                match self.advisor.store_client_profile(&default_profile).await {
+                    Ok(_) => {
+                        println!(
+                            "{} Created and saved new client profile: {}",
+                            "🆕".blue(),
+                            default_profile.id
+                        );
+                    }
+                    Err(e) => {
+                        println!(
+                            "{} Created client profile but failed to save: {}",
+                            "⚠️".yellow(),
+                            e
+                        );
+                    }
+                }
+
                 default_profile
             }
         };
 
         loop {
-            print!("\n{} ", "🏦>".blue().bold());
+            let actual_branch = self.advisor.get_actual_current_branch();
+            let branch_display = format!(" [{}]", actual_branch.cyan());
+
+            print!("\n{}{} ", "🏦".blue(), branch_display);
             io::stdout().flush()?;
 
             let mut input = String::new();
@@ -85,7 +102,7 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "Available commands:".yellow());
         println!(
             "  {} - Get recommendation for a stock symbol",
-            "recommend <SYMBOL>".cyan()
+            "recommend <SYMBOL> [notes]".cyan()
         );
         println!("  {} - Show client profile", "profile".cyan());
         println!(
@@ -103,9 +120,17 @@ impl<'a> InteractiveSession<'a> {
         );
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
-        println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
+        println!(
+            "  {} - Test injection attack",
+            "test-inject <TEXT> [-- notes]".cyan()
+        );
         println!("  {} - Show memory tree visualization", "visualize".cyan());
-        println!("  {} - Create memory branch", "branch <NAME>".cyan());
+        println!(
+            "  {} - Create and switch to memory branch",
+            "branch <NAME>".cyan()
+        );
+        println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
+        println!("  {} - List all branches", "list-branches".cyan());
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
@@ -125,12 +150,17 @@ impl<'a> InteractiveSession<'a> {
 
             "recommend" | "r" => {
                 if parts.len() < 2 {
-                    println!("{} Usage: recommend <SYMBOL>", "❓".yellow());
+                    println!("{} Usage: recommend <SYMBOL> [notes]", "❓".yellow());
                     return Ok(true);
                 }
 
                 let symbol = parts[1].to_uppercase();
-                self.handle_recommendation(&symbol, client).await?;
+                let notes = if parts.len() > 2 {
+                    Some(parts[2..].join(" "))
+                } else {
+                    None
+                };
+                self.handle_recommendation(&symbol, client, notes).await?;
             }
 
             "profile" | "p" => {
@@ -195,12 +225,28 @@ impl<'a> InteractiveSession<'a> {
 
             "test-inject" | "inject" => {
                 if parts.len() < 2 {
-                    println!("{} Usage: test-inject <malicious text>", "❓".yellow());
+                    println!(
+                        "{} Usage: test-inject <malicious text> [-- notes]",
+                        "❓".yellow()
+                    );
                     return Ok(true);
                 }
 
-                let payload = parts[1..].join(" ");
-                self.test_injection_attack(&payload).await?;
+                // Find if there's a "--" separator for notes
+                let separator_pos = parts.iter().position(|&p| p == "--");
+                let (payload, notes) = if let Some(pos) = separator_pos {
+                    let payload = parts[1..pos].join(" ");
+                    let notes = if pos + 1 < parts.len() {
+                        Some(parts[pos + 1..].join(" "))
+                    } else {
+                        None
+                    };
+                    (payload, notes)
+                } else {
+                    (parts[1..].join(" "), None)
+                };
+
+                self.test_injection_attack(&payload, notes).await?;
             }
 
             "visualize" | "vis" => {
@@ -215,6 +261,30 @@ impl<'a> InteractiveSession<'a> {
 
                 let branch_name = parts[1];
                 self.create_branch(branch_name).await?;
+            }
+
+            "switch" | "sw" => {
+                if parts.len() < 2 {
+                    println!("{} Usage: switch <branch>", "❓".yellow());
+                    return Ok(true);
+                }
+
+                let branch_name = parts[1];
+                self.switch_branch(branch_name).await?;
+            }
+
+            "branch-info" | "bi" => {
+                self.show_branch_info();
+            }
+
+            "debug-branch" | "db" => {
+                println!("DEBUG: Testing git branch reading...");
+                let actual = self.advisor.get_actual_current_branch();
+                println!("Result: '{actual}'");
+            }
+
+            "list-branches" | "lb" => {
+                self.list_branches();
             }
 
             "exit" | "quit" | "q" => {
@@ -241,7 +311,7 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "Available commands:".yellow());
         println!(
             "  {} - Get recommendation for a stock symbol",
-            "recommend <SYMBOL>".cyan()
+            "recommend <SYMBOL> [notes]".cyan()
         );
         println!("  {} - Show client profile", "profile".cyan());
         println!(
@@ -259,9 +329,17 @@ impl<'a> InteractiveSession<'a> {
         );
         println!("  {} - Show memory validation status", "memory".cyan());
         println!("  {} - Show audit trail", "audit".cyan());
-        println!("  {} - Test injection attack", "test-inject <TEXT>".cyan());
+        println!(
+            "  {} - Test injection attack",
+            "test-inject <TEXT> [-- notes]".cyan()
+        );
         println!("  {} - Show memory tree visualization", "visualize".cyan());
-        println!("  {} - Create memory branch", "branch <NAME>".cyan());
+        println!(
+            "  {} - Create and switch to memory branch",
+            "branch <NAME>".cyan()
+        );
+        println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
+        println!("  {} - List all branches", "list-branches".cyan());
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
@@ -292,14 +370,19 @@ impl<'a> InteractiveSession<'a> {
         println!();
     }
 
-    async fn handle_recommendation(&mut self, symbol: &str, client: &ClientProfile) -> Result<()> {
+    async fn handle_recommendation(
+        &mut self,
+        symbol: &str,
+        client: &ClientProfile,
+        notes: Option<String>,
+    ) -> Result<()> {
         println!(
             "{} Generating recommendation for {}...",
             "🔍".yellow(),
             symbol
         );
 
-        match self.advisor.get_recommendation(symbol, client).await {
+        match self.advisor.get_recommendation(symbol, client, notes).await {
             Ok(recommendation) => {
                 println!();
                 println!("{}", "📊 Recommendation Generated".green().bold());
@@ -668,6 +751,7 @@ impl<'a> InteractiveSession<'a> {
                             "MarketData" => "📈",
                             "Audit" => "📋",
                             "System" => "⚙️",
+                            "Security" => "🛡️",
                             _ => "📝",
                         };
 
@@ -702,7 +786,7 @@ impl<'a> InteractiveSession<'a> {
         Ok(())
     }
 
-    async fn test_injection_attack(&mut self, payload: &str) -> Result<()> {
+    async fn test_injection_attack(&mut self, payload: &str, notes: Option<String>) -> Result<()> {
         println!("{}", "🚨 Testing Injection Attack".red().bold());
         println!("{}", "━".repeat(30).dimmed());
         println!("{}: {}", "Payload".yellow(), payload);
@@ -729,6 +813,20 @@ impl<'a> InteractiveSession<'a> {
                 println!(
                     "This shows how ProllyTree's versioned memory prevents injection attacks!"
                 );
+
+                // Store the security test result
+                match self
+                    .advisor
+                    .store_security_test(payload, &alert, notes)
+                    .await
+                {
+                    Ok(_) => {
+                        println!("{} Security test result saved to memory", "💾".green());
+                    }
+                    Err(e) => {
+                        println!("{} Failed to save security test: {}", "⚠️".yellow(), e);
+                    }
+                }
             }
             Err(e) => {
                 println!("{} Error during attack simulation: {}", "❌".red(), e);
@@ -766,15 +864,126 @@ impl<'a> InteractiveSession<'a> {
     }
 
     async fn create_branch(&mut self, name: &str) -> Result<()> {
+        // Check if branch already exists
+        if self.advisor.branch_exists(name) {
+            println!("{} Branch '{}' already exists!", "⚠️".yellow(), name.bold());
+            println!(
+                "{} Use 'switch {}' to switch to the existing branch",
+                "💡".blue(),
+                name
+            );
+            return Ok(());
+        }
+
         println!("{} Creating memory branch: {}", "🌿".green(), name.bold());
 
-        // In real implementation, use the memory store
-        println!("{} Branch '{}' created successfully", "✅".green(), name);
-        println!(
-            "{} You can now safely test scenarios without affecting main memory",
-            "💡".yellow()
-        );
+        // Create the branch using the memory store
+        match self.advisor.create_and_switch_branch(name).await {
+            Ok(_) => {
+                println!("{} Branch '{}' created successfully", "✅".green(), name);
+                println!("{} Switched to branch '{}'", "🔀".blue(), name);
+                println!(
+                    "{} You can now safely test scenarios without affecting main memory",
+                    "💡".yellow()
+                );
+            }
+            Err(e) => {
+                println!("{} Failed to create/switch branch: {}", "❌".red(), e);
+                return Err(e);
+            }
+        }
 
         Ok(())
+    }
+
+    async fn switch_branch(&mut self, name: &str) -> Result<()> {
+        // Check if branch exists before trying to switch
+        if !self.advisor.branch_exists(name) {
+            println!("{} Branch '{}' does not exist!", "❌".red(), name.bold());
+            println!(
+                "{} Use 'branch {}' to create a new branch",
+                "💡".blue(),
+                name
+            );
+            return Ok(());
+        }
+
+        println!("{} Switching to branch: {}", "🔀".blue(), name.bold());
+
+        match self.advisor.switch_to_branch(name).await {
+            Ok(_) => {
+                println!("{} Switched to branch '{}'", "✅".green(), name);
+            }
+            Err(e) => {
+                println!("{} Failed to switch to branch: {}", "❌".red(), e);
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn show_branch_info(&self) {
+        // Show all branches like git branch command
+        match self.advisor.memory_store.list_branches() {
+            Ok(branches) => {
+                let current_branch = self.advisor.get_actual_current_branch();
+
+                if branches.is_empty() {
+                    println!("No branches found");
+                } else {
+                    for branch in branches {
+                        if branch == current_branch {
+                            println!("* {}", branch.green());
+                        } else {
+                            println!("  {branch}");
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!("error: Failed to list branches: {e}");
+            }
+        }
+
+        // Show sync status if there's a mismatch
+        let cached_branch = self.advisor.current_branch();
+        let actual_branch = self.advisor.get_actual_current_branch();
+
+        if cached_branch != actual_branch {
+            println!();
+            println!(
+                "{} Branch mismatch: cached='{}', actual='{}'",
+                "warning:".yellow(),
+                cached_branch,
+                actual_branch
+            );
+        }
+    }
+
+    fn list_branches(&self) {
+        println!("{}", "🌳 Available Branches".green().bold());
+        println!("{}", "━".repeat(25).dimmed());
+
+        match self.advisor.memory_store.list_branches() {
+            Ok(branches) => {
+                let current_branch = self.advisor.get_actual_current_branch();
+
+                if branches.is_empty() {
+                    println!("{} No branches found", "ℹ️".blue());
+                } else {
+                    for branch in branches {
+                        if branch == current_branch {
+                            println!("  {} {} (current)", "●".green(), branch.bold());
+                        } else {
+                            println!("  {} {}", "○".dimmed(), branch);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!("{} Failed to list branches: {}", "❌".red(), e);
+            }
+        }
     }
 }

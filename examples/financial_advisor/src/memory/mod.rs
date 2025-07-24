@@ -152,6 +152,21 @@ impl MemoryStore {
 
         Self::ensure_table_exists(
             glue,
+            "memories",
+            r#"CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                content TEXT,
+                timestamp INTEGER,
+                validation_hash TEXT,
+                sources TEXT,
+                confidence FLOAT,
+                cross_references TEXT
+            )"#,
+        )
+        .await?;
+
+        Self::ensure_table_exists(
+            glue,
             "audit_log",
             r#"CREATE TABLE audit_log (
                 id TEXT PRIMARY KEY,
@@ -219,6 +234,15 @@ impl MemoryStore {
         memory: &ValidatedMemory,
     ) -> Result<String> {
         let path = Path::new(&self.store_path);
+
+        // Debug: Check for branch mismatch (external git operations)
+        let cached_branch = self.current_branch();
+        let actual_branch = self.get_actual_current_branch();
+
+        if cached_branch != actual_branch {
+            println!("DEBUG: ⚠️ Branch mismatch: cached='{cached_branch}', actual='{actual_branch}' (external git operation?)");
+        }
+
         let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
             ProllyStorage::<32>::open(path)?
         } else {
@@ -337,6 +361,106 @@ impl MemoryStore {
         Ok(version)
     }
 
+    pub async fn store_with_commit(
+        &mut self,
+        memory: &ValidatedMemory,
+        commit_message: &str,
+    ) -> Result<String> {
+        let path = Path::new(&self.store_path);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
+            ProllyStorage::<32>::open(path)?
+        } else {
+            ProllyStorage::<32>::init(path)?
+        };
+        let mut glue = Glue::new(storage);
+
+        // Ensure schema exists
+        Self::init_schema(&mut glue).await?;
+
+        // Store memory in the memories table
+        let memory_sql = format!(
+            r#"INSERT INTO memories 
+            (id, content, timestamp, validation_hash, sources, confidence, cross_references)
+            VALUES ('{}', '{}', {}, '{}', '{}', {}, '{}')"#,
+            memory.id,
+            memory.content.replace('\'', "''"),
+            memory.timestamp.timestamp(),
+            hex::encode(memory.validation_hash),
+            memory.sources.join(","),
+            memory.confidence,
+            memory.cross_references.join(",")
+        );
+
+        glue.execute(&memory_sql).await?;
+
+        // Store cross-references
+        for reference in &memory.cross_references {
+            // Remove existing cross-reference to avoid duplicates
+            let delete_sql = format!(
+                "DELETE FROM cross_references WHERE source_id = '{}' AND target_id = '{}'",
+                memory.id, reference
+            );
+            let _ = glue.execute(&delete_sql).await; // Ignore if record doesn't exist
+
+            let sql = format!(
+                r#"INSERT INTO cross_references
+            (source_id, target_id, reference_type, confidence)
+            VALUES ('{}', '{}', 'validation', {})"#,
+                memory.id, reference, memory.confidence
+            );
+            glue.execute(&sql).await?;
+        }
+
+        let version = memory.clone().id;
+        glue.storage.commit_with_message(commit_message).await?;
+
+        Ok(version)
+    }
+
+    pub async fn store_typed_with_commit<T: Storable>(
+        &mut self,
+        item: &T,
+        memory: &ValidatedMemory,
+        commit_message: &str,
+    ) -> Result<String> {
+        let path = Path::new(&self.store_path);
+        let storage = if path.join(PROLLY_CONFIG_FILE).exists() {
+            ProllyStorage::<32>::open(path)?
+        } else {
+            ProllyStorage::<32>::init(path)?
+        };
+        let mut glue = Glue::new(storage);
+
+        // Ensure schema exists
+        Self::init_schema(&mut glue).await?;
+
+        // Use the item's store method to handle storage
+        item.store_to_db(&mut glue, memory).await?;
+
+        // Store cross-references
+        for reference in &memory.cross_references {
+            // First try to delete if exists, then insert (GlueSQL doesn't support UPSERT)
+            let delete_sql = format!(
+                "DELETE FROM cross_references WHERE source_id = '{}' AND target_id = '{}'",
+                memory.id, reference
+            );
+            let _ = glue.execute(&delete_sql).await; // Ignore if record doesn't exist
+
+            let sql = format!(
+                r#"INSERT INTO cross_references
+            (source_id, target_id, reference_type, confidence)
+            VALUES ('{}', '{}', 'validation', {})"#,
+                memory.id, reference, memory.confidence
+            );
+            glue.execute(&sql).await?;
+        }
+
+        let version = memory.clone().id;
+        glue.storage.commit_with_message(commit_message).await?;
+
+        Ok(version)
+    }
+
     pub async fn store_with_audit(
         &mut self,
         memory_type: MemoryType,
@@ -345,6 +469,45 @@ impl MemoryStore {
     ) -> Result<String> {
         // Store the memory
         let version = self.store(memory).await?;
+
+        // Log audit entry
+        if self.audit_enabled {
+            self.log_audit(action, memory_type, &memory.id).await?;
+        }
+
+        Ok(version)
+    }
+
+    pub async fn store_with_audit_and_commit(
+        &mut self,
+        memory_type: MemoryType,
+        memory: &ValidatedMemory,
+        action: &str,
+        commit_message: &str,
+    ) -> Result<String> {
+        // Store the memory with custom commit message
+        let version = self.store_with_commit(memory, commit_message).await?;
+
+        // Log audit entry
+        if self.audit_enabled {
+            self.log_audit(action, memory_type, &memory.id).await?;
+        }
+
+        Ok(version)
+    }
+
+    pub async fn store_typed_with_audit_and_commit<T: Storable>(
+        &mut self,
+        item: &T,
+        memory_type: MemoryType,
+        memory: &ValidatedMemory,
+        action: &str,
+        commit_message: &str,
+    ) -> Result<String> {
+        // Store using typed storage with custom commit message
+        let version = self
+            .store_typed_with_commit(item, memory, commit_message)
+            .await?;
 
         // Log audit entry
         if self.audit_enabled {
@@ -387,6 +550,9 @@ impl MemoryStore {
         self.versioned_store
             .create_branch(name)
             .map_err(|e| anyhow::anyhow!("Failed to create branch '{}': {:?}", name, e))?;
+
+        // Important: We need to ensure any ProllyStorage instances created after this
+        // will see the branch. The versioned_store has created the branch but hasn't switched to it.
 
         if self.audit_enabled {
             self.log_audit(&format!("Created branch: {name}"), MemoryType::System, name)
@@ -526,6 +692,45 @@ impl MemoryStore {
     /// Get current branch name
     pub fn current_branch(&self) -> &str {
         self.versioned_store.current_branch()
+    }
+
+    /// Get the actual current branch from git HEAD (not cached)
+    pub fn get_actual_current_branch(&self) -> String {
+        let store_path = Path::new(&self.store_path);
+
+        // Try multiple possible git directory locations
+        // Git repository is typically in the parent directory of the store path
+        let possible_git_dirs = vec![
+            store_path.parent().unwrap().join(".git"), // /tmp/advisor/.git
+            store_path.join(".git"),                   // /tmp/advisor/data7/.git
+            std::env::current_dir().unwrap().join(".git"), // current working directory
+        ];
+
+        for git_dir in possible_git_dirs {
+            let head_file = git_dir.join("HEAD");
+
+            if head_file.exists() {
+                // Read the HEAD file
+                if let Ok(head_content) = std::fs::read_to_string(&head_file) {
+                    let head_content = head_content.trim();
+
+                    // Check if HEAD points to a branch (ref: refs/heads/branch_name)
+                    if let Some(branch_ref) = head_content.strip_prefix("ref: refs/heads/") {
+                        return branch_ref.to_string();
+                    }
+
+                    // If HEAD contains a commit hash (detached HEAD), show first 8 chars
+                    if head_content.len() >= 8
+                        && head_content.chars().all(|c| c.is_ascii_hexdigit())
+                    {
+                        return format!("detached@{}", &head_content[..8]);
+                    }
+                }
+            }
+        }
+
+        // Fallback to cached branch name if git read fails
+        self.versioned_store.current_branch().to_string()
     }
 
     /// List all branches

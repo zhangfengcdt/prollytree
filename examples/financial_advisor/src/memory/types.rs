@@ -11,6 +11,7 @@ pub enum MemoryType {
     ClientProfile,
     Audit,
     System,
+    Security,
 }
 
 impl std::fmt::Display for MemoryType {
@@ -21,6 +22,7 @@ impl std::fmt::Display for MemoryType {
             MemoryType::ClientProfile => write!(f, "ClientProfile"),
             MemoryType::Audit => write!(f, "Audit"),
             MemoryType::System => write!(f, "System"),
+            MemoryType::Security => write!(f, "Security"),
         }
     }
 }

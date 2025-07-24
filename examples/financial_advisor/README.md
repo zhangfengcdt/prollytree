@@ -9,9 +9,11 @@ A demonstration of an AI-powered financial advisory system using ProllyTree for 
 - 🔒 **Security Monitoring**: Detects and prevents injection attacks and anomalies
 - 📚 **Versioned Memory**: Uses ProllyTree to maintain git-like versioned storage of all data
 - 🕐 **Temporal Queries**: Query recommendations and data as they existed at any point in time
-- 🌿 **Branch Management**: Create memory branches for different scenarios or clients
+- 🌿 **Smart Branch Management**: Git-style branch operations with validation and external tool sync
+- 🏦 **Real-time UI**: Live branch display that updates with external git operations
 - 📝 **Audit Trail**: Complete audit logs for compliance and debugging
 - 🎯 **Risk-Aware**: Adapts recommendations based on client risk tolerance
+- 👤 **Persistent Profiles**: Client profiles automatically saved per branch
 
 ## Prerequisites
 
@@ -73,8 +75,13 @@ Once the advisor is running, you can use these commands:
 - `memory` - Show memory system status and statistics
 - `audit` - Show complete audit trail
 
+#### Branch Management
+- `branch <NAME>` - Create and switch to a new memory branch
+- `switch <NAME>` - Switch to an existing branch
+- `list-branches` - Show all available branches with visual indicators
+- `branch-info` - List branches in git-style format (like `git branch`)
+
 #### Advanced Features
-- `branch <NAME>` - Create a new memory branch
 - `visualize` - Show memory tree visualization
 - `test-inject <TEXT>` - Test security monitoring (try malicious inputs)
 
@@ -85,24 +92,45 @@ Once the advisor is running, you can use these commands:
 ### Example Session
 
 ```bash
-🏦> recommend AAPL
+🏦 [main] recommend AAPL
 📊 Recommendation Generated
 Symbol: AAPL
 Action: BUY
 Confidence: 52.0%
 Reasoning: Analysis of AAPL at $177.89 with P/E ratio 28.4...
 
-🏦> risk aggressive
+🏦 [main] risk aggressive
 ✅ Risk tolerance set to: Aggressive
 
-🏦> recommend AAPL
+🏦 [main] recommend AAPL
 📊 Recommendation Generated
 Symbol: AAPL
 Action: BUY
 Confidence: 60.0%
 (Notice higher confidence for aggressive risk tolerance)
 
-🏦> history
+🏦 [main] branch test-strategy
+🌿 Creating memory branch: test-strategy
+✅ Branch 'test-strategy' created successfully
+🔀 Switched to branch 'test-strategy'
+
+🏦 [test-strategy] recommend MSFT
+📊 Recommendation Generated
+Symbol: MSFT
+Action: BUY
+Confidence: 58.0%
+
+🏦 [test-strategy] list-branches
+🌳 Available Branches
+━━━━━━━━━━━━━━━━━━━━━━━━━
+  ○ main
+  ● test-strategy (current)
+
+🏦 [test-strategy] switch main
+🔀 Switching to branch: main
+✅ Switched to branch 'main'
+
+🏦 [main] history
 📜 Recent Recommendations
 📊 Recommendation #1
   Symbol: AAPL
@@ -115,7 +143,7 @@ Confidence: 60.0%
   Confidence: 52.0%
   ...
 
-🏦> memory
+🏦 [main] memory
 🧠 Memory Status
 ✅ Memory validation: ACTIVE
 🛡️ Security monitoring: ENABLED
@@ -168,18 +196,56 @@ Options:
 
 ### Branch Management
 
-Create branches for different scenarios:
+Create and manage branches for different scenarios:
 
 ```bash
-🏦> branch conservative-strategy
-✅ Created branch: conservative-strategy
+# Create and switch to a new branch
+🏦 [main] branch conservative-strategy
+🌿 Creating memory branch: conservative-strategy
+✅ Branch 'conservative-strategy' created successfully
+🔀 Switched to branch 'conservative-strategy'
 
-🏦> risk conservative
-🏦> recommend MSFT
+🏦 [conservative-strategy] risk conservative
+✅ Risk tolerance set to: Conservative
+
+🏦 [conservative-strategy] recommend MSFT
 # Generate recommendations for conservative strategy
 
-🏦> history --branch main
-# Compare with main branch recommendations
+# List all available branches
+🏦 [conservative-strategy] list-branches
+🌳 Available Branches
+━━━━━━━━━━━━━━━━━━━━━━━━━
+  ○ main
+  ● conservative-strategy (current)
+
+# Switch back to main branch
+🏦 [conservative-strategy] switch main
+🔀 Switching to branch: main
+✅ Switched to branch 'main'
+
+🏦 [main] history --branch conservative-strategy
+# Compare recommendations from different branch
+
+# Git-style branch listing
+🏦 [main] branch-info
+* main
+  conservative-strategy
+```
+
+#### Branch Validation
+
+The system prevents common branching mistakes:
+
+```bash
+# Try to create existing branch
+🏦 [main] branch main
+⚠️ Branch 'main' already exists!
+💡 Use 'switch main' to switch to the existing branch
+
+# Try to switch to non-existent branch  
+🏦 [main] switch nonexistent
+❌ Branch 'nonexistent' does not exist!
+💡 Use 'branch nonexistent' to create a new branch
 ```
 
 ### Temporal Analysis
