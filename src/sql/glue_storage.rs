@@ -30,17 +30,17 @@ use gluesql_core::{
     },
 };
 
-use crate::git::VersionedKvStore;
+use crate::git::versioned_store::GitVersionedKvStore;
 
 /// GlueSQL storage backend using ProllyTree
 pub struct ProllyStorage<const D: usize> {
-    store: VersionedKvStore<D>,
+    store: GitVersionedKvStore<D>,
     schemas: HashMap<String, Schema>,
 }
 
 impl<const D: usize> ProllyStorage<D> {
     /// Create a new ProllyStorage instance
-    pub fn new(store: VersionedKvStore<D>) -> Self {
+    pub fn new(store: GitVersionedKvStore<D>) -> Self {
         Self {
             store,
             schemas: HashMap::new(),
@@ -52,7 +52,7 @@ impl<const D: usize> ProllyStorage<D> {
     pub fn init(path: &std::path::Path) -> Result<Self> {
         let dir = path.to_path_buf();
         let dir_string = dir.to_string_lossy().to_string();
-        let store = VersionedKvStore::init(path).map_err(|e| {
+        let store = GitVersionedKvStore::init(path).map_err(|e| {
             Error::StorageMsg(format!("Failed to initialize store: {e} from {dir_string}"))
         })?;
         Ok(Self::new(store))
@@ -61,13 +61,13 @@ impl<const D: usize> ProllyStorage<D> {
     /// Open an existing storage
     #[allow(clippy::result_large_err)]
     pub fn open(path: &std::path::Path) -> Result<Self> {
-        let store = VersionedKvStore::open(path)
+        let store = GitVersionedKvStore::open(path)
             .map_err(|e| Error::StorageMsg(format!("Failed to open store: {e}")))?;
         Ok(Self::new(store))
     }
 
     // returns the underlying store
-    pub fn store(&self) -> &VersionedKvStore<D> {
+    pub fn store(&self) -> &GitVersionedKvStore<D> {
         &self.store
     }
 

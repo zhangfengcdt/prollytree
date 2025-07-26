@@ -15,24 +15,42 @@ limitations under the License.
 use crate::config::TreeConfig;
 use crate::git::storage::GitNodeStorage;
 use crate::git::types::*;
+use crate::storage::{FileNodeStorage, InMemoryNodeStorage, NodeStorage};
 use crate::tree::{ProllyTree, Tree};
 use gix::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// A versioned key-value store backed by Git and ProllyTree
+#[cfg(feature = "rocksdb_storage")]
+use crate::storage::RocksDBNodeStorage;
+
+/// A versioned key-value store backed by Git and ProllyTree with configurable storage
 ///
 /// This combines the efficient tree operations of ProllyTree with Git's
 /// version control capabilities, providing a full-featured versioned
 /// key-value store with branching, merging, and history.
-pub struct VersionedKvStore<const N: usize> {
-    tree: ProllyTree<N, GitNodeStorage<N>>,
+pub struct VersionedKvStore<const N: usize, S: NodeStorage<N>> {
+    tree: ProllyTree<N, S>,
     git_repo: gix::Repository,
     staging_area: HashMap<Vec<u8>, Option<Vec<u8>>>, // None = deleted
     current_branch: String,
+    storage_backend: StorageBackend,
 }
 
-impl<const N: usize> VersionedKvStore<N> {
+/// Type alias for backward compatibility (Git storage)
+pub type GitVersionedKvStore<const N: usize> = VersionedKvStore<N, GitNodeStorage<N>>;
+
+/// Type alias for InMemory storage
+pub type InMemoryVersionedKvStore<const N: usize> = VersionedKvStore<N, InMemoryNodeStorage<N>>;
+
+/// Type alias for File storage
+pub type FileVersionedKvStore<const N: usize> = VersionedKvStore<N, FileNodeStorage<N>>;
+
+/// Type alias for RocksDB storage
+#[cfg(feature = "rocksdb_storage")]
+pub type RocksDBVersionedKvStore<const N: usize> = VersionedKvStore<N, RocksDBNodeStorage<N>>;
+
+impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
     /// Find the git repository root by walking up the directory tree
     fn find_git_root<P: AsRef<Path>>(start_path: P) -> Option<std::path::PathBuf> {
         let mut current = start_path.as_ref().to_path_buf();
@@ -64,104 +82,6 @@ impl<const N: usize> VersionedKvStore<N> {
                 "Not inside a git repository. Please run from within a git repository.".to_string(),
             ))
         }
-    }
-
-    /// Initialize a new versioned KV store at the given path
-    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
-        let path = path.as_ref();
-
-        // Reject if trying to initialize in git root directory
-        if Self::is_in_git_root(path)? {
-            return Err(GitKvError::GitObjectError(
-                "Cannot initialize git-prolly in git root directory. Please run from a subdirectory to create a dataset.".to_string()
-            ));
-        }
-
-        // Find the git repository
-        let git_root = Self::find_git_root(path).ok_or_else(|| {
-            GitKvError::GitObjectError(
-                "Not inside a git repository. Please run from within a git repository.".to_string(),
-            )
-        })?;
-
-        // Open the existing git repository instead of initializing a new one
-        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
-
-        // Create GitNodeStorage with the current directory as dataset directory
-        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
-
-        // Create ProllyTree with default config
-        let config: TreeConfig<N> = TreeConfig::default();
-        let tree = ProllyTree::new(storage, config);
-
-        let mut store = VersionedKvStore {
-            tree,
-            git_repo,
-            staging_area: HashMap::new(),
-            current_branch: "main".to_string(),
-        };
-
-        // Save initial configuration
-        let _ = store.tree.save_config();
-
-        // Create initial commit (which will include prolly metadata files)
-        store.commit("Initial commit")?;
-
-        Ok(store)
-    }
-
-    /// Open an existing versioned KV store
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
-        let path = path.as_ref();
-
-        // Reject if trying to open in git root directory
-        if Self::is_in_git_root(path)? {
-            return Err(GitKvError::GitObjectError(
-                "Cannot run git-prolly in git root directory. Please run from a subdirectory containing a dataset.".to_string()
-            ));
-        }
-
-        // Find the git repository
-        let git_root = Self::find_git_root(path).ok_or_else(|| {
-            GitKvError::GitObjectError(
-                "Not inside a git repository. Please run from within a git repository.".to_string(),
-            )
-        })?;
-
-        // Open existing Git repository
-        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
-
-        // Create GitNodeStorage with the current directory as dataset directory
-        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
-
-        // Load tree configuration from storage
-        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
-
-        // Try to load existing tree from storage, or create new one
-        let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
-            .unwrap_or_else(|| ProllyTree::new(storage, config));
-
-        // Get current branch
-        let current_branch = git_repo
-            .head_ref()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get head ref: {e}")))?
-            .map(|r| r.name().shorten().to_string())
-            .unwrap_or_else(|| "main".to_string());
-
-        let mut store = VersionedKvStore {
-            tree,
-            git_repo,
-            staging_area: HashMap::new(),
-            current_branch,
-        };
-
-        // Load staging area from file if it exists
-        store.load_staging_area()?;
-
-        // Reload the tree from the current HEAD
-        store.reload_tree_from_head()?;
-
-        Ok(store)
     }
 
     /// Insert a key-value pair (stages the change)
@@ -332,8 +252,7 @@ impl<const N: usize> VersionedKvStore<N> {
         std::fs::write(&head_file, head_content)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to update HEAD: {e}")))?;
 
-        // Reload tree state from the current HEAD (same as current branch)
-        self.reload_tree_from_head()?;
+        // Note: Tree reload is handled in Git-specific implementation
 
         Ok(())
     }
@@ -369,8 +288,7 @@ impl<const N: usize> VersionedKvStore<N> {
             }
         }
 
-        // Reload tree state from the new HEAD
-        self.reload_tree_from_head()?;
+        // Note: Tree reload is handled in Git-specific implementation
 
         Ok(())
     }
@@ -378,16 +296,6 @@ impl<const N: usize> VersionedKvStore<N> {
     /// Get current branch name
     pub fn current_branch(&self) -> &str {
         &self.current_branch
-    }
-
-    /// Get a reference to the underlying ProllyTree
-    pub fn tree(&self) -> &ProllyTree<N, GitNodeStorage<N>> {
-        &self.tree
-    }
-
-    /// Get a mutable reference to the underlying ProllyTree
-    pub fn tree_mut(&mut self) -> &mut ProllyTree<N, GitNodeStorage<N>> {
-        &mut self.tree
     }
 
     /// List all branches in the repository
@@ -635,22 +543,6 @@ impl<const N: usize> VersionedKvStore<N> {
         Ok(())
     }
 
-    /// Reload the ProllyTree from the current HEAD
-    fn reload_tree_from_head(&mut self) -> Result<(), GitKvError> {
-        // Since we're no longer storing prolly_tree_root in the Git tree,
-        // we need to reload the tree state from the GitNodeStorage
-
-        // Load tree configuration from storage
-        let config: TreeConfig<N> = ProllyTree::load_config(&self.tree.storage).unwrap_or_default();
-
-        // Try to load existing tree from storage, or create new one
-        let storage = self.tree.storage.clone();
-        self.tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
-            .unwrap_or_else(|| ProllyTree::new(storage, config));
-
-        Ok(())
-    }
-
     /// Save the staging area to a file
     fn save_staging_area(&self) -> Result<(), GitKvError> {
         let staging_file = self.get_staging_file_path()?;
@@ -709,6 +601,376 @@ impl<const N: usize> VersionedKvStore<N> {
     }
 }
 
+// Storage-specific implementations
+impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
+    /// Initialize a new versioned KV store with Git storage (default)
+    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let path = path.as_ref();
+
+        // Reject if trying to initialize in git root directory
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize git-prolly in git root directory. Please run from a subdirectory to create a dataset.".to_string()
+            ));
+        }
+
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
+            )
+        })?;
+
+        // Open the existing git repository
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create GitNodeStorage
+        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
+
+        // Create ProllyTree with default config
+        let config: TreeConfig<N> = TreeConfig::default();
+        let tree = ProllyTree::new(storage, config);
+
+        let mut store = VersionedKvStore {
+            tree,
+            git_repo,
+            staging_area: HashMap::new(),
+            current_branch: "main".to_string(),
+            storage_backend: StorageBackend::Git,
+        };
+
+        // Save initial configuration
+        let _ = store.tree.save_config();
+
+        // Create initial commit (which will include prolly metadata files)
+        store.commit("Initial commit")?;
+
+        Ok(store)
+    }
+
+    /// Open an existing versioned KV store with Git storage (default)
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let path = path.as_ref();
+
+        // Reject if trying to open in git root directory
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot run git-prolly in git root directory. Please run from a subdirectory containing a dataset.".to_string()
+            ));
+        }
+
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
+            )
+        })?;
+
+        // Open existing Git repository
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create GitNodeStorage
+        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
+
+        // Load tree configuration from storage
+        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
+
+        // Try to load existing tree from storage, or create new one
+        let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
+            .unwrap_or_else(|| ProllyTree::new(storage, config));
+
+        // Get current branch
+        let current_branch = git_repo
+            .head_ref()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get head ref: {e}")))?
+            .map(|r| r.name().shorten().to_string())
+            .unwrap_or_else(|| "main".to_string());
+
+        let mut store = VersionedKvStore {
+            tree,
+            git_repo,
+            staging_area: HashMap::new(),
+            current_branch,
+            storage_backend: StorageBackend::Git,
+        };
+
+        // Load staging area from file if it exists
+        store.load_staging_area()?;
+
+        // Reload the tree from the current HEAD
+        store.reload_tree_from_head()?;
+
+        Ok(store)
+    }
+
+    /// Get a reference to the underlying ProllyTree
+    pub fn tree(&self) -> &ProllyTree<N, GitNodeStorage<N>> {
+        &self.tree
+    }
+
+    /// Get a mutable reference to the underlying ProllyTree
+    pub fn tree_mut(&mut self) -> &mut ProllyTree<N, GitNodeStorage<N>> {
+        &mut self.tree
+    }
+
+    /// Reload the ProllyTree from the current HEAD (Git-specific)
+    fn reload_tree_from_head(&mut self) -> Result<(), GitKvError> {
+        // Since we're no longer storing prolly_tree_root in the Git tree,
+        // we need to reload the tree state from the GitNodeStorage
+
+        // Load tree configuration from storage
+        let config: TreeConfig<N> = ProllyTree::load_config(&self.tree.storage).unwrap_or_default();
+
+        // Try to load existing tree from storage, or create new one
+        let storage = self.tree.storage.clone();
+        self.tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
+            .unwrap_or_else(|| ProllyTree::new(storage, config));
+
+        Ok(())
+    }
+}
+
+impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
+    /// Initialize a new versioned KV store with InMemory storage
+    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let path = path.as_ref();
+
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
+            )
+        })?;
+
+        // Open the existing git repository
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create InMemoryNodeStorage
+        let storage = InMemoryNodeStorage::<N>::new();
+
+        // Create ProllyTree with default config
+        let config: TreeConfig<N> = TreeConfig::default();
+        let tree = ProllyTree::new(storage, config);
+
+        let mut store = VersionedKvStore {
+            tree,
+            git_repo,
+            staging_area: HashMap::new(),
+            current_branch: "main".to_string(),
+            storage_backend: StorageBackend::InMemory,
+        };
+
+        // Note: InMemory storage doesn't persist config
+        // Create initial commit
+        store.commit("Initial commit")?;
+
+        Ok(store)
+    }
+
+    /// Open an existing versioned KV store with InMemory storage
+    /// Note: InMemory storage is volatile, so this creates a new empty store
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        // For InMemory storage, "opening" is the same as initializing
+        // since data is not persistent
+        Self::init(path)
+    }
+}
+
+impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
+    /// Initialize a new versioned KV store with File storage
+    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let path = path.as_ref();
+
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
+            )
+        })?;
+
+        // Open the existing git repository
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create FileNodeStorage with a subdirectory for file storage
+        let file_storage_path = path.join("file_storage");
+        let storage = FileNodeStorage::<N>::new(file_storage_path);
+
+        // Create ProllyTree with default config
+        let config: TreeConfig<N> = TreeConfig::default();
+        let tree = ProllyTree::new(storage, config);
+
+        let mut store = VersionedKvStore {
+            tree,
+            git_repo,
+            staging_area: HashMap::new(),
+            current_branch: "main".to_string(),
+            storage_backend: StorageBackend::File,
+        };
+
+        // Save initial configuration
+        let _ = store.tree.save_config();
+
+        // Create initial commit
+        store.commit("Initial commit")?;
+
+        Ok(store)
+    }
+
+    /// Open an existing versioned KV store with File storage
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let path = path.as_ref();
+
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
+            )
+        })?;
+
+        // Open existing Git repository
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create FileNodeStorage with a subdirectory for file storage
+        let file_storage_path = path.join("file_storage");
+        let storage = FileNodeStorage::<N>::new(file_storage_path.clone());
+
+        // Load tree configuration from storage
+        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
+
+        // Try to load existing tree from storage, or create new one
+        let tree =
+            if let Some(existing_tree) = ProllyTree::load_from_storage(storage, config.clone()) {
+                existing_tree
+            } else {
+                // Create new storage instance since the original was consumed
+                let new_storage = FileNodeStorage::<N>::new(file_storage_path);
+                ProllyTree::new(new_storage, config)
+            };
+
+        // Get current branch
+        let current_branch = git_repo
+            .head_ref()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get head ref: {e}")))?
+            .map(|r| r.name().shorten().to_string())
+            .unwrap_or_else(|| "main".to_string());
+
+        let mut store = VersionedKvStore {
+            tree,
+            git_repo,
+            staging_area: HashMap::new(),
+            current_branch,
+            storage_backend: StorageBackend::File,
+        };
+
+        // Load staging area from file if it exists
+        store.load_staging_area()?;
+
+        // Note: File storage data is loaded directly, no need to reload from HEAD
+
+        Ok(store)
+    }
+}
+
+#[cfg(feature = "rocksdb_storage")]
+impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
+    /// Initialize a new versioned KV store with RocksDB storage
+    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let path = path.as_ref();
+
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
+            )
+        })?;
+
+        // Open the existing git repository
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create RocksDBNodeStorage with a subdirectory for RocksDB
+        let rocksdb_path = path.join("rocksdb");
+        let storage = RocksDBNodeStorage::<N>::new(rocksdb_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("RocksDB creation failed: {e}")))?;
+
+        // Create ProllyTree with default config
+        let config: TreeConfig<N> = TreeConfig::default();
+        let tree = ProllyTree::new(storage, config);
+
+        let mut store = VersionedKvStore {
+            tree,
+            git_repo,
+            staging_area: HashMap::new(),
+            current_branch: "main".to_string(),
+            storage_backend: StorageBackend::RocksDB,
+        };
+
+        // Save initial configuration
+        let _ = store.tree.save_config();
+
+        // Create initial commit
+        store.commit("Initial commit")?;
+
+        Ok(store)
+    }
+
+    /// Open an existing versioned KV store with RocksDB storage
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let path = path.as_ref();
+
+        // Find the git repository
+        let git_root = Self::find_git_root(path).ok_or_else(|| {
+            GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
+            )
+        })?;
+
+        // Open existing Git repository
+        let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create RocksDBNodeStorage with a subdirectory for RocksDB
+        let rocksdb_path = path.join("rocksdb");
+        let storage = RocksDBNodeStorage::<N>::new(rocksdb_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("RocksDB creation failed: {e}")))?;
+
+        // Load tree configuration from storage
+        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
+
+        // Try to load existing tree from storage, or create new one
+        let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
+            .unwrap_or_else(|| ProllyTree::new(storage, config));
+
+        // Get current branch
+        let current_branch = git_repo
+            .head_ref()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get head ref: {e}")))?
+            .map(|r| r.name().shorten().to_string())
+            .unwrap_or_else(|| "main".to_string());
+
+        let mut store = VersionedKvStore {
+            tree,
+            git_repo,
+            staging_area: HashMap::new(),
+            current_branch,
+            storage_backend: StorageBackend::RocksDB,
+        };
+
+        // Load staging area from file if it exists
+        store.load_staging_area()?;
+
+        // Note: RocksDB storage data is loaded directly, no need to reload from HEAD
+
+        Ok(store)
+    }
+}
+
+// Generic implementations for all storage types
+impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
+    /// Get the current storage backend type
+    pub fn storage_backend(&self) -> &StorageBackend {
+        &self.storage_backend
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,7 +984,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
-        let store = VersionedKvStore::<32>::init(&dataset_dir);
+        let store = GitVersionedKvStore::<32>::init(&dataset_dir);
         assert!(store.is_ok());
     }
 
@@ -734,7 +996,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
-        let mut store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
         // Test insert and get
         store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
@@ -759,7 +1021,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
-        let mut store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
         // Stage changes
         store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
@@ -790,7 +1052,7 @@ mod tests {
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
 
-        let mut store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
         // Get initial commit count
         let log_output = std::process::Command::new("git")

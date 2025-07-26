@@ -5,7 +5,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use gluesql_core::prelude::{Glue, Payload};
 use gluesql_core::store::Transaction;
-use prollytree::git::{GitKvError, VersionedKvStore};
+use prollytree::git::{GitKvError, GitVersionedKvStore};
 use prollytree::sql::ProllyStorage;
 use std::any::Any;
 use std::path::Path;
@@ -68,7 +68,7 @@ pub trait Storable: serde::Serialize + serde::de::DeserializeOwned + Clone {
 /// Core memory store with versioning capabilities
 pub struct MemoryStore {
     store_path: String,
-    versioned_store: VersionedKvStore<32>,
+    versioned_store: GitVersionedKvStore<32>,
     audit_enabled: bool,
 }
 
@@ -91,10 +91,10 @@ impl MemoryStore {
         // Initialize VersionedKvStore in dataset subdirectory
         // Check if prolly tree config exists to determine if we should init or open
         let versioned_store = if current_dir.join(PROLLY_CONFIG_FILE).exists() {
-            VersionedKvStore::<32>::open(&current_dir)
+            GitVersionedKvStore::<32>::open(&current_dir)
                 .map_err(|e| anyhow::anyhow!("Failed to open versioned store: {:?}", e))?
         } else {
-            VersionedKvStore::<32>::init(&current_dir)
+            GitVersionedKvStore::<32>::init(&current_dir)
                 .map_err(|e| anyhow::anyhow!("Failed to init versioned store: {:?}", e))?
         };
 

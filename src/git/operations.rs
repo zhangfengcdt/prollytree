@@ -13,17 +13,17 @@ limitations under the License.
 */
 
 use crate::git::types::*;
-use crate::git::versioned_store::VersionedKvStore;
+use crate::git::versioned_store::GitVersionedKvStore;
 use gix::prelude::*;
 use std::collections::HashMap;
 
 /// Git operations for versioned KV store
 pub struct GitOperations<const N: usize> {
-    store: VersionedKvStore<N>,
+    store: GitVersionedKvStore<N>,
 }
 
 impl<const N: usize> GitOperations<N> {
-    pub fn new(store: VersionedKvStore<N>) -> Self {
+    pub fn new(store: GitVersionedKvStore<N>) -> Self {
         GitOperations { store }
     }
 
@@ -315,7 +315,7 @@ impl<const N: usize> GitOperations<N> {
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get current dir: {e}")))?;
 
         // Create a temporary clone of the versioned store
-        let mut temp_store = VersionedKvStore::<N>::open(&current_dir)?;
+        let mut temp_store = GitVersionedKvStore::<N>::open(&current_dir)?;
 
         // Save current state
         let original_branch = temp_store.current_branch().to_string();
@@ -335,7 +335,7 @@ impl<const N: usize> GitOperations<N> {
     /// Temporarily checkout a commit and extract its KV state
     fn checkout_commit_temporarily(
         &self,
-        store: &mut VersionedKvStore<N>,
+        store: &mut GitVersionedKvStore<N>,
         commit_id: &gix::ObjectId,
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         // Update the store to point to the specific commit
@@ -386,7 +386,7 @@ impl<const N: usize> GitOperations<N> {
         // Try to open the store at the temp location
         let dataset_dir = temp_dir.join("dataset");
         let result = if dataset_dir.exists() {
-            match VersionedKvStore::<N>::open(&dataset_dir) {
+            match GitVersionedKvStore::<N>::open(&dataset_dir) {
                 Ok(temp_store) => self.get_current_kv_state_from_store(&temp_store),
                 Err(_) => {
                     // If we can't open the store, return empty state
@@ -421,7 +421,7 @@ impl<const N: usize> GitOperations<N> {
     /// Get current KV state from a specific store
     fn get_current_kv_state_from_store(
         &self,
-        store: &VersionedKvStore<N>,
+        store: &GitVersionedKvStore<N>,
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         let mut state = HashMap::new();
 
@@ -463,7 +463,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
-        let store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        let store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
         let _ops = GitOperations::new(store);
     }
 
@@ -475,7 +475,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
-        let store = VersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        let store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
         let ops = GitOperations::new(store);
 
         // Test HEAD parsing
