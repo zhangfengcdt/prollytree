@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::memory::{MemoryStore, MemoryType, Storable, ValidatedMemory};
+use crate::memory::{MemoryCommit, MemoryStore, MemoryType, Storable, ValidatedMemory};
 use crate::security::SecurityMonitor;
 use crate::validation::{MemoryValidator, ValidationResult};
 
@@ -411,6 +411,14 @@ impl FinancialAdvisor {
         } else {
             false
         }
+    }
+
+    pub fn list_branches(&self) -> Result<Vec<String>> {
+        self.memory_store.list_branches()
+    }
+
+    pub async fn get_memory_history(&self, limit: Option<usize>) -> Result<Vec<MemoryCommit>> {
+        self.memory_store.get_memory_history(limit).await
     }
 
     async fn generate_ai_reasoning(

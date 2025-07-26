@@ -837,28 +837,79 @@ impl<'a> InteractiveSession<'a> {
     }
 
     async fn show_memory_visualization(&self) -> Result<()> {
-        println!("{}", "🌳 Memory Tree Visualization".green().bold());
-        println!("{}", "━".repeat(35).dimmed());
+        println!("{}", "🌳 Branch Tree Visualization".green().bold());
+        println!("{}", "━".repeat(50).dimmed());
 
-        // ASCII art representation of memory tree
-        println!("Memory Tree Structure:");
-        println!("├── 🏦 Financial Data");
-        println!("│   ├── 📊 Market Data (validated)");
-        println!("│   ├── 💼 Recommendations");
-        println!("│   └── 👤 Client Profiles");
-        println!("├── 🔍 Validation Layer");
-        println!("│   ├── ✅ Cross-references");
-        println!("│   ├── 🛡️ Security checks");
-        println!("│   └── 📈 Confidence scores");
-        println!("└── 📝 Audit Trail");
-        println!("    ├── 🕐 Timestamps");
-        println!("    ├── 🔗 Version links");
-        println!("    └── 👥 User actions");
+        // Get all branches
+        let branches = self.advisor.list_branches()?;
+        let current_branch = self.advisor.current_branch();
+
+        // Display branches in a tree structure
+        println!("{}", "Repository Branches:".yellow());
+        println!();
+        
+        // Sort branches to ensure main/master comes first
+        let mut sorted_branches = branches.clone();
+        sorted_branches.sort_by(|a, b| {
+            if a == "main" || a == "master" {
+                std::cmp::Ordering::Less
+            } else if b == "main" || b == "master" {
+                std::cmp::Ordering::Greater
+            } else {
+                a.cmp(b)
+            }
+        });
+
+        // Display main branch first with special formatting
+        for (i, branch) in sorted_branches.iter().enumerate() {
+            let is_last = i == sorted_branches.len() - 1;
+            let connector = if is_last { "└──" } else { "├──" };
+            let vertical_line = if is_last { "    " } else { "│   " };
+            
+            // Determine branch color and symbol
+            let (branch_display, symbol) = if branch == &current_branch {
+                (branch.green().bold(), "●") // Current branch
+            } else if branch == "main" || branch == "master" {
+                (branch.blue().bold(), "◆") // Main branch
+            } else {
+                (branch.normal(), "○") // Other branches
+            };
+            
+            // Display branch with appropriate formatting
+            println!("{} {} {} {}", 
+                connector.dimmed(), 
+                symbol,
+                branch_display,
+                if branch == &current_branch { "(current)".dimmed() } else { "".normal() }
+            );
+            
+            // Show some recent commits for the current branch
+            if branch == &current_branch {
+                if let Ok(history) = self.advisor.get_memory_history(Some(3)).await {
+                    for (j, commit) in history.iter().enumerate() {
+                        let is_last_commit = j == history.len() - 1 || j == 2;
+                        let commit_connector = if is_last_commit { "└──" } else { "├──" };
+                        
+                        println!("{}   {} {} {}",
+                            vertical_line.dimmed(),
+                            commit_connector.dimmed(),
+                            commit.hash[..8].yellow(),
+                            commit.message.dimmed()
+                        );
+                    }
+                }
+            }
+        }
 
         println!();
-        println!("{} All nodes are cryptographically signed", "🔒".cyan());
-        println!("{} Complete history is preserved", "⏱️".blue());
-        println!("{} Branches allow safe experimentation", "🌿".green());
+        println!("{}", "Legend:".cyan());
+        println!("  {} Current branch", "●".green());
+        println!("  {} Main branch", "◆".blue());
+        println!("  {} Other branches", "○".normal());
+        println!();
+        println!("{} All branches share the same versioned memory system", "💾".cyan());
+        println!("{} Switch branches with: switch <branch-name>", "🔀".yellow());
+        println!("{} Create new branch with: branch <branch-name>", "🌿".green());
 
         Ok(())
     }
@@ -925,7 +976,7 @@ impl<'a> InteractiveSession<'a> {
 
     fn show_branch_info(&self) {
         // Show all branches like git branch command
-        match self.advisor.memory_store.list_branches() {
+        match self.advisor.list_branches() {
             Ok(branches) => {
                 let current_branch = self.advisor.get_actual_current_branch();
 
@@ -965,7 +1016,7 @@ impl<'a> InteractiveSession<'a> {
         println!("{}", "🌳 Available Branches".green().bold());
         println!("{}", "━".repeat(25).dimmed());
 
-        match self.advisor.memory_store.list_branches() {
+        match self.advisor.list_branches() {
             Ok(branches) => {
                 let current_branch = self.advisor.get_actual_current_branch();
 
