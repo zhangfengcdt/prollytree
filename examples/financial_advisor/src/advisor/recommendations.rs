@@ -4,7 +4,9 @@ use anyhow::Result;
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::{AnalysisMode, ClientProfile, DataSource, Recommendation, RecommendationType, RiskTolerance};
+use super::{
+    AnalysisMode, ClientProfile, DataSource, Recommendation, RecommendationType, RiskTolerance,
+};
 use crate::memory::{MemoryStore, ValidatedMemory};
 use crate::validation::ValidationResult;
 

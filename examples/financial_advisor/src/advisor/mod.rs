@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use colored::Colorize;
 // OpenAI integration for AI-powered recommendations
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -126,6 +127,17 @@ impl FinancialAdvisor {
         client_profile: &ClientProfile,
         notes: Option<String>,
     ) -> Result<Recommendation> {
+        self.get_recommendation_with_debug(symbol, client_profile, notes, false)
+            .await
+    }
+
+    pub async fn get_recommendation_with_debug(
+        &mut self,
+        symbol: &str,
+        client_profile: &ClientProfile,
+        notes: Option<String>,
+        debug_mode: bool,
+    ) -> Result<Recommendation> {
         if self.verbose {
             println!("🔍 Fetching market data for {symbol}...");
         }
@@ -145,7 +157,7 @@ impl FinancialAdvisor {
             .recommendation_engine
             .generate(symbol, client_profile, &market_data, &self.memory_store)
             .await?;
-        
+
         // Set the data source
         recommendation.data_source = stock_data.data_source;
 
@@ -155,12 +167,13 @@ impl FinancialAdvisor {
         }
 
         let (ai_reasoning, analysis_mode) = self
-            .generate_ai_reasoning(
+            .generate_ai_reasoning_with_debug(
                 symbol,
                 &recommendation.recommendation_type,
                 &serde_json::from_str::<serde_json::Value>(&market_data.content)
                     .unwrap_or(serde_json::json!({})),
                 client_profile,
+                debug_mode,
             )
             .await?;
 
@@ -459,6 +472,24 @@ impl FinancialAdvisor {
         market_data: &serde_json::Value,
         client: &ClientProfile,
     ) -> Result<(String, AnalysisMode)> {
+        self.generate_ai_reasoning_with_debug(
+            symbol,
+            recommendation_type,
+            market_data,
+            client,
+            false,
+        )
+        .await
+    }
+
+    async fn generate_ai_reasoning_with_debug(
+        &self,
+        symbol: &str,
+        recommendation_type: &RecommendationType,
+        market_data: &serde_json::Value,
+        client: &ClientProfile,
+        debug_mode: bool,
+    ) -> Result<(String, AnalysisMode)> {
         // Build context from market data
         let price = market_data["price"].as_f64().unwrap_or(0.0);
         let pe_ratio = market_data["pe_ratio"].as_f64().unwrap_or(0.0);
@@ -500,6 +531,16 @@ impl FinancialAdvisor {
             sector = sector,
             recommendation_type = recommendation_type
         );
+
+        // Print prompt if debug mode is enabled
+        if debug_mode {
+            println!();
+            println!("{}", "🔍 OpenAI Prompt Debug".bright_cyan().bold());
+            println!("{}", "━".repeat(60).dimmed());
+            println!("{prompt}");
+            println!("{}", "━".repeat(60).dimmed());
+            println!();
+        }
 
         // Make OpenAI API call
         let openai_request = serde_json::json!({
