@@ -130,7 +130,6 @@ impl<'a> InteractiveSession<'a> {
             "branch <NAME>".cyan()
         );
         println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
-        println!("  {} - List all branches", "list-branches".cyan());
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
@@ -283,9 +282,6 @@ impl<'a> InteractiveSession<'a> {
                 println!("Result: '{actual}'");
             }
 
-            "list-branches" | "lb" => {
-                self.list_branches();
-            }
 
             "exit" | "quit" | "q" => {
                 return Ok(false);
@@ -339,7 +335,6 @@ impl<'a> InteractiveSession<'a> {
             "branch <NAME>".cyan()
         );
         println!("  {} - Switch to existing branch", "switch <NAME>".cyan());
-        println!("  {} - List all branches", "list-branches".cyan());
         println!("  {} - Show this help", "help".cyan());
         println!("  {} - Exit", "exit".cyan());
         println!();
@@ -398,6 +393,21 @@ impl<'a> InteractiveSession<'a> {
                     "Confidence".cyan(),
                     recommendation.confidence * 100.0
                 );
+                
+                // Show analysis mode prominently
+                let mode_display = match recommendation.analysis_mode {
+                    crate::advisor::AnalysisMode::AIPowered => "🤖 AI-Powered Analysis".bright_green(),
+                    crate::advisor::AnalysisMode::RuleBased => "📊 Rule-Based Analysis".bright_yellow(),
+                };
+                println!("{}: {}", "Mode".cyan(), mode_display);
+                
+                // Show data source information
+                let data_source_display = match recommendation.data_source {
+                    crate::advisor::DataSource::RealStockData => "📈 Real Market Data".bright_blue(),
+                    crate::advisor::DataSource::SimulatedData => "🎲 Simulated Data".bright_magenta(),
+                };
+                println!("{}: {}", "Data Source".cyan(), data_source_display);
+                
                 println!("{}: {}", "Client".cyan(), recommendation.client_id);
                 println!();
                 println!("{}", "Reasoning:".yellow());
@@ -575,6 +585,21 @@ impl<'a> InteractiveSession<'a> {
                 rec.recommendation_type.as_str().bold()
             );
             println!("  {}: {:.1}%", "Confidence".cyan(), rec.confidence * 100.0);
+            
+            // Show analysis mode with clear indicator
+            let mode_display = match rec.analysis_mode {
+                crate::advisor::AnalysisMode::AIPowered => "🤖 AI-Powered".bright_green(),
+                crate::advisor::AnalysisMode::RuleBased => "📊 Rule-Based".bright_yellow(),
+            };
+            println!("  {}: {}", "Analysis Mode".cyan(), mode_display);
+            
+            // Show data source
+            let data_source_display = match rec.data_source {
+                crate::advisor::DataSource::RealStockData => "📈 Real Data".bright_blue(),
+                crate::advisor::DataSource::SimulatedData => "🎲 Simulated".bright_magenta(),
+            };
+            println!("  {}: {}", "Data Source".cyan(), data_source_display);
+            
             println!("  {}: {}", "Client ID".cyan(), rec.client_id);
             println!(
                 "  {}: {}",
@@ -1012,29 +1037,4 @@ impl<'a> InteractiveSession<'a> {
         }
     }
 
-    fn list_branches(&self) {
-        println!("{}", "🌳 Available Branches".green().bold());
-        println!("{}", "━".repeat(25).dimmed());
-
-        match self.advisor.list_branches() {
-            Ok(branches) => {
-                let current_branch = self.advisor.get_actual_current_branch();
-
-                if branches.is_empty() {
-                    println!("{} No branches found", "ℹ️".blue());
-                } else {
-                    for branch in branches {
-                        if branch == current_branch {
-                            println!("  {} {} (current)", "●".green(), branch.bold());
-                        } else {
-                            println!("  {} {}", "○".dimmed(), branch);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                println!("{} Failed to list branches: {}", "❌".red(), e);
-            }
-        }
-    }
 }

@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::{ClientProfile, Recommendation, RecommendationType, RiskTolerance};
+use super::{AnalysisMode, ClientProfile, DataSource, Recommendation, RecommendationType, RiskTolerance};
 use crate::memory::{MemoryStore, ValidatedMemory};
 use crate::validation::ValidationResult;
 
@@ -53,6 +53,8 @@ impl RecommendationEngine {
                 issues: vec![],
             },
             memory_version: format!("v-{}", Utc::now().timestamp()),
+            analysis_mode: AnalysisMode::RuleBased, // Default, will be updated by AI if available
+            data_source: DataSource::SimulatedData, // Default, will be updated based on symbol
         })
     }
 
@@ -176,6 +178,7 @@ impl RecommendationEngine {
                 pe_ratio: 28.5,
                 market_cap: 2_800_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "GOOGL" => super::StockData {
                 price: 142.56,
@@ -183,6 +186,7 @@ impl RecommendationEngine {
                 pe_ratio: 24.8,
                 market_cap: 1_750_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "MSFT" => super::StockData {
                 price: 415.26,
@@ -190,6 +194,7 @@ impl RecommendationEngine {
                 pe_ratio: 32.1,
                 market_cap: 3_100_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "AMZN" => super::StockData {
                 price: 155.89,
@@ -197,6 +202,7 @@ impl RecommendationEngine {
                 pe_ratio: 45.2,
                 market_cap: 1_650_000_000_000,
                 sector: "Consumer Discretionary".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "TSLA" => super::StockData {
                 price: 248.42,
@@ -204,6 +210,7 @@ impl RecommendationEngine {
                 pe_ratio: 65.4,
                 market_cap: 780_000_000_000,
                 sector: "Automotive".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "META" => super::StockData {
                 price: 501.34,
@@ -211,6 +218,7 @@ impl RecommendationEngine {
                 pe_ratio: 22.7,
                 market_cap: 1_250_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "NVDA" => super::StockData {
                 price: 875.28,
@@ -218,6 +226,7 @@ impl RecommendationEngine {
                 pe_ratio: 55.8,
                 market_cap: 2_150_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "JPM" => super::StockData {
                 price: 195.43,
@@ -225,6 +234,7 @@ impl RecommendationEngine {
                 pe_ratio: 12.8,
                 market_cap: 570_000_000_000,
                 sector: "Financial Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "JNJ" => super::StockData {
                 price: 156.78,
@@ -232,6 +242,7 @@ impl RecommendationEngine {
                 pe_ratio: 15.2,
                 market_cap: 410_000_000_000,
                 sector: "Healthcare".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "V" => super::StockData {
                 price: 278.94,
@@ -239,6 +250,7 @@ impl RecommendationEngine {
                 pe_ratio: 31.4,
                 market_cap: 590_000_000_000,
                 sector: "Financial Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "PYPL" => super::StockData {
                 price: 78.94,
@@ -246,6 +258,7 @@ impl RecommendationEngine {
                 pe_ratio: 18.9,
                 market_cap: 85_000_000_000,
                 sector: "Financial Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             // Default case for unknown symbols
             _ => super::StockData {
@@ -254,6 +267,7 @@ impl RecommendationEngine {
                 pe_ratio: 20.0 + (symbol.len() as f64 * 0.8),
                 market_cap: 50_000_000_000 + (symbol.len() as u64 * 2_000_000_000),
                 sector: "Mixed".to_string(),
+                data_source: DataSource::SimulatedData,
             },
         }
     }

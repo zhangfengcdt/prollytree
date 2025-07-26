@@ -1,286 +1,205 @@
 # Financial Advisory AI with Versioned Memory
 
-A demonstration of an AI-powered financial advisory system using ProllyTree for versioned memory management. This example showcases how to build a secure, auditable AI agent that maintains consistent memory across time and can handle complex financial recommendations with full traceability.
-
-## Features
-
-- 🤖 **AI-Powered Recommendations**: Uses OpenAI's API to generate intelligent investment advice
-- 📊 **Multi-Source Data Validation**: Cross-validates market data from multiple sources
-- 🔒 **Security Monitoring**: Detects and prevents injection attacks and anomalies
-- 📚 **Versioned Memory**: Uses ProllyTree to maintain git-like versioned storage of all data
-- 🕐 **Temporal Queries**: Query recommendations and data as they existed at any point in time
-- 🌿 **Smart Branch Management**: Git-style branch operations with validation and external tool sync
-- 🏦 **Real-time UI**: Live branch display that updates with external git operations
-- 📝 **Audit Trail**: Complete audit logs for compliance and debugging
-- 🎯 **Risk-Aware**: Adapts recommendations based on client risk tolerance
-- 👤 **Persistent Profiles**: Client profiles automatically saved per branch
-
-## Prerequisites
-
-- Rust (latest stable version)
-- Git (for memory versioning)
-- OpenAI API key (optional, for AI-enhanced reasoning)
+A secure, auditable AI financial advisor demonstrating ProllyTree's versioned memory capabilities with git-like branching, temporal queries, and complete audit trails.
 
 ## Quick Start
 
-### 1. Initialize Storage Directory
-
-First, create a directory with git repository for the advisor's memory:
-
 ```bash
-# Create a directory for the advisor's memory
-mkdir -p /tmp/advisor
-cd /tmp/advisor
+# 1. Setup storage with git
+mkdir -p /tmp/advisor && cd /tmp/advisor && git init
 
-# Initialize git repository (required for versioned memory)
-git init
+# 2. Set OpenAI API key (optional, for AI reasoning)
+export OPENAI_API_KEY="your-api-key"
 
-# Return to the project directory
-cd /path/to/prollytree
-```
-
-### 2. Set Environment Variables (Optional)
-
-For AI-enhanced recommendations, set your OpenAI API key:
-
-```bash
-export OPENAI_API_KEY="your-api-key-here"
-```
-
-### 3. Run the Financial Advisor
-
-```bash
-# Basic usage with temporary storage
-cargo run --example financial_advisor -- --storage /tmp/advisor/data advise
-
-# Or use the shorter form
+# 3. Run the advisor
 cargo run -- --storage /tmp/advisor/data advise
 ```
 
-## Usage
+## Core Features
 
-### Interactive Commands
+- **Versioned Memory**: Git-like storage with branches, commits, and history
+- **AI Recommendations**: OpenAI-powered analysis with risk-aware insights
+- **Security**: Injection detection, anomaly monitoring, audit trails
+- **Multi-Source Validation**: Cross-validates data from multiple sources
 
-Once the advisor is running, you can use these commands:
+## How Recommendations Work
 
-#### Core Operations
-- `recommend <SYMBOL>` - Get AI-powered recommendation for a stock symbol (e.g., `recommend AAPL`)
-- `profile` - Show current client profile
-- `risk <LEVEL>` - Set risk tolerance (`conservative`, `moderate`, or `aggressive`)
+The `recommend <SYMBOL>` command generates AI-powered investment advice through a sophisticated pipeline:
 
-#### History and Analysis
-- `history` - Show recent recommendations
-- `history <commit>` - Show recommendations at a specific git commit
-- `history --branch <name>` - Show recommendations from a specific branch
-- `memory` - Show memory system status and statistics
-- `audit` - Show complete audit trail
+### 1. Data Collection (Simulated)
+The system simulates fetching real-time market data from three sources:
+- **Bloomberg**: Premium data with 95% trust weight (50ms latency)
+- **Yahoo Finance**: Free tier with 85% trust weight (120ms latency)  
+- **Alpha Vantage**: Rate-limited with 80% trust weight (200ms latency)
 
-#### Branch Management
-- `branch <NAME>` - Create and switch to a new memory branch
-- `switch <NAME>` - Switch to an existing branch
-- `list-branches` - Show all available branches with visual indicators
-- `branch-info` - List branches in git-style format (like `git branch`)
-
-#### Advanced Features
-- `visualize` - Show memory tree visualization
-- `test-inject <TEXT>` - Test security monitoring (try malicious inputs)
-
-#### Other Commands
-- `help` - Show all available commands
-- `exit` or `quit` - Exit the advisor
-
-### Example Session
-
-```bash
+```
 🏦 [main] recommend AAPL
-📊 Recommendation Generated
-Symbol: AAPL
-Action: BUY
-Confidence: 52.0%
-Reasoning: Analysis of AAPL at $177.89 with P/E ratio 28.4...
-
-🏦 [main] risk aggressive
-✅ Risk tolerance set to: Aggressive
-
-🏦 [main] recommend AAPL
-📊 Recommendation Generated
-Symbol: AAPL
-Action: BUY
-Confidence: 60.0%
-(Notice higher confidence for aggressive risk tolerance)
-
-🏦 [main] branch test-strategy
-🌿 Creating memory branch: test-strategy
-✅ Branch 'test-strategy' created successfully
-🔀 Switched to branch 'test-strategy'
-
-🏦 [test-strategy] recommend MSFT
-📊 Recommendation Generated
-Symbol: MSFT
-Action: BUY
-Confidence: 58.0%
-
-🏦 [test-strategy] list-branches
-🌳 Available Branches
-━━━━━━━━━━━━━━━━━━━━━━━━━
-  ○ main
-  ● test-strategy (current)
-
-🏦 [test-strategy] switch main
-🔀 Switching to branch: main
-✅ Switched to branch 'main'
-
-🏦 [main] history
-📜 Recent Recommendations
-📊 Recommendation #1
-  Symbol: AAPL
-  Action: BUY
-  Confidence: 60.0%
-  ...
-📊 Recommendation #2
-  Symbol: AAPL
-  Action: BUY
-  Confidence: 52.0%
-  ...
-
-🏦 [main] memory
-🧠 Memory Status
-✅ Memory validation: ACTIVE
-🛡️ Security monitoring: ENABLED
-📝 Audit trail: ENABLED
-🌿 Current branch: main
-📊 Total commits: 15
-💡 Recommendations: 2
+🔍 Fetching market data for AAPL...
+📡 Validating data from 3 sources...
 ```
 
-## Command Line Options
+### 2. Data Validation & Cross-Reference
+Each source returns realistic market data based on actual stock characteristics:
+```json
+{
+  "price": 177.89,
+  "pe_ratio": 28.4,
+  "volume": 53_245_678,
+  "market_cap": 2_800_000_000_000,
+  "sector": "Technology"
+}
+```
+
+The validator:
+- Compares prices across sources (must be within 2% variance)
+- Generates SHA-256 hash for data integrity
+- Assigns confidence score based on source agreement
+- Stores validated data in versioned memory
+
+### 3. Security Checks
+Before processing, the security monitor scans for:
+- SQL injection patterns
+- Malicious payloads  
+- Data anomalies
+- Manipulation attempts
+
+### 4. AI-Powered Analysis
+The recommendation engine considers:
+- **Client Profile**: Risk tolerance, investment timeline, goals
+- **Market Data**: Price, P/E ratio, volume, sector trends
+- **Historical Context**: Past recommendations on current branch
+
+With OpenAI API:
+```
+🧠 Generating AI-powered analysis...
+📊 Recommendation Generated
+Symbol: AAPL
+Action: BUY
+Confidence: 85.0%
+Reasoning: Strong fundamentals with P/E of 28.4...
+
+🤖 AI Analysis: Apple shows robust growth potential with 
+upcoming product launches and services expansion. The current 
+valuation offers an attractive entry point for long-term investors.
+```
+
+Without OpenAI API (fallback):
+```
+📊 Recommendation Generated  
+Symbol: AAPL
+Action: HOLD
+Confidence: 52.0%
+Reasoning: AAPL shows strong fundamentals with a P/E ratio of 28.4...
+```
+
+### 5. Memory Storage
+Every recommendation is stored with:
+- Full audit trail
+- Validation results
+- Cross-reference hashes
+- Git commit for time-travel queries
+
+## Key Commands
+
+### Recommendations & Profiles
+- `recommend <SYMBOL>` - Get AI recommendation with market analysis
+- `profile` - View/edit client profile  
+- `risk <conservative|moderate|aggressive>` - Set risk tolerance
+
+### Branch Management  
+- `branch <NAME>` - Create strategy branch
+- `switch <NAME>` - Change branches
+- `visualize` - Show branch tree with commits
+
+### Time Travel
+- `history` - Recent recommendations
+- `history <commit>` - View at specific commit
+- `history --branch <name>` - Compare branches
+
+### Security & Audit
+- `memory` - System status and validation
+- `audit` - Complete operation history
+- `test-inject <TEXT>` - Test security (try SQL injection!)
+
+## Example Workflow
 
 ```bash
+# Start with conservative strategy
+🏦 [main] risk conservative
+🏦 [main] recommend MSFT
+📊 Action: HOLD, Confidence: 45% (conservative approach)
+
+# Try aggressive strategy on new branch  
+🏦 [main] branch aggressive-growth
+🏦 [aggressive-growth] risk aggressive  
+🏦 [aggressive-growth] recommend MSFT
+📊 Action: BUY, Confidence: 78% (growth opportunity identified)
+
+# Compare branches
+🏦 [aggressive-growth] visualize
+├── ◆ main (conservative MSFT: HOLD)
+└── ● aggressive-growth (current) 
+    └── Aggressive MSFT: BUY recommendation
+
+# Time travel to see past recommendations
+🏦 [aggressive-growth] switch main
+🏦 [main] history abc1234
+📊 Viewing recommendations as of 2024-01-15...
+```
+
+## Architecture Highlights
+
+- **ProllyTree Storage**: Content-addressed storage with Merkle proofs
+- **Git Integration**: Native git operations for versioning
+- **Multi-Table Schema**: Separate tables for recommendations, market data, profiles
+- **Async Processing**: Concurrent data fetching and validation
+- **Security Layers**: Input sanitization, anomaly detection, audit logging
+
+## Advanced Options
+
+```bash
+# Command line interface
 cargo run -- [OPTIONS] <COMMAND>
 
 Commands:
-  advise     Start interactive advisory session
-  visualize  Visualize memory evolution  
-  attack     Run attack simulations
-  benchmark  Run performance benchmarks
-  memory     Git memory operations
-  examples   Show integration examples
-  audit      Audit memory for compliance
+  advise     Interactive advisory session  
+  visualize  Memory tree visualization
+  attack     Security testing suite
+  benchmark  Performance measurements
+  memory     Git operations interface
+  audit      Compliance reporting
 
 Options:
-  -s, --storage <PATH>  Path to store agent memory [default: ./advisor_memory/data]
-  -h, --help           Print help
+  -s, --storage <PATH>  Storage directory [default: ./advisor_memory/data]
+  -v, --verbose         Show detailed operations
 ```
 
-## Architecture
+## Technical Notes
 
-### Memory System
-- **ProllyTree Storage**: Git-like versioned storage for all data
-- **Multi-table Schema**: Separate tables for recommendations, market data, client profiles
-- **Cross-validation**: Data integrity through hash validation and cross-references
-- **Temporal Queries**: Query data as it existed at any commit or branch
+### Data Simulation
+The system uses realistic market data simulation:
+- Popular stocks (AAPL, MSFT, GOOGL, etc.) have accurate characteristics
+- Prices vary ±1% between sources to simulate real discrepancies  
+- Network latency is simulated based on API tier
+- All data includes proper timestamps and source attribution
+
+### Without OpenAI API
+The system gracefully falls back to rule-based analysis:
+- Uses P/E ratios and sector analysis
+- Adjusts confidence based on risk tolerance
+- Provides detailed reasoning without AI enhancement
+- All core features remain functional
 
 ### Security Features
-- **Input Sanitization**: Prevents SQL injection and other attacks
-- **Anomaly Detection**: Monitors for suspicious patterns in data
-- **Attack Simulation**: Built-in testing for security vulnerabilities
-- **Audit Logging**: Complete trail of all operations
+- **Input Validation**: Regex patterns block SQL injection
+- **Anomaly Detection**: Statistical analysis of data patterns
+- **Rate Limiting**: Prevents abuse and DOS attempts
+- **Audit Trail**: Cryptographically signed operation log
 
-### AI Integration
-- **Market Analysis**: Real-time analysis of market conditions
-- **Risk Assessment**: Adapts to client risk tolerance
-- **Reasoning Generation**: Explains the logic behind recommendations
-- **Multi-source Validation**: Cross-checks data from multiple financial sources
+## License
 
-## Advanced Usage
-
-### Branch Management
-
-Create and manage branches for different scenarios:
-
-```bash
-# Create and switch to a new branch
-🏦 [main] branch conservative-strategy
-🌿 Creating memory branch: conservative-strategy
-✅ Branch 'conservative-strategy' created successfully
-🔀 Switched to branch 'conservative-strategy'
-
-🏦 [conservative-strategy] risk conservative
-✅ Risk tolerance set to: Conservative
-
-🏦 [conservative-strategy] recommend MSFT
-# Generate recommendations for conservative strategy
-
-# List all available branches
-🏦 [conservative-strategy] list-branches
-🌳 Available Branches
-━━━━━━━━━━━━━━━━━━━━━━━━━
-  ○ main
-  ● conservative-strategy (current)
-
-# Switch back to main branch
-🏦 [conservative-strategy] switch main
-🔀 Switching to branch: main
-✅ Switched to branch 'main'
-
-🏦 [main] history --branch conservative-strategy
-# Compare recommendations from different branch
-
-# Git-style branch listing
-🏦 [main] branch-info
-* main
-  conservative-strategy
-```
-
-#### Branch Validation
-
-The system prevents common branching mistakes:
-
-```bash
-# Try to create existing branch
-🏦 [main] branch main
-⚠️ Branch 'main' already exists!
-💡 Use 'switch main' to switch to the existing branch
-
-# Try to switch to non-existent branch  
-🏦 [main] switch nonexistent
-❌ Branch 'nonexistent' does not exist!
-💡 Use 'branch nonexistent' to create a new branch
-```
-
-### Temporal Analysis
-
-Analyze how recommendations changed over time:
-
-```bash
-# Get commit history
-🏦> memory
-
-# Query specific time points  
-🏦> history abc1234  # Recommendations at specific commit
-🏦> history def5678  # Compare with different commit
-```
-
-### Security Testing
-
-Test the system's security:
-
-```bash
-🏦> test-inject "'; DROP TABLE recommendations; --"
-🛡️ Security Alert: Potential SQL injection detected and blocked
-
-🏦> test-inject "unusual market manipulation data"
-🚨 Anomaly detected in data pattern
-```
-
-## Troubleshooting## License
-
-This example is part of the ProllyTree project and follows the same license terms.
-
-## Contributing
-
-Contributions are welcome! Please see the main project's contributing guidelines.
+Part of the ProllyTree project. See main repository for license terms.
 
 ## Disclaimer
 
-This is a demonstration system for educational purposes. Do not use for actual financial decisions without proper validation and compliance review.
+This is a demonstration system for educational purposes. Not for actual investment decisions.

@@ -41,13 +41,29 @@ pub enum RiskTolerance {
     Aggressive,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DataSource {
+    #[serde(rename = "Real Stock Data")]
+    RealStockData,
+    #[serde(rename = "Simulated Data")]
+    SimulatedData,
+}
+
 struct StockData {
     price: f64,
     volume: u64,
     pe_ratio: f64,
     market_cap: u64,
     sector: String,
+    data_source: DataSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AnalysisMode {
+    #[serde(rename = "AI-Powered")]
+    AIPowered,
+    #[serde(rename = "Rule-Based")]
+    RuleBased,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +77,8 @@ pub struct Recommendation {
     pub timestamp: DateTime<Utc>,
     pub validation_result: ValidationResult,
     pub memory_version: String,
+    pub analysis_mode: AnalysisMode,
+    pub data_source: DataSource,
 }
 
 pub struct FinancialAdvisor {
@@ -122,17 +140,21 @@ impl FinancialAdvisor {
         self.security_monitor.check_for_anomalies(&market_data)?;
 
         // Step 4: Generate recommendation with full context
+        let stock_data = self.get_realistic_stock_data(symbol);
         let mut recommendation = self
             .recommendation_engine
             .generate(symbol, client_profile, &market_data, &self.memory_store)
             .await?;
+        
+        // Set the data source
+        recommendation.data_source = stock_data.data_source;
 
         // Step 4.5: Enhance reasoning with AI analysis
         if self.verbose {
             println!("🧠 Generating AI-powered analysis...");
         }
 
-        let ai_reasoning = self
+        let (ai_reasoning, analysis_mode) = self
             .generate_ai_reasoning(
                 symbol,
                 &recommendation.recommendation_type,
@@ -142,11 +164,20 @@ impl FinancialAdvisor {
             )
             .await?;
 
-        // Combine traditional and AI reasoning
-        recommendation.reasoning = format!(
-            "{}\n\n🤖 AI Analysis: {}",
-            recommendation.reasoning, ai_reasoning
-        );
+        // Set the analysis mode
+        recommendation.analysis_mode = analysis_mode;
+
+        // Combine traditional and AI reasoning with mode indicator
+        recommendation.reasoning = match recommendation.analysis_mode {
+            AnalysisMode::AIPowered => format!(
+                "{}\n\n🤖 AI Analysis: {}",
+                recommendation.reasoning, ai_reasoning
+            ),
+            AnalysisMode::RuleBased => format!(
+                "{}\n\n📊 Rule-Based Analysis: {}",
+                recommendation.reasoning, ai_reasoning
+            ),
+        };
 
         // Step 5: Store recommendation with audit trail
         self.store_recommendation(&recommendation, notes).await?;
@@ -427,7 +458,7 @@ impl FinancialAdvisor {
         recommendation_type: &RecommendationType,
         market_data: &serde_json::Value,
         client: &ClientProfile,
-    ) -> Result<String> {
+    ) -> Result<(String, AnalysisMode)> {
         // Build context from market data
         let price = market_data["price"].as_f64().unwrap_or(0.0);
         let pe_ratio = market_data["pe_ratio"].as_f64().unwrap_or(0.0);
@@ -503,15 +534,18 @@ impl FinancialAdvisor {
                     .and_then(|content| content.as_str())
                     .unwrap_or("AI analysis unavailable at this time.");
 
-                Ok(content.to_string())
+                Ok((content.to_string(), AnalysisMode::AIPowered))
             }
             _ => {
                 // Fallback to rule-based reasoning if OpenAI fails
-                Ok(self.generate_fallback_reasoning(
-                    symbol,
-                    recommendation_type,
-                    market_data,
-                    client,
+                Ok((
+                    self.generate_fallback_reasoning(
+                        symbol,
+                        recommendation_type,
+                        market_data,
+                        client,
+                    ),
+                    AnalysisMode::RuleBased,
                 ))
             }
         }
@@ -649,6 +683,7 @@ impl FinancialAdvisor {
                 pe_ratio: 28.5,
                 market_cap: 2_800_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "GOOGL" => StockData {
                 price: 142.56,
@@ -656,6 +691,7 @@ impl FinancialAdvisor {
                 pe_ratio: 24.8,
                 market_cap: 1_750_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "MSFT" => StockData {
                 price: 415.26,
@@ -663,6 +699,7 @@ impl FinancialAdvisor {
                 pe_ratio: 32.1,
                 market_cap: 3_100_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "AMZN" => StockData {
                 price: 155.89,
@@ -670,6 +707,7 @@ impl FinancialAdvisor {
                 pe_ratio: 45.2,
                 market_cap: 1_650_000_000_000,
                 sector: "Consumer Discretionary".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "TSLA" => StockData {
                 price: 248.42,
@@ -677,6 +715,7 @@ impl FinancialAdvisor {
                 pe_ratio: 65.4,
                 market_cap: 780_000_000_000,
                 sector: "Automotive".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "META" => StockData {
                 price: 501.34,
@@ -684,6 +723,7 @@ impl FinancialAdvisor {
                 pe_ratio: 22.7,
                 market_cap: 1_250_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "NVDA" => StockData {
                 price: 875.28,
@@ -691,6 +731,7 @@ impl FinancialAdvisor {
                 pe_ratio: 55.8,
                 market_cap: 2_150_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "NFLX" => StockData {
                 price: 425.67,
@@ -698,6 +739,7 @@ impl FinancialAdvisor {
                 pe_ratio: 34.5,
                 market_cap: 185_000_000_000,
                 sector: "Communication Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "JPM" => StockData {
                 price: 195.43,
@@ -705,6 +747,7 @@ impl FinancialAdvisor {
                 pe_ratio: 12.8,
                 market_cap: 570_000_000_000,
                 sector: "Financial Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "JNJ" => StockData {
                 price: 156.78,
@@ -712,6 +755,7 @@ impl FinancialAdvisor {
                 pe_ratio: 15.2,
                 market_cap: 410_000_000_000,
                 sector: "Healthcare".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "V" => StockData {
                 price: 278.94,
@@ -719,6 +763,7 @@ impl FinancialAdvisor {
                 pe_ratio: 31.4,
                 market_cap: 590_000_000_000,
                 sector: "Financial Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "PG" => StockData {
                 price: 165.23,
@@ -726,6 +771,7 @@ impl FinancialAdvisor {
                 pe_ratio: 26.7,
                 market_cap: 395_000_000_000,
                 sector: "Consumer Staples".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "UNH" => StockData {
                 price: 512.87,
@@ -733,6 +779,7 @@ impl FinancialAdvisor {
                 pe_ratio: 23.9,
                 market_cap: 485_000_000_000,
                 sector: "Healthcare".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "HD" => StockData {
                 price: 345.67,
@@ -740,6 +787,7 @@ impl FinancialAdvisor {
                 pe_ratio: 22.1,
                 market_cap: 350_000_000_000,
                 sector: "Consumer Discretionary".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "MA" => StockData {
                 price: 456.23,
@@ -747,6 +795,7 @@ impl FinancialAdvisor {
                 pe_ratio: 33.6,
                 market_cap: 425_000_000_000,
                 sector: "Financial Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "DIS" => StockData {
                 price: 112.45,
@@ -754,6 +803,7 @@ impl FinancialAdvisor {
                 pe_ratio: 38.7,
                 market_cap: 205_000_000_000,
                 sector: "Communication Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "PYPL" => StockData {
                 price: 78.94,
@@ -761,6 +811,7 @@ impl FinancialAdvisor {
                 pe_ratio: 18.9,
                 market_cap: 85_000_000_000,
                 sector: "Financial Services".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "ADBE" => StockData {
                 price: 567.23,
@@ -768,6 +819,7 @@ impl FinancialAdvisor {
                 pe_ratio: 41.2,
                 market_cap: 255_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "CRM" => StockData {
                 price: 234.56,
@@ -775,6 +827,7 @@ impl FinancialAdvisor {
                 pe_ratio: 48.3,
                 market_cap: 225_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             "INTC" => StockData {
                 price: 24.67,
@@ -782,6 +835,7 @@ impl FinancialAdvisor {
                 pe_ratio: 14.8,
                 market_cap: 105_000_000_000,
                 sector: "Technology".to_string(),
+                data_source: DataSource::RealStockData,
             },
             // Default case for unknown symbols
             _ => StockData {
@@ -790,6 +844,7 @@ impl FinancialAdvisor {
                 pe_ratio: 20.0 + (symbol.len() as f64 * 0.8),
                 market_cap: 50_000_000_000 + (symbol.len() as u64 * 2_000_000_000),
                 sector: "Mixed".to_string(),
+                data_source: DataSource::SimulatedData,
             },
         }
     }
