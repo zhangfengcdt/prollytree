@@ -321,7 +321,11 @@ mod tests {
         // Run optimization
         let report = memory_system.optimize().await.unwrap();
 
-        // Should have processed some memories
-        assert!(report.total_processed() >= 0); // Might be 0 if no optimization needed
+        // Optimization report should be valid (total_processed is always >= 0 for usize)
+        // Just verify the report exists and has reasonable values
+        assert!(report.expired_cleaned <= 50); // Reasonable upper bound for test
+        assert!(report.memories_consolidated <= 50);
+        assert!(report.memories_archived <= 50);
+        assert!(report.memories_pruned <= 50);
     }
 }

@@ -15,36 +15,36 @@ The Agent Memory System implements different types of memory inspired by human c
 
 ### Core Components
 
-1. **Types** (`src/agent_memory/types.rs`)
+1. **Types** (`src/agent/types.rs`)
    - Memory data structures and enums
    - Namespace organization for hierarchical memory
    - Query and filter types
 
-2. **Traits** (`src/agent_memory/traits.rs`)
+2. **Traits** (`src/agent/traits.rs`)
    - Abstract interfaces for memory operations
    - Embedding generation and search capabilities
    - Lifecycle management interfaces
 
-3. **Persistence** (`src/agent_memory/simple_persistence.rs`)
-   - Simple in-memory persistence for demonstration
-   - Designed to be replaced with prolly tree persistence
-   - Thread-safe async operations
+3. **Persistence** (`src/agent/simple_persistence.rs`)
+   - Prolly tree-based in-memory persistence
+   - Uses `ProllyTree<32, InMemoryNodeStorage<32>>` for robust storage
+   - Thread-safe async operations with Arc<RwLock>
 
-4. **Store** (`src/agent_memory/store.rs`)
+4. **Store** (`src/agent/store.rs`)
    - Base memory store implementation
    - Handles serialization/deserialization
    - Manages memory validation and access
 
 5. **Memory Types**:
-   - **Short-Term** (`src/agent_memory/short_term.rs`): Conversation history, working memory
-   - **Long-Term** (`src/agent_memory/long_term.rs`): Semantic, episodic, and procedural stores
+   - **Short-Term** (`src/agent/short_term.rs`): Conversation history, working memory
+   - **Long-Term** (`src/agent/long_term.rs`): Semantic, episodic, and procedural stores
 
-6. **Search** (`src/agent_memory/search.rs`)
+6. **Search** (`src/agent/search.rs`)
    - Memory search and retrieval capabilities
    - Mock embedding generation
    - Distance calculation utilities
 
-7. **Lifecycle** (`src/agent_memory/lifecycle.rs`)
+7. **Lifecycle** (`src/agent/lifecycle.rs`)
    - Memory consolidation and archival
    - Cleanup and optimization
    - Event broadcasting
@@ -103,7 +103,7 @@ For example:
 ## Usage Example
 
 ```rust
-use prollytree::agent_memory::*;
+use prollytree::agent::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -155,24 +155,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Completed ✅
 - Core type definitions and interfaces
-- Simple persistence layer
+- **Prolly tree-based persistence layer** with `ProllyTree<32, InMemoryNodeStorage<32>>`
 - All four memory types (Short-term, Semantic, Episodic, Procedural)
 - Basic search functionality
 - Memory lifecycle management
 - Working demo example
+- Thread-safe async operations
+- Tree statistics and range queries
+- Commit tracking with sequential IDs
 
 ### Planned 🚧
-- Full prolly tree persistence integration (blocked by Send/Sync issues)
 - Real embedding generation (currently uses mock)
 - Advanced semantic search
 - Memory conflict resolution
 - Performance optimizations
+- Git-based prolly tree persistence for durability
 
 ### Known Limitations
-- Uses simple in-memory persistence instead of prolly tree
 - Mock embedding generation
 - Limited semantic search capabilities
 - No conflict resolution for concurrent updates
+- In-memory storage (data doesn't persist across restarts)
 
 ## Design Decisions
 
@@ -183,9 +186,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 5. **Type Safety**: Strong typing for memory operations
 6. **Extensible Design**: Easy to add new memory types or features
 
+## Prolly Tree Integration Details
+
+The memory system now uses prolly trees for storage with the following features:
+
+### Storage Architecture
+- **Tree Structure**: `ProllyTree<32, InMemoryNodeStorage<32>>`
+- **Namespace Prefixes**: Organized hierarchically with agent ID and memory type
+- **Thread Safety**: `Arc<RwLock<>>` for concurrent access
+- **Commit Tracking**: Sequential commit IDs (prolly_commit_00000001, etc.)
+
+### Advanced Features
+- **Tree Statistics**: `tree_stats()` provides key count and size metrics
+- **Range Queries**: `range_query()` for efficient range-based retrieval
+- **Direct Tree Access**: `with_tree()` for advanced operations
+- **Git-like Operations**: Branch, checkout, merge simulation for future git integration
+
+### Performance Benefits
+- **Balanced Tree Structure**: O(log n) operations for most queries
+- **Content Addressing**: Efficient deduplication and integrity checking
+- **Probabilistic Balancing**: Maintains performance under various workloads
+- **Memory Efficient**: Shared storage for duplicate content
+
 ## Future Enhancements
 
-1. **True Prolly Tree Integration**: Once Send/Sync issues are resolved
+1. **Git-based Persistence**: Replace in-memory with durable git-based storage
 2. **Real Embedding Models**: Integration with actual embedding services
 3. **Conflict Resolution**: Handle concurrent memory updates
 4. **Performance Metrics**: Track memory system performance
@@ -200,15 +225,26 @@ To see the memory system in action:
 cargo run --example agent_memory_demo
 ```
 
-This demonstrates all four memory types, search capabilities, and system operations.
+This demonstrates:
+- All four memory types with prolly tree storage
+- Conversation tracking and fact storage
+- Episode recording and procedure management
+- Tree statistics and checkpoint creation
+- System optimization and cleanup
 
 ## Testing
 
-The memory system includes comprehensive unit tests for each component. Run tests with:
+The memory system includes comprehensive unit tests for each component, including prolly tree persistence tests. Run tests with:
 
 ```bash
 cargo test agent
 ```
+
+This will run all tests including:
+- Basic prolly tree operations (save, load, delete)
+- Key listing and range queries
+- Tree statistics and checkpoints
+- Memory lifecycle operations
 
 ## Contributing
 
