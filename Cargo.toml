@@ -104,9 +104,14 @@ path = "examples/merge.rs"
 required-features = ["git"]
 
 [[example]]
-name = "torage"
+name = "storage"
 path = "examples/storage.rs"
 required-features = ["rocksdb_storage"]
+
+[[example]]
+name = "agent_memory_demo"
+path = "examples/agent.rs"
+required-features = ["git", "sql"]
 
 [workspace]
 members = ["examples/financial_advisor"]
