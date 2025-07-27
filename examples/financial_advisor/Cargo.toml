@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 prollytree = { path = "../..", features = ["sql", "git"] }
-rig-core = "0.15"
+rig-core = "0.2.1"
 hex = "0.4"
 tokio = { version = "1.0", features = ["full"] }
 async-trait = "0.1"

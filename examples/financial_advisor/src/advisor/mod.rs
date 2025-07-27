@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use colored::Colorize;
 // OpenAI integration for AI-powered recommendations
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -14,9 +13,11 @@ use crate::validation::{MemoryValidator, ValidationResult};
 pub mod compliance;
 pub mod interactive;
 pub mod recommendations;
+pub mod rig_agent;
 
 use interactive::InteractiveSession;
 use recommendations::RecommendationEngine;
+use rig_agent::FinancialAnalysisAgent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecommendationType {
@@ -87,7 +88,7 @@ pub struct FinancialAdvisor {
     validator: MemoryValidator,
     security_monitor: SecurityMonitor,
     recommendation_engine: RecommendationEngine,
-    openai_client: reqwest::Client,
+    rig_agent: FinancialAnalysisAgent,
     api_key: String,
     verbose: bool,
     current_session: String,
@@ -101,15 +102,15 @@ impl FinancialAdvisor {
         let security_monitor = SecurityMonitor::new();
         let recommendation_engine = RecommendationEngine::new();
 
-        // Initialize OpenAI client
-        let openai_client = reqwest::Client::new();
+        // Initialize Rig agent for AI analysis
+        let rig_agent = FinancialAnalysisAgent::new_openai(api_key, false)?;
 
         Ok(Self {
             memory_store,
             validator,
             security_monitor,
             recommendation_engine,
-            openai_client,
+            rig_agent,
             api_key: api_key.to_string(),
             verbose: false,
             current_session: Uuid::new_v4().to_string(),
@@ -119,6 +120,10 @@ impl FinancialAdvisor {
 
     pub fn set_verbose(&mut self, verbose: bool) {
         self.verbose = verbose;
+        // Update Rig agent verbosity by recreating it
+        if let Ok(new_agent) = FinancialAnalysisAgent::new_openai(&self.api_key, verbose) {
+            self.rig_agent = new_agent;
+        }
     }
 
     pub async fn get_recommendation(
@@ -167,7 +172,7 @@ impl FinancialAdvisor {
         }
 
         let (ai_reasoning, analysis_mode) = self
-            .generate_ai_reasoning_with_debug(
+            .generate_rig_analysis_with_debug(
                 symbol,
                 &recommendation.recommendation_type,
                 &serde_json::from_str::<serde_json::Value>(&market_data.content)
@@ -465,24 +470,7 @@ impl FinancialAdvisor {
         self.memory_store.get_memory_history(limit).await
     }
 
-    async fn generate_ai_reasoning(
-        &self,
-        symbol: &str,
-        recommendation_type: &RecommendationType,
-        market_data: &serde_json::Value,
-        client: &ClientProfile,
-    ) -> Result<(String, AnalysisMode)> {
-        self.generate_ai_reasoning_with_debug(
-            symbol,
-            recommendation_type,
-            market_data,
-            client,
-            false,
-        )
-        .await
-    }
-
-    async fn generate_ai_reasoning_with_debug(
+    async fn generate_rig_analysis_with_debug(
         &self,
         symbol: &str,
         recommendation_type: &RecommendationType,
@@ -490,154 +478,29 @@ impl FinancialAdvisor {
         client: &ClientProfile,
         debug_mode: bool,
     ) -> Result<(String, AnalysisMode)> {
-        // Build context from market data
+        use rig_agent::AnalysisRequest;
+
+        // Extract market data
         let price = market_data["price"].as_f64().unwrap_or(0.0);
         let pe_ratio = market_data["pe_ratio"].as_f64().unwrap_or(0.0);
         let volume = market_data["volume"].as_u64().unwrap_or(0);
         let sector = market_data["sector"].as_str().unwrap_or("Unknown");
 
-        let prompt = format!(
-            r#"You are a professional financial advisor providing investment recommendations.
+        let request = AnalysisRequest {
+            symbol: symbol.to_string(),
+            price,
+            pe_ratio,
+            volume,
+            sector: sector.to_string(),
+            recommendation_type: recommendation_type.clone(),
+            client_profile: client.clone(),
+        };
 
-            STOCK ANALYSIS:
-            Symbol: {symbol}
-            Current Price: ${price}
-            P/E Ratio: {pe_ratio}
-            Volume: {volume}
-            Sector: {sector}
-            
-            CLIENT PROFILE:
-            Risk Tolerance: {:?}
-            Investment Goals: {}
-            Time Horizon: {}
-            Restrictions: {}
-
-            RECOMMENDATION: {recommendation_type:?}
-
-            Please provide a professional, concise investment analysis (2-3 sentences) explaining why this recommendation makes sense for this specific client profile. Focus on:
-            1. Key financial metrics and their implications
-            2. Alignment with client's risk tolerance and goals
-            3. Sector trends or company-specific factors
-
-            Keep the response professional, factual, and tailored to the client's profile."#,
-            client.risk_tolerance,
-            client.investment_goals.join(", "),
-            client.time_horizon,
-            client.restrictions.join(", "),
-            symbol = symbol,
-            price = price,
-            pe_ratio = pe_ratio,
-            volume = volume,
-            sector = sector,
-            recommendation_type = recommendation_type
-        );
-
-        // Print prompt if debug mode is enabled
-        if debug_mode {
-            println!();
-            println!("{}", "🔍 OpenAI Prompt Debug".bright_cyan().bold());
-            println!("{}", "━".repeat(60).dimmed());
-            println!("{prompt}");
-            println!("{}", "━".repeat(60).dimmed());
-            println!();
-        }
-
-        // Make OpenAI API call
-        let openai_request = serde_json::json!({
-            "model": "gpt-3.5-turbo",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            "max_tokens": 200,
-            "temperature": 0.3
-        });
-
-        let response = self
-            .openai_client
-            .post("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&openai_request)
-            .send()
-            .await;
-
-        match response {
-            Ok(resp) if resp.status().is_success() => {
-                let openai_response: serde_json::Value = resp.json().await.unwrap_or_default();
-                let content = openai_response
-                    .get("choices")
-                    .and_then(|choices| choices.get(0))
-                    .and_then(|choice| choice.get("message"))
-                    .and_then(|message| message.get("content"))
-                    .and_then(|content| content.as_str())
-                    .unwrap_or("AI analysis unavailable at this time.");
-
-                Ok((content.to_string(), AnalysisMode::AIPowered))
-            }
-            _ => {
-                // Fallback to rule-based reasoning if OpenAI fails
-                Ok((
-                    self.generate_fallback_reasoning(
-                        symbol,
-                        recommendation_type,
-                        market_data,
-                        client,
-                    ),
-                    AnalysisMode::RuleBased,
-                ))
-            }
-        }
+        let response = self.rig_agent.generate_analysis(&request, debug_mode).await?;
+        Ok((response.reasoning, response.analysis_mode))
     }
 
-    fn generate_fallback_reasoning(
-        &self,
-        symbol: &str,
-        recommendation_type: &RecommendationType,
-        market_data: &serde_json::Value,
-        client: &ClientProfile,
-    ) -> String {
-        let price = market_data["price"].as_f64().unwrap_or(0.0);
-        let pe_ratio = market_data["pe_ratio"].as_f64().unwrap_or(0.0);
-        let sector = market_data["sector"].as_str().unwrap_or("Unknown");
 
-        match recommendation_type {
-            RecommendationType::Buy => {
-                format!(
-                    "{} shows strong fundamentals with a P/E ratio of {:.1}, trading at ${:.2}. \
-                    Given your {:?} risk tolerance and {} investment horizon, this {} sector position \
-                    aligns well with your portfolio diversification goals.",
-                    symbol, pe_ratio, price, client.risk_tolerance, client.time_horizon, sector
-                )
-            }
-            RecommendationType::Hold => {
-                format!(
-                    "{} is currently fairly valued at ${:.2} with stable fundamentals. \
-                    This maintains your existing exposure while we monitor for better entry/exit opportunities \
-                    that match your {:?} risk profile.",
-                    symbol, price, client.risk_tolerance
-                )
-            }
-            RecommendationType::Sell => {
-                format!(
-                    "{} appears overvalued at current levels of ${:.2} with elevated P/E of {:.1}. \
-                    Given your {:?} risk tolerance, taking profits aligns with prudent portfolio management \
-                    and your {} investment timeline.",
-                    symbol, price, pe_ratio, client.risk_tolerance, client.time_horizon
-                )
-            }
-            RecommendationType::Rebalance => {
-                format!(
-                    "Portfolio rebalancing for {} recommended to maintain target allocation. \
-                    Current {} sector weighting may need adjustment to align with your {:?} risk profile \
-                    and {} investment horizon.",
-                    symbol, sector, client.risk_tolerance, client.time_horizon
-                )
-            }
-        }
-    }
 
     // Simulated data fetching methods with realistic stock data
     async fn fetch_bloomberg_data(&self, symbol: &str) -> Result<serde_json::Value> {
