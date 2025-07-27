@@ -95,7 +95,6 @@ impl MemoryPersistence for SimpleMemoryPersistence {
 
         // Get all keys and filter by prefix
         let all_keys = tree.collect_keys();
-        
 
         let matching_keys: Vec<String> = all_keys
             .into_iter()
