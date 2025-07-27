@@ -220,7 +220,7 @@ impl AgentMemorySystem {
 }
 
 /// Combined statistics for the entire memory system
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentMemoryStats {
     pub overall: MemoryStats,
     pub short_term: short_term::ShortTermStats,

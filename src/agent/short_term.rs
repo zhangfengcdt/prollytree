@@ -393,7 +393,7 @@ impl MemoryStore for ShortTermMemoryStore {
 }
 
 /// Statistics specific to short-term memory
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ShortTermStats {
     pub total_threads: usize,
     pub active_threads: usize,

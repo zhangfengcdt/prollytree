@@ -163,6 +163,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Thread-safe async operations
 - Tree statistics and range queries
 - Commit tracking with sequential IDs
+- **Rig framework integration** with AI-powered responses and intelligent fallback
+- **Memory-contextual AI** that uses stored knowledge for better responses
 
 ### Planned 🚧
 - Real embedding generation (currently uses mock)
@@ -170,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Memory conflict resolution
 - Performance optimizations
 - Git-based prolly tree persistence for durability
+- Multi-agent memory sharing through Rig
 
 ### Known Limitations
 - Mock embedding generation
@@ -217,9 +220,11 @@ The memory system now uses prolly trees for storage with the following features:
 5. **Memory Compression**: Efficient storage of large memories
 6. **Distributed Memory**: Support for multi-agent memory sharing
 
-## Running the Demo
+## Running the Demos
 
-To see the memory system in action:
+### Basic Memory System Demo
+
+To see the core memory system in action:
 
 ```bash
 cargo run --example agent_memory_demo
@@ -231,6 +236,26 @@ This demonstrates:
 - Episode recording and procedure management
 - Tree statistics and checkpoint creation
 - System optimization and cleanup
+
+### Rig Framework Integration Demo
+
+To see the memory system integrated with Rig framework for AI-powered agents:
+
+```bash
+# With OpenAI API key (AI-powered responses)
+OPENAI_API_KEY=your_key_here cargo run --example agent_rig_demo --features="git sql rig"
+
+# Without API key (memory-based fallback responses)
+cargo run --example agent_rig_demo --features="git sql rig"
+```
+
+This demonstrates:
+- 🤖 **Rig framework integration** for AI-powered responses
+- 🧠 **Memory-contextual AI** using conversation history and stored knowledge
+- 🔄 **Intelligent fallback** to memory-based responses when AI is unavailable
+- 📚 **Contextual learning** from interactions stored in episodic memory
+- ⚙️ **Procedural knowledge updates** based on conversation patterns
+- 📊 **Real-time memory statistics** and checkpoint management
 
 ## Testing
 

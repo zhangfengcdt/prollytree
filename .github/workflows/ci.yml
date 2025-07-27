@@ -21,7 +21,7 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: build
-      run: cargo build --verbose
+      run: cargo build --all --verbose
 
     - name: test
       run: cargo test --verbose
@@ -30,7 +30,7 @@ jobs:
       run: cargo test --benches --no-run --verbose
 
     - name: clippy
-      run: cargo clippy
+      run: cargo clippy --all
 
     - name: docs
       run: cargo doc --document-private-items --no-deps
