@@ -44,6 +44,7 @@ limitations under the License.
 
 #[macro_use]
 pub mod digest;
+pub mod agent;
 pub mod config;
 pub mod diff;
 mod encoding;
