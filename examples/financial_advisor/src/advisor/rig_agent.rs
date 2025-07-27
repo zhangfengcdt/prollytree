@@ -34,11 +34,8 @@ impl FinancialAnalysisAgent {
     /// Create a new financial analysis agent with OpenAI using Rig
     pub fn new_openai(api_key: &str, verbose: bool) -> Result<Self> {
         let client = Client::new(api_key);
-        
-        Ok(Self {
-            client,
-            verbose,
-        })
+
+        Ok(Self { client, verbose })
     }
 
     /// Generate AI-powered financial analysis using Rig framework
@@ -53,7 +50,7 @@ impl FinancialAnalysisAgent {
             println!();
             println!("{}", "🔍 Rig Agent Prompt Debug".bright_cyan().bold());
             println!("{}", "━".repeat(60).dimmed());
-            println!("{}", prompt);
+            println!("{prompt}");
             println!("{}", "━".repeat(60).dimmed());
             println!();
         }
@@ -63,22 +60,23 @@ impl FinancialAnalysisAgent {
         }
 
         // Create Rig agent with proper system prompt
-        let agent = self.client
+        let agent = self
+            .client
             .agent("gpt-3.5-turbo")
             .preamble(
                 r#"You are a professional financial advisor providing investment recommendations.
-                
+               
 You will receive detailed stock analysis data and client profile information.
-Your task is to provide a professional, concise investment analysis (2-3 sentences) 
+Your task is to provide a professional, concise investment analysis (2-3 sentences)
 explaining why the given recommendation makes sense for the specific client profile.
 
 Focus on:
 1. Key financial metrics and their implications
-2. Alignment with client's risk tolerance and goals  
+2. Alignment with client's risk tolerance and goals 
 3. Sector trends or company-specific factors
 
 Keep the response professional, factual, and tailored to the client's profile.
-Respond with only the analysis text, no additional formatting or preamble."#
+Respond with only the analysis text, no additional formatting or preamble."#,
             )
             .max_tokens(200)
             .temperature(0.3)
@@ -86,15 +84,13 @@ Respond with only the analysis text, no additional formatting or preamble."#
 
         // Use Rig's agent to get completion
         match agent.prompt(&prompt).await {
-            Ok(response) => {
-                Ok(AnalysisResponse {
-                    reasoning: response.trim().to_string(),
-                    analysis_mode: AnalysisMode::AIPowered,
-                })
-            }
+            Ok(response) => Ok(AnalysisResponse {
+                reasoning: response.trim().to_string(),
+                analysis_mode: AnalysisMode::AIPowered,
+            }),
             Err(e) => {
                 if self.verbose {
-                    println!("⚠️ Rig AI analysis failed: {}, falling back to rule-based", e);
+                    println!("⚠️ Rig AI analysis failed: {e}, falling back to rule-based");
                 }
                 // Fallback to rule-based analysis
                 Ok(AnalysisResponse {
@@ -143,11 +139,11 @@ Provide your professional analysis:"#,
                     "{} shows strong fundamentals with a P/E ratio of {:.1}, trading at ${:.2}. \
                     Given your {:?} risk tolerance and {} investment horizon, this {} sector position \
                     aligns well with your portfolio diversification goals.",
-                    request.symbol, 
-                    request.pe_ratio, 
-                    request.price, 
-                    request.client_profile.risk_tolerance, 
-                    request.client_profile.time_horizon, 
+                    request.symbol,
+                    request.pe_ratio,
+                    request.price,
+                    request.client_profile.risk_tolerance,
+                    request.client_profile.time_horizon,
                     request.sector
                 )
             }
@@ -156,8 +152,8 @@ Provide your professional analysis:"#,
                     "{} is currently fairly valued at ${:.2} with stable fundamentals. \
                     This maintains your existing exposure while we monitor for better entry/exit opportunities \
                     that match your {:?} risk profile.",
-                    request.symbol, 
-                    request.price, 
+                    request.symbol,
+                    request.price,
                     request.client_profile.risk_tolerance
                 )
             }
@@ -166,10 +162,10 @@ Provide your professional analysis:"#,
                     "{} appears overvalued at current levels of ${:.2} with elevated P/E of {:.1}. \
                     Given your {:?} risk tolerance, taking profits aligns with prudent portfolio management \
                     and your {} investment timeline.",
-                    request.symbol, 
-                    request.price, 
-                    request.pe_ratio, 
-                    request.client_profile.risk_tolerance, 
+                    request.symbol,
+                    request.price,
+                    request.pe_ratio,
+                    request.client_profile.risk_tolerance,
                     request.client_profile.time_horizon
                 )
             }
@@ -178,13 +174,12 @@ Provide your professional analysis:"#,
                     "Portfolio rebalancing for {} recommended to maintain target allocation. \
                     Current {} sector weighting may need adjustment to align with your {:?} risk profile \
                     and {} investment horizon.",
-                    request.symbol, 
-                    request.sector, 
-                    request.client_profile.risk_tolerance, 
+                    request.symbol,
+                    request.sector,
+                    request.client_profile.risk_tolerance,
                     request.client_profile.time_horizon
                 )
             }
         }
     }
 }
-

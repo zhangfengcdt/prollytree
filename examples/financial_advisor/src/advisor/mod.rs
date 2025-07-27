@@ -496,11 +496,12 @@ impl FinancialAdvisor {
             client_profile: client.clone(),
         };
 
-        let response = self.rig_agent.generate_analysis(&request, debug_mode).await?;
+        let response = self
+            .rig_agent
+            .generate_analysis(&request, debug_mode)
+            .await?;
         Ok((response.reasoning, response.analysis_mode))
     }
-
-
 
     // Simulated data fetching methods with realistic stock data
     async fn fetch_bloomberg_data(&self, symbol: &str) -> Result<serde_json::Value> {
