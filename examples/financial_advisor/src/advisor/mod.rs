@@ -14,12 +14,16 @@ pub mod compliance;
 pub mod interactive;
 pub mod recommendations;
 pub mod rig_agent;
+pub mod workflow;
+pub mod analysis_modules;
+pub mod enhanced_advisor;
+pub mod personalization;
 
 use interactive::InteractiveSession;
 use recommendations::RecommendationEngine;
 use rig_agent::FinancialAnalysisAgent;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub enum RecommendationType {
     Buy,
     Sell,
@@ -36,7 +40,7 @@ pub struct ClientProfile {
     pub restrictions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub enum RiskTolerance {
     Conservative,
     Moderate,

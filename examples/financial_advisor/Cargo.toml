@@ -34,3 +34,7 @@ tempfile = "3.0"
 [[bin]]
 name = "financial-advisor"
 path = "src/main.rs"
+
+[[example]]
+name = "enhanced_demo"
+path = "examples/enhanced_demo.rs"

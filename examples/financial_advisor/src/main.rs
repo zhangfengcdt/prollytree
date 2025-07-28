@@ -11,7 +11,7 @@ mod security;
 mod validation;
 mod visualization;
 
-use advisor::FinancialAdvisor;
+use advisor::{FinancialAdvisor, enhanced_advisor::EnhancedFinancialAdvisor};
 use memory::display::MemoryVisualizer;
 use security::attack_simulator::AttackSimulator;
 
@@ -31,6 +31,13 @@ struct Cli {
 enum Commands {
     /// Start interactive advisory session
     Advise {
+        /// Enable verbose memory operations display
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Start enhanced advisory session with agent memory
+    Enhanced {
         /// Enable verbose memory operations display
         #[arg(short, long)]
         verbose: bool,
@@ -221,6 +228,10 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Advise { verbose } => {
             run_advisory_session(&cli.storage, &api_key, verbose).await?;
+        }
+
+        Commands::Enhanced { verbose } => {
+            run_enhanced_advisory_session(&cli.storage, api_key.as_str(), verbose).await?;
         }
 
         Commands::Visualize {
@@ -778,6 +789,20 @@ async fn run_memory_command(storage: &str, git_command: GitCommand) -> Result<()
             }
         }
     }
+
+    Ok(())
+}
+
+async fn run_enhanced_advisory_session(storage: &str, api_key: &str, verbose: bool) -> Result<()> {
+    println!(
+        "{}",
+        "🚀 Starting Enhanced Financial Advisory Session".green().bold()
+    );
+    println!("{}", "Memory-driven personalized financial advice".dimmed());
+    println!();
+
+    let mut advisor = EnhancedFinancialAdvisor::new(storage, Some(api_key), verbose).await?;
+    advisor.run_interactive_session().await?;
 
     Ok(())
 }
