@@ -1,10 +1,9 @@
 use anyhow::Result;
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use colored::Colorize;
-use std::collections::HashMap;
 
 use financial_advisor::advisor::enhanced_advisor::EnhancedFinancialAdvisor;
-use financial_advisor::advisor::{RecommendationType, RiskTolerance};
+use financial_advisor::advisor::RiskTolerance;
 use financial_advisor::memory::enhanced_types::*;
 
 /// Comprehensive demonstration of the enhanced financial advisor capabilities
@@ -112,8 +111,8 @@ async fn main() -> Result<()> {
         stats.overall.total_memories
     );
     println!(
-        "💾 Storage utilization: {} MB",
-        stats.overall.storage_size_mb
+        "💾 Storage utilization: {:.2} MB",
+        stats.overall.total_size_bytes as f64 / 1024.0 / 1024.0
     );
     println!("🔄 Active threads: {}", stats.short_term.active_threads);
 
@@ -335,11 +334,11 @@ async fn await_demo_memory_features(advisor: &mut EnhancedFinancialAdvisor) -> R
     println!("📊 Current Memory State:");
     println!("   Total Memories: {}", stats.overall.total_memories);
     println!("   Short-term Threads: {}", stats.short_term.active_threads);
-    println!("   Storage Size: {} MB", stats.overall.storage_size_mb);
     println!(
-        "   Operations/sec: {:.2}",
-        stats.overall.operations_per_second
+        "   Storage Size: {:.2} MB",
+        stats.overall.total_size_bytes as f64 / 1024.0 / 1024.0
     );
+    println!("   Avg Access Count: {:.2}", stats.overall.avg_access_count);
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
