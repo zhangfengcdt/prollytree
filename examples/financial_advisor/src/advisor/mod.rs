@@ -496,7 +496,7 @@ impl FinancialAdvisor {
             pe_ratio,
             volume,
             sector: sector.to_string(),
-            recommendation_type: recommendation_type.clone(),
+            recommendation_type: *recommendation_type,
             client_profile: client.clone(),
         };
 

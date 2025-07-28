@@ -95,7 +95,7 @@ impl MarketResearchModule {
         conditions: &MarketSnapshot,
     ) -> Result<Vec<prollytree::agent::MemoryDocument>> {
         // Search for episodes with similar market conditions
-        let _search_tags = vec!["market_analysis", &conditions.market_trend.to_lowercase()];
+        let _search_tags = ["market_analysis", &conditions.market_trend.to_lowercase()];
 
         self.memory_system
             .episodic
@@ -150,14 +150,12 @@ Provide 2-3 key insights in bullet format."#,
             match agent.prompt(&prompt).await {
                 Ok(response) => response.trim().to_string(),
                 Err(_) => format!(
-                    "Market analysis for {} shows mixed signals requiring careful evaluation",
-                    symbol
+                    "Market analysis for {symbol} shows mixed signals requiring careful evaluation"
                 ),
             }
         } else {
             format!(
-                "Technical and fundamental analysis suggests {} requires further evaluation",
-                symbol
+                "Technical and fundamental analysis suggests {symbol} requires further evaluation"
             )
         }
     }
@@ -410,10 +408,10 @@ impl RiskAnalysisModule {
         } else {
             0.6
         };
-        risk_breakdown.insert(RiskCategory::MarketRisk, market_risk);
+        risk_breakdown.insert(RiskCategory::Market, market_risk);
 
         // Credit risk (simplified - would be more complex in real implementation)
-        risk_breakdown.insert(RiskCategory::CreditRisk, 0.25);
+        risk_breakdown.insert(RiskCategory::Credit, 0.25);
 
         // Liquidity risk based on market conditions
         let liquidity_risk = if context.market_conditions.volatility_index > 30.0 {
@@ -421,10 +419,10 @@ impl RiskAnalysisModule {
         } else {
             0.3
         };
-        risk_breakdown.insert(RiskCategory::LiquidityRisk, liquidity_risk);
+        risk_breakdown.insert(RiskCategory::Liquidity, liquidity_risk);
 
         // Concentration risk based on client portfolio (simplified)
-        risk_breakdown.insert(RiskCategory::ConcentrationRisk, 0.45);
+        risk_breakdown.insert(RiskCategory::Concentration, 0.45);
 
         // Interest rate risk
         let interest_rate_risk = if context.market_conditions.interest_rates > 5.0 {
@@ -432,7 +430,7 @@ impl RiskAnalysisModule {
         } else {
             0.4
         };
-        risk_breakdown.insert(RiskCategory::InterestRateRisk, interest_rate_risk);
+        risk_breakdown.insert(RiskCategory::InterestRate, interest_rate_risk);
 
         Ok(risk_breakdown)
     }
@@ -555,19 +553,19 @@ List 3-5 specific risk factors to monitor."#,
         for (risk_type, risk_level) in risk_breakdown {
             if *risk_level > 0.6 {
                 let strategy = match risk_type {
-                    RiskCategory::MarketRisk => {
+                    RiskCategory::Market => {
                         "Consider position sizing and diversification across market sectors"
                     }
-                    RiskCategory::LiquidityRisk => {
+                    RiskCategory::Liquidity => {
                         "Maintain adequate cash reserves and avoid illiquid positions"
                     }
-                    RiskCategory::ConcentrationRisk => {
+                    RiskCategory::Concentration => {
                         "Diversify holdings across different assets and sectors"
                     }
-                    RiskCategory::InterestRateRisk => {
+                    RiskCategory::InterestRate => {
                         "Consider duration management and rate-sensitive asset allocation"
                     }
-                    RiskCategory::CreditRisk => "Focus on high-quality issuers and credit analysis",
+                    RiskCategory::Credit => "Focus on high-quality issuers and credit analysis",
                     _ => "Monitor risk factors and adjust position sizing as needed",
                 };
                 strategies.push(strategy.to_string());
@@ -973,7 +971,7 @@ Keep it conversational and encouraging."#,
             confidence += 0.05;
         }
 
-        confidence.max(0.1).min(0.95)
+        confidence.clamp(0.1, 0.95)
     }
 
     async fn extract_client_factors(

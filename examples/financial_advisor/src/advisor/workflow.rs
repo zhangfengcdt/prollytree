@@ -25,7 +25,7 @@ impl WorkflowProcessor {
         api_key: Option<&str>,
         verbose: bool,
     ) -> Self {
-        let rig_client = api_key.map(|key| Client::new(key));
+        let rig_client = api_key.map(Client::new);
 
         Self {
             memory_system,
@@ -107,10 +107,10 @@ impl WorkflowProcessor {
         let detailed_recommendation = DetailedRecommendation {
             recommendation_id: analysis_id,
             base_recommendation: recommendation.base_recommendation,
-            confidence: recommendation.confidence_adjustment.max(0.1).min(1.0),
+            confidence: recommendation.confidence_adjustment.clamp(0.1, 1.0),
             reasoning: recommendation.personalized_reasoning.clone(),
             personalized_reasoning: recommendation.personalized_reasoning,
-            risk_assessment: risk_assessment,
+            risk_assessment,
             compliance_validation: compliance_check,
             market_analysis: market_data,
             execution_metadata,
@@ -329,10 +329,10 @@ impl WorkflowProcessor {
 
         // Calculate risk scores based on client profile and market conditions
         let mut risk_breakdown = HashMap::new();
-        risk_breakdown.insert(RiskCategory::MarketRisk, 0.65);
-        risk_breakdown.insert(RiskCategory::CreditRisk, 0.25);
-        risk_breakdown.insert(RiskCategory::LiquidityRisk, 0.30);
-        risk_breakdown.insert(RiskCategory::ConcentrationRisk, 0.45);
+        risk_breakdown.insert(RiskCategory::Market, 0.65);
+        risk_breakdown.insert(RiskCategory::Credit, 0.25);
+        risk_breakdown.insert(RiskCategory::Liquidity, 0.30);
+        risk_breakdown.insert(RiskCategory::Concentration, 0.45);
 
         // Adjust risk based on client's risk tolerance
         let risk_multiplier = match context.client_profile.risk_tolerance {
@@ -471,15 +471,13 @@ impl WorkflowProcessor {
         }
 
         // Determine base recommendation based on analysis
-        let base_recommendation = if !compliance_validation.passed {
-            RecommendationType::Hold // Safety first if compliance issues
-        } else if risk_assessment.overall_risk_score > 0.8
-            && matches!(
-                context.client_profile.risk_tolerance,
-                RiskTolerance::Conservative
-            )
-        {
-            RecommendationType::Hold
+        let base_recommendation = if !compliance_validation.passed
+            || (risk_assessment.overall_risk_score > 0.8
+                && matches!(
+                    context.client_profile.risk_tolerance,
+                    RiskTolerance::Conservative
+                )) {
+            RecommendationType::Hold // Safety first if compliance issues or high risk for conservative clients
         } else if market_analysis.sentiment_analysis.analyst_sentiment > 0.7
             && risk_assessment.client_risk_alignment > 0.8
         {
@@ -573,7 +571,7 @@ impl WorkflowProcessor {
 
     async fn store_step_memory<T: Serialize>(&self, step_name: &str, data: &T) -> Result<()> {
         let _content = serde_json::to_string(data)?;
-        let _memory_key = format!("workflow_step_{}", step_name);
+        let _memory_key = format!("workflow_step_{step_name}");
 
         // Note: In a full implementation, step memory would be stored
         // self.memory_system.short_term.store_working_memory(...).await?;
@@ -854,6 +852,6 @@ Be encouraging but realistic."#,
             confidence += 0.05; // More data = more confidence
         }
 
-        confidence.max(0.1).min(0.95) // Keep within reasonable bounds
+        confidence.clamp(0.1, 0.95) // Keep within reasonable bounds
     }
 }

@@ -208,13 +208,13 @@ pub struct RiskAssessmentProcedure {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub enum RiskCategory {
-    MarketRisk,
-    CreditRisk,
-    LiquidityRisk,
-    OperationalRisk,
-    ConcentrationRisk,
-    CurrencyRisk,
-    InterestRateRisk,
+    Market,
+    Credit,
+    Liquidity,
+    Operational,
+    Concentration,
+    Currency,
+    InterestRate,
 }
 
 /// Workflow execution context and results

@@ -47,7 +47,7 @@ impl EnhancedFinancialAdvisor {
         );
 
         // Setup Rig client if API key provided
-        let rig_client = api_key.map(|key| Client::new(key));
+        let rig_client = api_key.map(Client::new);
 
         // Initialize workflow processor
         let workflow_processor = WorkflowProcessor::new(memory_system.clone(), api_key, verbose);
@@ -74,7 +74,7 @@ impl EnhancedFinancialAdvisor {
                 .map_err(|e| anyhow::anyhow!("Failed to open memory system: {}", e))?,
         );
 
-        let rig_client = api_key.map(|key| Client::new(key));
+        let rig_client = api_key.map(Client::new);
 
         let workflow_processor = WorkflowProcessor::new(memory_system.clone(), api_key, verbose);
 
@@ -217,7 +217,7 @@ impl EnhancedFinancialAdvisor {
         let mut client_profile = self.get_or_create_client_profile(client_id).await?;
 
         // Update risk tolerance
-        let old_risk_tolerance = client_profile.risk_tolerance.clone();
+        let old_risk_tolerance = client_profile.risk_tolerance;
         client_profile.risk_tolerance = new_risk_tolerance;
         client_profile.last_updated = Utc::now();
 
@@ -425,7 +425,7 @@ impl EnhancedFinancialAdvisor {
                     let client_id = input.strip_prefix("client ").unwrap().trim();
                     match self.set_current_client(client_id).await {
                         Ok(_) => println!("✅ Current client set to: {}", client_id.bright_cyan()),
-                        Err(e) => println!("❌ Error setting client: {}", e),
+                        Err(e) => println!("❌ Error setting client: {e}"),
                     }
                 }
                 input if input.starts_with("recommend ") => {
@@ -436,7 +436,7 @@ impl EnhancedFinancialAdvisor {
                         .to_uppercase();
                     match self.get_enhanced_recommendation(&symbol).await {
                         Ok(rec) => self.display_detailed_recommendation(&rec),
-                        Err(e) => println!("❌ Error generating recommendation: {}", e),
+                        Err(e) => println!("❌ Error generating recommendation: {e}"),
                     }
                 }
                 input if input.starts_with("research ") => {
@@ -447,18 +447,18 @@ impl EnhancedFinancialAdvisor {
                         .to_uppercase();
                     match self.perform_deep_research(&symbol).await {
                         Ok(analysis) => self.display_market_analysis(&analysis),
-                        Err(e) => println!("❌ Error performing research: {}", e),
+                        Err(e) => println!("❌ Error performing research: {e}"),
                     }
                 }
                 "stats" => match self.get_memory_statistics().await {
                     Ok(stats) => self.display_memory_stats(&stats),
-                    Err(e) => println!("❌ Error getting stats: {}", e),
+                    Err(e) => println!("❌ Error getting stats: {e}"),
                 },
                 "optimize" => match self.optimize_memory_system().await {
                     Ok(report) => {
                         println!("✅ Optimized: {} items processed", report.total_processed())
                     }
-                    Err(e) => println!("❌ Error optimizing: {}", e),
+                    Err(e) => println!("❌ Error optimizing: {e}"),
                 },
                 _ => {
                     println!("❓ Unknown command. Type 'help' for available commands.");
@@ -509,7 +509,7 @@ impl EnhancedFinancialAdvisor {
             recommendation_id: recommendation.recommendation_id.clone(),
             client_id: self.current_client_id.as_ref().unwrap().clone(),
             symbol: "UNKNOWN".to_string(), // Would extract from context in real implementation
-            action: recommendation.base_recommendation.clone(),
+            action: recommendation.base_recommendation,
             reasoning: recommendation.reasoning.clone(),
             confidence: recommendation.confidence,
             market_conditions: MarketSnapshot::default(),

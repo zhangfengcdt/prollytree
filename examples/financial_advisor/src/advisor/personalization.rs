@@ -292,7 +292,7 @@ impl PersonalizationEngine {
                 pattern_type: DecisionPatternType::FollowsRecommendations,
                 frequency: follow_rate,
                 success_rate: self
-                    .calculate_success_rate_for_pattern(&outcomes, true)
+                    .calculate_success_rate_for_pattern(outcomes, true)
                     .await,
                 context_factors: vec![
                     "recommendation_confidence".to_string(),
@@ -331,7 +331,7 @@ impl PersonalizationEngine {
         if let Some(fact) = client_facts.first() {
             if let Ok(client_data) = serde_json::from_str::<ClientEntity>(&fact.content.to_string())
             {
-                initial_tolerance = client_data.risk_tolerance.clone();
+                initial_tolerance = client_data.risk_tolerance;
                 current_tolerance = client_data.risk_tolerance;
             }
         }
@@ -347,8 +347,8 @@ impl PersonalizationEngine {
                         && parsed.summary.contains("risk tolerance")
                     {
                         tolerance_changes.push(RiskToleranceChange {
-                            from: initial_tolerance.clone(),
-                            to: current_tolerance.clone(),
+                            from: initial_tolerance,
+                            to: current_tolerance,
                             trigger_event: parsed.summary.clone(),
                             timestamp: parsed.timestamp,
                         });
@@ -558,7 +558,7 @@ impl PersonalizationEngine {
                 .communication_preferences
                 .emphasis_areas
                 .iter()
-                .map(|area| format!("{:?}", area).to_lowercase())
+                .map(|area| format!("{area:?}").to_lowercase())
                 .collect(),
             evidence_level: match behavior_model
                 .communication_preferences
@@ -689,7 +689,7 @@ impl PersonalizationEngine {
         ];
 
         Ok(PersonalizedRecommendation {
-            base_recommendation: base_recommendation.base_recommendation.clone(),
+            base_recommendation: base_recommendation.base_recommendation,
             personalized_reasoning,
             confidence_adjustment,
             client_specific_factors,
@@ -786,7 +786,7 @@ impl PersonalizationEngine {
             }
         }
 
-        score.max(0.0).min(1.0)
+        score.clamp(0.0, 1.0)
     }
 
     async fn calculate_confidence_adjustments(
