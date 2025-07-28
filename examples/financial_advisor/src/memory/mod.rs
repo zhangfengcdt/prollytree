@@ -13,10 +13,12 @@ use uuid::Uuid;
 
 pub mod consistency;
 pub mod display;
+pub mod enhanced_types;
 pub mod types;
 
 use crate::memory::MemoryType::Recommendation;
 pub use consistency::MemoryConsistencyChecker;
+pub use enhanced_types::*;
 pub use types::{
     AuditEntry, MemoryCommit, MemoryCommitDetails, MemoryComparison, MemorySnapshot, MemoryStatus,
     MemoryType, SourceStatus, ValidatedMemory, ValidationSource,

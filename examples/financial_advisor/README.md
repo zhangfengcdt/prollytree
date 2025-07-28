@@ -1,205 +1,188 @@
-# Financial Advisory AI with Versioned Memory
+# Financial Advisory AI with Agent Memory
 
-A secure, auditable AI financial advisor demonstrating ProllyTree's versioned memory capabilities with git-like branching, temporal queries, and complete audit trails.
+A comprehensive financial advisory system demonstrating ProllyTree's capabilities - from basic versioned memory to sophisticated agent memory with behavioral learning.
 
-## Quick Start
+## 🚀 Two Implementation Levels
+
+### Original Financial Advisor
+Secure, auditable AI financial advisor with git-like versioned memory and complete audit trails.
+
+**Key Features:**
+- Git-like versioned storage with branches and time travel
+- AI-powered recommendations with fallback to rules
+- Security monitoring with injection detection
+- Multi-source data validation
+
+### Enhanced Financial Advisor  
+Advanced system with full agent memory integration, multi-step workflows, and behavioral learning.
+
+**Key Enhancements:**
+- Complete 4-type agent memory system (semantic, episodic, procedural, short-term)
+- Multi-step workflow orchestration with context
+- Behavioral pattern learning and adaptation
+- Deep personalization and compliance automation
+
+---
+
+## 📋 Quick Start
+
+### Basic Financial Advisor
 
 ```bash
-# 1. Setup storage with git
+# Setup and run
 mkdir -p /tmp/advisor && cd /tmp/advisor && git init
-
-# 2. Set OpenAI API key (optional, for AI reasoning)
-export OPENAI_API_KEY="your-api-key"
-
-# 3. Run the advisor
+export OPENAI_API_KEY="your-api-key"  # optional
 cargo run -- --storage /tmp/advisor/data advise
 ```
 
-## Core Features
-
-- **Versioned Memory**: Git-like storage with branches, commits, and history
-- **AI Recommendations**: OpenAI-powered analysis with risk-aware insights
-- **Security**: Injection detection, anomaly monitoring, audit trails
-- **Multi-Source Validation**: Cross-validates data from multiple sources
-
-## How Recommendations Work
-
-The `recommend <SYMBOL>` command generates AI-powered investment advice through a sophisticated pipeline:
-
-### 1. Data Collection (Simulated)
-The system simulates fetching real-time market data from three sources:
-- **Bloomberg**: Premium data with 95% trust weight (50ms latency)
-- **Yahoo Finance**: Free tier with 85% trust weight (120ms latency)  
-- **Alpha Vantage**: Rate-limited with 80% trust weight (200ms latency)
-
-```
-🏦 [main] recommend AAPL
-🔍 Fetching market data for AAPL...
-📡 Validating data from 3 sources...
-```
-
-### 2. Data Validation & Cross-Reference
-Each source returns realistic market data based on actual stock characteristics:
-```json
-{
-  "price": 177.89,
-  "pe_ratio": 28.4,
-  "volume": 53_245_678,
-  "market_cap": 2_800_000_000_000,
-  "sector": "Technology"
-}
-```
-
-The validator:
-- Compares prices across sources (must be within 2% variance)
-- Generates SHA-256 hash for data integrity
-- Assigns confidence score based on source agreement
-- Stores validated data in versioned memory
-
-### 3. Security Checks
-Before processing, the security monitor scans for:
-- SQL injection patterns
-- Malicious payloads  
-- Data anomalies
-- Manipulation attempts
-
-### 4. AI-Powered Analysis
-The recommendation engine considers:
-- **Client Profile**: Risk tolerance, investment timeline, goals
-- **Market Data**: Price, P/E ratio, volume, sector trends
-- **Historical Context**: Past recommendations on current branch
-
-With OpenAI API:
-```
-🧠 Generating AI-powered analysis...
-📊 Recommendation Generated
-Symbol: AAPL
-Action: BUY
-Confidence: 85.0%
-Reasoning: Strong fundamentals with P/E of 28.4...
-
-🤖 AI Analysis: Apple shows robust growth potential with 
-upcoming product launches and services expansion. The current 
-valuation offers an attractive entry point for long-term investors.
-```
-
-Without OpenAI API (fallback):
-```
-📊 Recommendation Generated  
-Symbol: AAPL
-Action: HOLD
-Confidence: 52.0%
-Reasoning: AAPL shows strong fundamentals with a P/E ratio of 28.4...
-```
-
-### 5. Memory Storage
-Every recommendation is stored with:
-- Full audit trail
-- Validation results
-- Cross-reference hashes
-- Git commit for time-travel queries
-
-## Key Commands
-
-### Recommendations & Profiles
-- `recommend <SYMBOL>` - Get AI recommendation with market analysis
-- `profile` - View/edit client profile  
-- `risk <conservative|moderate|aggressive>` - Set risk tolerance
-
-### Branch Management  
-- `branch <NAME>` - Create strategy branch
-- `switch <NAME>` - Change branches
-- `visualize` - Show branch tree with commits
-
-### Time Travel
-- `history` - Recent recommendations
-- `history <commit>` - View at specific commit
-- `history --branch <name>` - Compare branches
-
-### Security & Audit
-- `memory` - System status and validation
-- `audit` - Complete operation history
-- `test-inject <TEXT>` - Test security (try SQL injection!)
-
-## Example Workflow
+### Enhanced Financial Advisor
 
 ```bash
-# Start with conservative strategy
-🏦 [main] risk conservative
-🏦 [main] recommend MSFT
-📊 Action: HOLD, Confidence: 45% (conservative approach)
+# Interactive session
+cargo run -- enhanced --verbose
 
-# Try aggressive strategy on new branch  
-🏦 [main] branch aggressive-growth
-🏦 [aggressive-growth] risk aggressive  
-🏦 [aggressive-growth] recommend MSFT
-📊 Action: BUY, Confidence: 78% (growth opportunity identified)
+# Complete demonstration
+cargo run --example enhanced_demo
 
-# Compare branches
-🏦 [aggressive-growth] visualize
-├── ◆ main (conservative MSFT: HOLD)
-└── ● aggressive-growth (current) 
-    └── Aggressive MSFT: BUY recommendation
-
-# Time travel to see past recommendations
-🏦 [aggressive-growth] switch main
-🏦 [main] history abc1234
-📊 Viewing recommendations as of 2024-01-15...
+# With AI integration
+OPENAI_API_KEY="your-key" cargo run -- enhanced --verbose
 ```
 
-## Architecture Highlights
+---
 
+## 🎯 What Each Version Demonstrates
+
+### Original Version
+- **Versioned Memory**: Git-like storage with temporal queries
+- **Security First**: Input validation, anomaly detection, audit trails  
+- **AI Integration**: OpenAI-powered analysis with graceful fallbacks
+- **Real-world Simulation**: Multi-source market data with realistic delays
+
+### Enhanced Version
+- **Agent Memory Architecture**: All four memory types working together
+- **Complex Workflows**: Multi-step analysis with memory context
+- **Behavioral Learning**: Client adaptation based on interaction history
+- **Compliance Automation**: Procedural memory for regulatory rules
+- **Personalization Engine**: Dynamic communication and risk adaptation
+
+---
+
+## 📚 Documentation
+
+### Detailed Guides
+- **[Original Guide](docs/original.md)** - Complete walkthrough of the basic advisor
+- **[Enhanced Guide](docs/enhanced.md)** - Advanced features and memory integration
+- **[Architecture](docs/architecture.md)** - System design and evolution comparison
+- **[Memory Architecture](MEMORY_ARCHITECTURE.md)** - Agent memory system diagrams
+
+### Key Commands
+
+**Original Advisor:**
+```bash
+recommend AAPL    # Get AI recommendation
+profile           # View/edit client profile
+branch strategy1  # Create investment strategy branch
+history           # View recommendation history
+audit             # Complete operation audit
+```
+
+**Enhanced Advisor:**
+```bash
+client sarah_retired      # Set current client
+recommend AAPL           # Full workflow recommendation
+research GOOGL           # Deep market research
+stats                    # Memory system statistics
+optimize                 # Optimize memory performance
+```
+
+---
+
+## 🛠️ Technical Architecture
+
+### Memory System Evolution
+
+**Original:** Simple versioned storage
+```
+User Input ──► Validation ──► AI Analysis ──► Git Storage
+```
+
+**Enhanced:** Multi-type agent memory
+```
+User Input ──► Workflow Engine ──► Analysis Modules ──► Agent Memory
+                       │                    │              │
+                   Market Research    ┌─────────────┐  ┌─────────┐
+                   Risk Analysis      │ Semantic    │  │Episodic │
+                   Compliance    ──►  │ Facts       │  │Episodes │
+                   Personalization    │ Knowledge   │  │Learning │
+                                     └─────────────┘  └─────────┘
+                                           │              │
+                                     ┌─────────────┐  ┌─────────┐
+                                     │ Procedural  │  │Short-   │
+                                     │ Workflows   │  │term     │
+                                     │ Rules       │  │Context  │
+                                     └─────────────┘  └─────────┘
+```
+
+### Key Technologies
 - **ProllyTree Storage**: Content-addressed storage with Merkle proofs
-- **Git Integration**: Native git operations for versioning
-- **Multi-Table Schema**: Separate tables for recommendations, market data, profiles
-- **Async Processing**: Concurrent data fetching and validation
-- **Security Layers**: Input sanitization, anomaly detection, audit logging
+- **Agent Memory System**: Advanced memory abstraction with 4 specialized types
+- **Rig Framework**: AI-powered analysis and reasoning
+- **Git Integration**: Native version control for auditability
+- **Async Rust**: High-performance concurrent processing
 
-## Advanced Options
+---
+
+## 🔧 Command Reference
 
 ```bash
-# Command line interface
-cargo run -- [OPTIONS] <COMMAND>
+# Build and test
+cargo build --all
+cargo test
 
-Commands:
-  advise     Interactive advisory session  
-  visualize  Memory tree visualization
-  attack     Security testing suite
-  benchmark  Performance measurements
-  memory     Git operations interface
-  audit      Compliance reporting
+# Run different modes
+cargo run -- advise                    # Original interactive mode
+cargo run -- enhanced                  # Enhanced interactive mode
+cargo run -- visualize                 # Memory visualization
+cargo run -- benchmark                 # Performance testing
 
-Options:
-  -s, --storage <PATH>  Storage directory [default: ./advisor_memory/data]
-  -v, --verbose         Show detailed operations
+# Examples
+cargo run --example enhanced_demo      # Complete enhanced demonstration
+cargo run --example memory_demo        # Memory system showcase
+
+# Options
+--storage <PATH>     # Custom storage directory
+--verbose           # Detailed operation logging
 ```
 
-## Technical Notes
+---
 
-### Data Simulation
-The system uses realistic market data simulation:
-- Popular stocks (AAPL, MSFT, GOOGL, etc.) have accurate characteristics
-- Prices vary ±1% between sources to simulate real discrepancies  
-- Network latency is simulated based on API tier
-- All data includes proper timestamps and source attribution
+## ⚠️ Important Notes
 
-### Without OpenAI API
-The system gracefully falls back to rule-based analysis:
-- Uses P/E ratios and sector analysis
-- Adjusts confidence based on risk tolerance
-- Provides detailed reasoning without AI enhancement
-- All core features remain functional
+### Data & Security
+- Uses realistic simulated market data (not real trading data)
+- All security features are for demonstration purposes
+- Complete audit trails for all operations
+- Git-based storage ensures data integrity
 
-### Security Features
-- **Input Validation**: Regex patterns block SQL injection
-- **Anomaly Detection**: Statistical analysis of data patterns
-- **Rate Limiting**: Prevents abuse and DOS attempts
-- **Audit Trail**: Cryptographically signed operation log
+### AI Integration
+- Works with or without OpenAI API key
+- Graceful fallback to rule-based analysis
+- Memory-contextual prompts in enhanced version
+- Configurable AI model selection
 
-## License
+### Educational Value
+This project demonstrates:
+1. **Versioned Memory Systems** - Git-like storage with temporal queries
+2. **Agent Memory Architecture** - Complete 4-type memory implementation  
+3. **Complex Workflow Orchestration** - Multi-step analysis with context
+4. **Behavioral Learning** - Client adaptation and outcome-based improvement
+5. **Security Best Practices** - Input validation and comprehensive auditing
+6. **Real-World Application** - Practical financial advisory scenarios
+
+---
+
+## 📄 License & Disclaimer
 
 Part of the ProllyTree project. See main repository for license terms.
 
-## Disclaimer
-
-This is a demonstration system for educational purposes. Not for actual investment decisions.
+**⚠️ This is a demonstration system for educational purposes. Not for actual investment decisions.**

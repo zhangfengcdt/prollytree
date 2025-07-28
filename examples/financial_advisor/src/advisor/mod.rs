@@ -10,16 +10,20 @@ use crate::memory::{MemoryCommit, MemoryStore, MemoryType, Storable, ValidatedMe
 use crate::security::SecurityMonitor;
 use crate::validation::{MemoryValidator, ValidationResult};
 
+pub mod analysis_modules;
 pub mod compliance;
+pub mod enhanced_advisor;
 pub mod interactive;
+pub mod personalization;
 pub mod recommendations;
 pub mod rig_agent;
+pub mod workflow;
 
 use interactive::InteractiveSession;
 use recommendations::RecommendationEngine;
 use rig_agent::FinancialAnalysisAgent;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub enum RecommendationType {
     Buy,
     Sell,
@@ -36,7 +40,7 @@ pub struct ClientProfile {
     pub restrictions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub enum RiskTolerance {
     Conservative,
     Moderate,
@@ -492,7 +496,7 @@ impl FinancialAdvisor {
             pe_ratio,
             volume,
             sector: sector.to_string(),
-            recommendation_type: recommendation_type.clone(),
+            recommendation_type: *recommendation_type,
             client_profile: client.clone(),
         };
 
