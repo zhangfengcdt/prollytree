@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use prollytree::agent::AgentMemorySystem;
 
-use crate::memory::enhanced_types::*;
 use crate::advisor::{RecommendationType, RiskTolerance};
+use crate::memory::enhanced_types::*;
 // Removed MarketDataValidator import as it's not needed
 
 /// Multi-step workflow processor for complex financial analysis
@@ -20,9 +20,13 @@ pub struct WorkflowProcessor {
 }
 
 impl WorkflowProcessor {
-    pub fn new(memory_system: Arc<AgentMemorySystem>, api_key: Option<&str>, verbose: bool) -> Self {
+    pub fn new(
+        memory_system: Arc<AgentMemorySystem>,
+        api_key: Option<&str>,
+        verbose: bool,
+    ) -> Self {
         let rig_client = api_key.map(|key| Client::new(key));
-        
+
         Self {
             memory_system,
             rig_client,
@@ -38,32 +42,49 @@ impl WorkflowProcessor {
     ) -> Result<DetailedRecommendation> {
         let workflow_start = Utc::now();
         let analysis_id = uuid::Uuid::new_v4().to_string();
-        
+
         if self.verbose {
-            println!("🔄 Starting enhanced recommendation workflow for {} (client: {})", 
-                     symbol.bright_yellow(), client_id.bright_cyan());
+            println!(
+                "🔄 Starting enhanced recommendation workflow for {} (client: {})",
+                symbol.bright_yellow(),
+                client_id.bright_cyan()
+            );
         }
 
         // Step 1: Initialize analysis context
-        let context = self.initialize_analysis_context(symbol, client_id, &analysis_id).await?;
+        let context = self
+            .initialize_analysis_context(symbol, client_id, &analysis_id)
+            .await?;
         self.store_step_memory("initialization", &context).await?;
 
         // Step 2: Market research and data gathering
         let market_data = self.execute_market_research_step(&context).await?;
-        self.store_step_memory("market_research", &market_data).await?;
+        self.store_step_memory("market_research", &market_data)
+            .await?;
 
         // Step 3: Risk analysis
-        let risk_assessment = self.execute_risk_analysis_step(&context, &market_data).await?;
-        self.store_step_memory("risk_analysis", &risk_assessment).await?;
+        let risk_assessment = self
+            .execute_risk_analysis_step(&context, &market_data)
+            .await?;
+        self.store_step_memory("risk_analysis", &risk_assessment)
+            .await?;
 
         // Step 4: Compliance validation
-        let compliance_check = self.execute_compliance_step(&context, &risk_assessment).await?;
-        self.store_step_memory("compliance", &compliance_check).await?;
+        let compliance_check = self
+            .execute_compliance_step(&context, &risk_assessment)
+            .await?;
+        self.store_step_memory("compliance", &compliance_check)
+            .await?;
 
         // Step 5: Generate final recommendation
-        let recommendation = self.execute_recommendation_step(
-            &context, &market_data, &risk_assessment, &compliance_check
-        ).await?;
+        let recommendation = self
+            .execute_recommendation_step(
+                &context,
+                &market_data,
+                &risk_assessment,
+                &compliance_check,
+            )
+            .await?;
 
         // Step 6: Learn from this workflow execution
         self.store_workflow_outcome(&recommendation).await?;
@@ -97,9 +118,15 @@ impl WorkflowProcessor {
         };
 
         if self.verbose {
-            println!("✅ Workflow completed in {:.2}s with {} confidence", 
-                     detailed_recommendation.execution_metadata.total_execution_time.num_milliseconds() as f64 / 1000.0,
-                     (detailed_recommendation.confidence * 100.0).round());
+            println!(
+                "✅ Workflow completed in {:.2}s with {} confidence",
+                detailed_recommendation
+                    .execution_metadata
+                    .total_execution_time
+                    .num_milliseconds() as f64
+                    / 1000.0,
+                (detailed_recommendation.confidence * 100.0).round()
+            );
         }
 
         Ok(detailed_recommendation)
@@ -116,7 +143,9 @@ impl WorkflowProcessor {
         }
 
         // Retrieve client profile from semantic memory
-        let client_profile_facts = self.memory_system.semantic
+        let client_profile_facts = self
+            .memory_system
+            .semantic
             .get_entity_facts("client", client_id)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get client facts: {}", e))?;
@@ -124,7 +153,9 @@ impl WorkflowProcessor {
         // Create client entity or use default
         let client_profile = if !client_profile_facts.is_empty() {
             // Parse existing client data from memory
-            if let Ok(parsed) = serde_json::from_str::<ClientEntity>(&client_profile_facts[0].content.to_string()) {
+            if let Ok(parsed) =
+                serde_json::from_str::<ClientEntity>(&client_profile_facts[0].content.to_string())
+            {
                 parsed
             } else {
                 ClientEntity::new(client_id.to_string(), RiskTolerance::Moderate)
@@ -148,22 +179,29 @@ impl WorkflowProcessor {
         })
     }
 
-    async fn execute_market_research_step(&self, context: &AnalysisContext) -> Result<MarketAnalysisResult> {
+    async fn execute_market_research_step(
+        &self,
+        context: &AnalysisContext,
+    ) -> Result<MarketAnalysisResult> {
         if self.verbose {
             println!("📈 Step 2: Executing market research analysis...");
         }
 
         // Retrieve historical market knowledge from semantic memory
-        let market_entity_facts = self.memory_system.semantic
+        let market_entity_facts = self
+            .memory_system
+            .semantic
             .get_entity_facts("market", &context.symbol)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get market facts: {}", e))?;
 
         // Get similar past market conditions from episodic memory
-        let _similar_episodes = self.memory_system.episodic
+        let _similar_episodes = self
+            .memory_system
+            .episodic
             .get_episodes_in_period(
                 chrono::Utc::now() - chrono::Duration::days(30),
-                chrono::Utc::now()
+                chrono::Utc::now(),
             )
             .await
             .map_err(|e| anyhow::anyhow!("Failed to search episodes: {}", e))?;
@@ -171,7 +209,7 @@ impl WorkflowProcessor {
         // Use AI for market analysis if available
         let ai_insights = if let Some(ref client) = self.rig_client {
             let market_prompt = self.build_market_analysis_prompt(context, &market_entity_facts);
-            
+
             let agent = client
                 .agent("gpt-3.5-turbo")
                 .preamble("You are an expert market analyst. Provide concise, professional analysis focusing on key factors that impact investment decisions.")
@@ -188,7 +226,9 @@ impl WorkflowProcessor {
         };
 
         // Get analysis procedures from procedural memory
-        let _analysis_procedures = self.memory_system.procedural
+        let _analysis_procedures = self
+            .memory_system
+            .procedural
             .get_procedures_by_category("market_analysis")
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get procedures: {}", e))?;
@@ -246,10 +286,12 @@ impl WorkflowProcessor {
         }
 
         // Get client's risk history from episodic memory
-        let _risk_episodes = self.memory_system.episodic
+        let _risk_episodes = self
+            .memory_system
+            .episodic
             .get_episodes_in_period(
                 chrono::Utc::now() - chrono::Duration::days(90),
-                chrono::Utc::now()
+                chrono::Utc::now(),
             )
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get risk episodes: {}", e))?;
@@ -257,7 +299,7 @@ impl WorkflowProcessor {
         // Use AI for risk analysis if available
         let risk_factors = if let Some(ref client) = self.rig_client {
             let risk_prompt = self.build_risk_analysis_prompt(context, market_data);
-            
+
             let agent = client
                 .agent("gpt-3.5-turbo")
                 .preamble("You are an expert risk analyst. Identify key risk factors and provide actionable mitigation strategies.")
@@ -266,12 +308,11 @@ impl WorkflowProcessor {
                 .build();
 
             match agent.prompt(&risk_prompt).await {
-                Ok(response) => {
-                    response.lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .map(|line| line.trim().to_string())
-                        .collect()
-                },
+                Ok(response) => response
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .map(|line| line.trim().to_string())
+                    .collect(),
                 Err(_) => vec![
                     "Market volatility risk".to_string(),
                     "Sector concentration risk".to_string(),
@@ -300,7 +341,8 @@ impl WorkflowProcessor {
             RiskTolerance::Aggressive => 1.2,
         };
 
-        let overall_risk_score = risk_breakdown.values().sum::<f64>() / risk_breakdown.len() as f64 * risk_multiplier;
+        let overall_risk_score =
+            risk_breakdown.values().sum::<f64>() / risk_breakdown.len() as f64 * risk_multiplier;
 
         // Calculate client alignment score
         let client_risk_alignment = match context.client_profile.risk_tolerance {
@@ -334,22 +376,28 @@ impl WorkflowProcessor {
         }
 
         // Get compliance rules from procedural memory
-        let _compliance_procedures = self.memory_system.procedural
+        let _compliance_procedures = self
+            .memory_system
+            .procedural
             .get_procedures_by_category("compliance")
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get compliance procedures: {}", e))?;
 
         // Check client-specific restrictions from semantic memory
-        let _client_restrictions = self.memory_system.semantic
+        let _client_restrictions = self
+            .memory_system
+            .semantic
             .get_entity_facts("client_restrictions", &context.client_id)
             .await
             .unwrap_or_default();
 
         // Analyze past compliance issues from episodic memory
-        let _compliance_history = self.memory_system.episodic
+        let _compliance_history = self
+            .memory_system
+            .episodic
             .get_episodes_in_period(
                 chrono::Utc::now() - chrono::Duration::days(365),
-                chrono::Utc::now()
+                chrono::Utc::now(),
             )
             .await
             .unwrap_or_default();
@@ -363,7 +411,9 @@ impl WorkflowProcessor {
             warnings.push(ComplianceWarning {
                 rule_id: "RISK_001".to_string(),
                 description: "High risk score detected".to_string(),
-                recommendation: "Consider reducing position size or implementing additional risk controls".to_string(),
+                recommendation:
+                    "Consider reducing position size or implementing additional risk controls"
+                        .to_string(),
             });
         }
 
@@ -373,14 +423,15 @@ impl WorkflowProcessor {
                 rule_id: "SUITABILITY_001".to_string(),
                 severity: ComplianceSeverity::Warning,
                 description: "Investment may not align with client risk profile".to_string(),
-                recommended_action: "Review recommendation with client or adjust strategy".to_string(),
+                recommended_action: "Review recommendation with client or adjust strategy"
+                    .to_string(),
             });
         }
 
         // Use AI for additional compliance analysis if available
         let automated_actions = if let Some(ref client) = self.rig_client {
             let compliance_prompt = self.build_compliance_prompt(context, risk_assessment);
-            
+
             let agent = client
                 .agent("gpt-3.5-turbo")
                 .preamble("You are a compliance officer. Focus on regulatory requirements and client protection.")
@@ -422,11 +473,16 @@ impl WorkflowProcessor {
         // Determine base recommendation based on analysis
         let base_recommendation = if !compliance_validation.passed {
             RecommendationType::Hold // Safety first if compliance issues
-        } else if risk_assessment.overall_risk_score > 0.8 && 
-                  matches!(context.client_profile.risk_tolerance, RiskTolerance::Conservative) {
+        } else if risk_assessment.overall_risk_score > 0.8
+            && matches!(
+                context.client_profile.risk_tolerance,
+                RiskTolerance::Conservative
+            )
+        {
             RecommendationType::Hold
-        } else if market_analysis.sentiment_analysis.analyst_sentiment > 0.7 &&
-                  risk_assessment.client_risk_alignment > 0.8 {
+        } else if market_analysis.sentiment_analysis.analyst_sentiment > 0.7
+            && risk_assessment.client_risk_alignment > 0.8
+        {
             RecommendationType::Buy
         } else if market_analysis.sentiment_analysis.analyst_sentiment < 0.3 {
             RecommendationType::Sell
@@ -435,10 +491,12 @@ impl WorkflowProcessor {
         };
 
         // Get client interaction history for personalization
-        let client_history = self.memory_system.episodic
+        let client_history = self
+            .memory_system
+            .episodic
             .get_episodes_in_period(
                 chrono::Utc::now() - chrono::Duration::days(180),
-                chrono::Utc::now()
+                chrono::Utc::now(),
             )
             .await
             .unwrap_or_default();
@@ -446,9 +504,12 @@ impl WorkflowProcessor {
         // Generate personalized reasoning using AI if available
         let personalized_reasoning = if let Some(ref client) = self.rig_client {
             let personalization_prompt = self.build_personalization_prompt(
-                base_recommendation, context, market_analysis, risk_assessment
+                base_recommendation,
+                context,
+                market_analysis,
+                risk_assessment,
             );
-            
+
             let agent = client
                 .agent("gpt-3.5-turbo")
                 .preamble(&format!(
@@ -461,7 +522,9 @@ impl WorkflowProcessor {
 
             match agent.prompt(&personalization_prompt).await {
                 Ok(response) => response.trim().to_string(),
-                Err(_) => self.generate_fallback_reasoning(base_recommendation, context, risk_assessment),
+                Err(_) => {
+                    self.generate_fallback_reasoning(base_recommendation, context, risk_assessment)
+                }
             }
         } else {
             self.generate_fallback_reasoning(base_recommendation, context, risk_assessment)
@@ -469,15 +532,27 @@ impl WorkflowProcessor {
 
         // Calculate confidence adjustment based on analysis quality
         let confidence_adjustment = self.calculate_confidence_adjustment(
-            market_analysis, risk_assessment, compliance_validation, &client_history
+            market_analysis,
+            risk_assessment,
+            compliance_validation,
+            &client_history,
         );
 
         // Extract client-specific factors
         let client_specific_factors = vec![
-            format!("Risk tolerance: {:?}", context.client_profile.risk_tolerance),
-            format!("Investment goals: {}", context.client_profile.investment_goals.join(", ")),
+            format!(
+                "Risk tolerance: {:?}",
+                context.client_profile.risk_tolerance
+            ),
+            format!(
+                "Investment goals: {}",
+                context.client_profile.investment_goals.join(", ")
+            ),
             format!("Time horizon: {}", context.client_profile.time_horizon),
-            format!("Risk alignment: {:.1}%", risk_assessment.client_risk_alignment * 100.0),
+            format!(
+                "Risk alignment: {:.1}%",
+                risk_assessment.client_risk_alignment * 100.0
+            ),
         ];
 
         Ok(PersonalizedRecommendation {
@@ -499,19 +574,22 @@ impl WorkflowProcessor {
     async fn store_step_memory<T: Serialize>(&self, step_name: &str, data: &T) -> Result<()> {
         let _content = serde_json::to_string(data)?;
         let _memory_key = format!("workflow_step_{}", step_name);
-        
+
         // Note: In a full implementation, step memory would be stored
         // self.memory_system.short_term.store_working_memory(...).await?;
-        
+
         Ok(())
     }
 
-    async fn store_workflow_outcome(&self, recommendation: &PersonalizedRecommendation) -> Result<()> {
+    async fn store_workflow_outcome(
+        &self,
+        recommendation: &PersonalizedRecommendation,
+    ) -> Result<()> {
         // Store this workflow execution as an episode for future learning
         let episode = RecommendationEpisode {
             recommendation_id: uuid::Uuid::new_v4().to_string(),
             client_id: "workflow_client".to_string(), // Will be updated with actual client ID
-            symbol: "workflow_symbol".to_string(), // Will be updated with actual symbol
+            symbol: "workflow_symbol".to_string(),    // Will be updated with actual symbol
             action: recommendation.base_recommendation,
             reasoning: recommendation.personalized_reasoning.clone(),
             confidence: recommendation.confidence_adjustment,
@@ -522,7 +600,7 @@ impl WorkflowProcessor {
         };
 
         let _episode_json = serde_json::to_string(&episode)?;
-        
+
         // Note: In a full implementation, workflow outcome would be stored in episodic memory
         // self.memory_system.episodic.store_episode(...).await?;
 
@@ -543,30 +621,34 @@ impl WorkflowProcessor {
     async fn calculate_valuation_metrics(&self, symbol: &str) -> HashMap<String, f64> {
         // Simulate market data lookup
         let mut metrics = HashMap::new();
-        
+
         // These would come from actual market data in a real implementation
         match symbol {
             "AAPL" => {
                 metrics.insert("P/E".to_string(), 28.4);
                 metrics.insert("P/B".to_string(), 45.2);
                 metrics.insert("EV/EBITDA".to_string(), 22.1);
-            },
+            }
             "MSFT" => {
                 metrics.insert("P/E".to_string(), 32.1);
                 metrics.insert("P/B".to_string(), 12.8);
                 metrics.insert("EV/EBITDA".to_string(), 25.3);
-            },
+            }
             _ => {
                 metrics.insert("P/E".to_string(), 25.0);
                 metrics.insert("P/B".to_string(), 3.5);
                 metrics.insert("EV/EBITDA".to_string(), 18.0);
             }
         }
-        
+
         metrics
     }
 
-    fn build_market_analysis_prompt(&self, context: &AnalysisContext, market_facts: &[prollytree::agent::MemoryDocument]) -> String {
+    fn build_market_analysis_prompt(
+        &self,
+        context: &AnalysisContext,
+        market_facts: &[prollytree::agent::MemoryDocument],
+    ) -> String {
         format!(
             r#"Analyze the investment prospects for {} considering:
 
@@ -597,7 +679,11 @@ Keep analysis concise and actionable."#,
         )
     }
 
-    fn build_risk_analysis_prompt(&self, context: &AnalysisContext, market_data: &MarketAnalysisResult) -> String {
+    fn build_risk_analysis_prompt(
+        &self,
+        context: &AnalysisContext,
+        market_data: &MarketAnalysisResult,
+    ) -> String {
         format!(
             r#"Perform risk analysis for {} investment:
 
@@ -622,7 +708,11 @@ Identify top 3-5 risk factors and mitigation strategies."#,
         )
     }
 
-    fn build_compliance_prompt(&self, context: &AnalysisContext, risk_assessment: &RiskAssessmentResult) -> String {
+    fn build_compliance_prompt(
+        &self,
+        context: &AnalysisContext,
+        risk_assessment: &RiskAssessmentResult,
+    ) -> String {
         format!(
             r#"Compliance review for {} recommendation:
 

@@ -11,7 +11,7 @@ mod security;
 mod validation;
 mod visualization;
 
-use advisor::{FinancialAdvisor, enhanced_advisor::EnhancedFinancialAdvisor};
+use advisor::{enhanced_advisor::EnhancedFinancialAdvisor, FinancialAdvisor};
 use memory::display::MemoryVisualizer;
 use security::attack_simulator::AttackSimulator;
 
@@ -796,7 +796,9 @@ async fn run_memory_command(storage: &str, git_command: GitCommand) -> Result<()
 async fn run_enhanced_advisory_session(storage: &str, api_key: &str, verbose: bool) -> Result<()> {
     println!(
         "{}",
-        "🚀 Starting Enhanced Financial Advisory Session".green().bold()
+        "🚀 Starting Enhanced Financial Advisory Session"
+            .green()
+            .bold()
     );
     println!("{}", "Memory-driven personalized financial advice".dimmed());
     println!();

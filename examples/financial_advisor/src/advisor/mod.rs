@@ -10,14 +10,14 @@ use crate::memory::{MemoryCommit, MemoryStore, MemoryType, Storable, ValidatedMe
 use crate::security::SecurityMonitor;
 use crate::validation::{MemoryValidator, ValidationResult};
 
+pub mod analysis_modules;
 pub mod compliance;
+pub mod enhanced_advisor;
 pub mod interactive;
+pub mod personalization;
 pub mod recommendations;
 pub mod rig_agent;
 pub mod workflow;
-pub mod analysis_modules;
-pub mod enhanced_advisor;
-pub mod personalization;
 
 use interactive::InteractiveSession;
 use recommendations::RecommendationEngine;
