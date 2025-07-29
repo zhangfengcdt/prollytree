@@ -15,6 +15,7 @@ limitations under the License.
 use clap::{Parser, Subcommand};
 #[cfg(feature = "sql")]
 use gluesql_core::{executor::Payload, prelude::Glue};
+use prollytree::git::versioned_store::{HistoricalAccess, HistoricalCommitAccess};
 use prollytree::git::{DiffOperation, GitOperations, GitVersionedKvStore, MergeResult};
 #[cfg(feature = "sql")]
 use prollytree::sql::ProllyStorage;
@@ -94,6 +95,26 @@ enum Commands {
         commit: Option<String>,
         #[arg(long, help = "Show only keys")]
         keys_only: bool,
+    },
+
+    /// Show commit history for a specific key
+    History {
+        #[arg(help = "Key to track")]
+        key: String,
+        #[arg(long, help = "Output format (compact, detailed, json)")]
+        format: Option<String>,
+        #[arg(long, help = "Maximum number of commits to show")]
+        limit: Option<usize>,
+    },
+
+    /// Show all keys that existed at a specific commit
+    KeysAt {
+        #[arg(help = "Commit/branch to inspect")]
+        reference: String,
+        #[arg(long, help = "Show values as well")]
+        values: bool,
+        #[arg(long, help = "Output format (list, json)")]
+        format: Option<String>,
     },
 
     /// Merge another branch
@@ -189,6 +210,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Show { commit, keys_only } => {
             handle_show(commit, keys_only)?;
+        }
+        Commands::History { key, format, limit } => {
+            handle_history(key, format, limit)?;
+        }
+        Commands::KeysAt {
+            reference,
+            values,
+            format,
+        } => {
+            handle_keys_at(reference, values, format)?;
         }
         Commands::Merge { branch, strategy } => {
             handle_merge(branch, strategy)?;
@@ -755,6 +786,149 @@ fn handle_clear(confirm: bool, keep_history: bool) -> Result<(), Box<dyn std::er
     }
 
     println!("   Ready for new data - use 'git prolly set <key> <value>' to add data");
+
+    Ok(())
+}
+
+fn handle_history(
+    key: String,
+    format: Option<String>,
+    limit: Option<usize>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = env::current_dir()?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
+
+    let key_bytes = key.as_bytes();
+    let commits = store.get_commits_for_key(key_bytes)?;
+
+    if commits.is_empty() {
+        println!("No history found for key '{key}'");
+        return Ok(());
+    }
+
+    let format = format.unwrap_or_else(|| "compact".to_string());
+    let display_limit = limit.unwrap_or(commits.len());
+    let limited_commits: Vec<_> = commits.into_iter().take(display_limit).collect();
+
+    match format.as_str() {
+        "compact" => {
+            println!("History for key '{key}':");
+            for commit in limited_commits {
+                let timestamp = chrono::DateTime::from_timestamp(commit.timestamp, 0)
+                    .unwrap_or_default()
+                    .format("%Y-%m-%d %H:%M:%S");
+                let commit_short = &commit.id.to_string()[..8];
+                println!(
+                    "  {timestamp} {commit_short} {}",
+                    commit.message.lines().next().unwrap_or("")
+                );
+            }
+        }
+        "detailed" => {
+            println!("Detailed History for key '{key}':");
+            println!("═══════════════════════════════════════");
+            for (i, commit) in limited_commits.iter().enumerate() {
+                if i > 0 {
+                    println!();
+                }
+                let timestamp = chrono::DateTime::from_timestamp(commit.timestamp, 0)
+                    .unwrap_or_default()
+                    .format("%Y-%m-%d %H:%M:%S UTC");
+                println!("Commit: {}", commit.id);
+                println!("Date: {timestamp}");
+                println!("Author: {}", commit.author);
+                println!("Message: {}", commit.message);
+            }
+        }
+        "json" => {
+            println!("{{");
+            println!("  \"key\": \"{key}\",");
+            println!("  \"history\": [");
+            for (i, commit) in limited_commits.iter().enumerate() {
+                print!("    {{");
+                print!("\"commit\": \"{}\", ", commit.id);
+                print!("\"timestamp\": {}, ", commit.timestamp);
+                print!("\"author\": \"{}\", ", commit.author);
+                print!("\"message\": \"{}\"", commit.message.replace('\"', "\\\""));
+                print!("}}");
+                if i < limited_commits.len() - 1 {
+                    print!(",");
+                }
+                println!();
+            }
+            println!("  ]");
+            println!("}}");
+        }
+        _ => {
+            eprintln!("Unknown format: {format}. Use 'compact', 'detailed', or 'json'");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_keys_at(
+    reference: String,
+    values: bool,
+    format: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = env::current_dir()?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
+
+    let keys_at_ref = store.get_keys_at_ref(&reference)?;
+
+    if keys_at_ref.is_empty() {
+        println!("No keys found at commit/branch '{reference}'");
+        return Ok(());
+    }
+
+    let format = format.unwrap_or_else(|| "list".to_string());
+
+    match format.as_str() {
+        "list" => {
+            println!("Keys at {reference}:");
+            let mut sorted_keys: Vec<_> = keys_at_ref.into_iter().collect();
+            sorted_keys.sort_by(|a, b| a.0.cmp(&b.0));
+
+            for (key, value) in sorted_keys {
+                let key_str = String::from_utf8_lossy(&key);
+                if values {
+                    let value_str = String::from_utf8_lossy(&value);
+                    println!("  {key_str} = \"{value_str}\"");
+                } else {
+                    println!("  {key_str}");
+                }
+            }
+        }
+        "json" => {
+            println!("{{");
+            println!("  \"reference\": \"{reference}\",");
+            println!("  \"keys\": [");
+            let mut sorted_keys: Vec<_> = keys_at_ref.into_iter().collect();
+            sorted_keys.sort_by(|a, b| a.0.cmp(&b.0));
+
+            for (i, (key, value)) in sorted_keys.iter().enumerate() {
+                let key_str = String::from_utf8_lossy(key);
+                print!("    {{\"key\": \"{}\"", key_str.replace('\"', "\\\""));
+                if values {
+                    let value_str = String::from_utf8_lossy(value);
+                    print!(", \"value\": \"{}\"", value_str.replace('\"', "\\\""));
+                }
+                print!("}}");
+                if i < sorted_keys.len() - 1 {
+                    print!(",");
+                }
+                println!();
+            }
+            println!("  ]");
+            println!("}}");
+        }
+        _ => {
+            eprintln!("Unknown format: {format}. Use 'list' or 'json'");
+            std::process::exit(1);
+        }
+    }
 
     Ok(())
 }
