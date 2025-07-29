@@ -144,6 +144,8 @@ enum Commands {
         interactive: bool,
         #[arg(long, help = "Show detailed error messages")]
         verbose: bool,
+        #[arg(short, long, help = "Execute against specific branch or commit (SELECT queries only, requires clean status)")]
+        branch: Option<String>,
     },
 
     /// Clear all tree nodes, staging changes, and git blobs for the current dataset
@@ -165,6 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         format,
         interactive,
         verbose,
+        branch,
     } = &cli.command
     {
         // Create a tokio runtime for SQL commands
@@ -175,6 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format.clone(),
             *interactive,
             *verbose,
+            branch.clone(),
         ));
     }
 
@@ -940,25 +944,116 @@ async fn handle_sql(
     format: Option<String>,
     interactive: bool,
     verbose: bool,
+    branch: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
 
-    // Open the ProllyTree storage
-    let storage = ProllyStorage::<32>::open(&current_dir).map_err(|e| {
+    // Open the underlying GitVersionedKvStore first
+    let mut store = GitVersionedKvStore::<32>::open(&current_dir).map_err(|e| {
         if verbose {
-            format!("Failed to open ProllyTree storage: {e}")
+            format!("Failed to open GitVersionedKvStore: {e}")
         } else {
             "Failed to open dataset. Make sure you're in a git-prolly directory.".to_string()
         }
     })?;
 
+    // Save original branch before any operations
+    let original_branch = if branch.is_some() {
+        Some(store.current_branch().to_string())
+    } else {
+        None
+    };
+
+    // If branch parameter is provided, ensure clean working directory and checkout
+    if let Some(branch_or_commit) = &branch {
+        let current_status = store.status();
+        if !current_status.is_empty() {
+            eprintln!("Error: Cannot use -b/--branch parameter with uncommitted staging changes");
+            eprintln!("       You have {} staged change(s) that need to be committed first:", current_status.len());
+            for (key, status_type) in current_status {
+                let key_str = String::from_utf8_lossy(&key);
+                eprintln!("         {}: {}", status_type, key_str);
+            }
+            eprintln!("       Please commit your changes with 'git prolly commit' first");
+            std::process::exit(1);
+        }
+
+        // Perform checkout now that we know the working directory is clean
+        store.checkout(branch_or_commit).map_err(|e| {
+            if verbose {
+                format!("Failed to checkout branch/commit '{}': {}", branch_or_commit, e)
+            } else {
+                format!("Failed to checkout branch/commit '{}'", branch_or_commit)   
+            }
+        })?;
+        
+        if verbose {
+            println!("Checked out to: {} (will restore after SQL execution)", branch_or_commit);
+        }
+    }
+
+    // Execute SQL with restoration
+    execute_sql_with_restoration(store, query, file, format, interactive, verbose, branch, original_branch, current_dir).await
+}
+
+#[cfg(feature = "sql")]
+async fn execute_sql_with_restoration(
+    store: GitVersionedKvStore<32>,
+    query: Option<String>,
+    file: Option<PathBuf>,
+    format: Option<String>,
+    interactive: bool,
+    verbose: bool,
+    branch: Option<String>,
+    original_branch: Option<String>,
+    current_dir: std::path::PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Create the ProllyTree storage
+    let storage = ProllyStorage::<32>::new(store);
+
     let mut glue = Glue::new(storage);
     let output_format = format.unwrap_or_else(|| "table".to_string());
+
+    // Helper function to check if a query is a SELECT statement
+    let is_select_query = |query_str: &str| -> bool {
+        query_str.trim_start().to_lowercase().starts_with("select")
+    };
+
+    // If branch parameter is provided, validate that we only allow SELECT statements
+    if branch.is_some() {
+        if let Some(query_str) = &query {
+            if !is_select_query(query_str) {
+                eprintln!("Error: Only SELECT statements are allowed when using -b/--branch parameter");
+                eprintln!("       Historical commits/branches are read-only for data integrity");
+                std::process::exit(1);
+            }
+        }
+        
+        if let Some(file_path) = &file {
+            let file_query = std::fs::read_to_string(file_path)?;
+            // Check all non-empty, non-comment lines
+            for line in file_query.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with("--") && !trimmed.starts_with("#") {
+                    if !is_select_query(trimmed) {
+                        eprintln!("Error: Only SELECT statements are allowed when using -b/--branch parameter");
+                        eprintln!("       Historical commits/branches are read-only for data integrity");
+                        eprintln!("       Found non-SELECT statement in file: {}", trimmed);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+    }
 
     if interactive {
         // Start interactive SQL shell
         println!("🌟 ProllyTree SQL Interactive Shell");
         println!("====================================");
+        if let Some(branch_ref) = &branch {
+            println!("Executing against branch/commit: {}", branch_ref);
+            println!("⚠️  Only SELECT statements are allowed in this mode");
+        }
         println!("Type 'exit' or 'quit' to exit");
         println!("Type 'help' for available commands\n");
 
@@ -986,6 +1081,13 @@ async fn handle_sql(
                 _ => {}
             }
 
+            // If branch parameter is provided, validate that we only allow SELECT statements
+            if branch.is_some() && !is_select_query(input) {
+                eprintln!("Error: Only SELECT statements are allowed when using -b/--branch parameter");
+                eprintln!("       Historical commits/branches are read-only for data integrity");
+                continue;
+            }
+
             match execute_query(&mut glue, input, &output_format, verbose).await {
                 Ok(_) => {}
                 Err(e) => {
@@ -1011,6 +1113,33 @@ async fn handle_sql(
         eprintln!("  git prolly sql --file query.sql");
         eprintln!("  git prolly sql --interactive");
         std::process::exit(1);
+    }
+
+    // Restore original branch if we performed a temporary checkout
+    if let Some(ref orig_branch) = original_branch {
+        // Re-open store since it was consumed by ProllyStorage
+        let mut restore_store = GitVersionedKvStore::<32>::open(&current_dir).map_err(|e| {
+            if verbose {
+                format!("Failed to re-open store for restoration: {e}")
+            } else {
+                "Failed to restore original branch".to_string()
+            }
+        })?;
+
+        // Only restore if we're not already on the original branch
+        if restore_store.current_branch() != orig_branch.as_str() {
+            restore_store.checkout(orig_branch).map_err(|e| {
+                if verbose {
+                    format!("Failed to restore original branch '{}': {}", orig_branch, e)
+                } else {
+                    "Failed to restore original branch".to_string()
+                }
+            })?;
+            
+            if verbose {
+                println!("Restored to original branch: {}", orig_branch);
+            }
+        }
     }
 
     Ok(())
@@ -1053,6 +1182,7 @@ async fn execute_query(
 
     Ok(())
 }
+
 
 #[cfg(feature = "sql")]
 fn format_payload(payload: &Payload, format: &str) -> Result<(), Box<dyn std::error::Error>> {

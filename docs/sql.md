@@ -60,6 +60,7 @@ Options:
   -o, --format <FORMAT>  Output format (table, json, csv)
   -i, --interactive      Start interactive SQL shell
       --verbose          Show detailed error messages
+  -b, --branch <BRANCH>  Execute against specific branch or commit (SELECT queries only, requires clean status)
   -h, --help             Print help
 ```
 
@@ -108,6 +109,38 @@ In interactive mode:
 - Type SQL queries and press Enter to execute
 - Type `help` for available commands
 - Type `exit` or `quit` to leave the shell
+
+### 4. Historical Data Querying
+
+Query data from specific branches or commits using the `-b` parameter:
+
+```bash
+# Query data from main branch
+git prolly sql -b main "SELECT * FROM users"
+
+# Query data from a specific commit
+git prolly sql -b a1b2c3d4 "SELECT COUNT(*) FROM products"
+
+# Query data from a feature branch
+git prolly sql -b feature/new-schema "SELECT * FROM categories"
+```
+
+**Important Requirements:**
+- Only `SELECT` statements are allowed when using `-b` parameter
+- Your working directory must have clean status (no uncommitted staging changes)
+- The branch/commit will be temporarily checked out and restored after execution
+
+**Example with staging changes:**
+```bash
+# This will be blocked if you have uncommitted changes
+git prolly set user:123 "John Doe"  # Creates staging changes
+git prolly sql -b main "SELECT * FROM users"
+# Error: Cannot use -b/--branch parameter with uncommitted staging changes
+
+# Commit your changes first
+git prolly commit -m "Add new user"
+git prolly sql -b main "SELECT * FROM users"  # Now works
+```
 
 ## SQL Operations
 
@@ -329,9 +362,66 @@ prolly-sql> exit
 Goodbye!
 ```
 
+### Interactive Mode with Historical Data
+
+Use interactive mode to explore historical data:
+
+```bash
+# Start interactive mode against a specific branch
+git prolly sql -b feature/analytics -i
+```
+
+```
+🌟 ProllyTree SQL Interactive Shell
+====================================
+Executing against branch/commit: feature/analytics
+⚠️  Only SELECT statements are allowed in this mode
+Type 'exit' or 'quit' to exit
+Type 'help' for available commands
+
+prolly-sql> SELECT COUNT(*) FROM new_analytics_table;
+│ COUNT(*) │
+├──────────┤
+│ I64(150) │
+
+prolly-sql> SELECT * FROM products WHERE price > 1000;
+│ id     │ name                │ price     │
+├────────┼─────────────────────┼───────────┤
+│ I64(1) │ Str("Gaming PC")    │ I64(1500) │
+│ I64(2) │ Str("MacBook Pro")  │ I64(2000) │
+
+prolly-sql> INSERT INTO products VALUES (3, 'iPad', 800);
+Error: Only SELECT statements are allowed when using -b/--branch parameter
+       Historical commits/branches are read-only for data integrity
+
+prolly-sql> exit
+Goodbye!
+Restored to original branch: main
+```
+
 ## Advanced Examples
 
-### 1. Complex Data Analysis
+### 1. Historical Data Analysis
+
+Compare data across different points in time:
+
+```bash
+# Query current data
+git prolly sql "SELECT COUNT(*) as current_users FROM users"
+
+# Query data from last week's commit
+git prolly sql -b 7d1a2b3c "SELECT COUNT(*) as users_last_week FROM users"
+
+# Compare product prices between branches
+git prolly sql -b main "SELECT name, price FROM products WHERE category = 'Electronics'"
+git prolly sql -b feature/price-update "SELECT name, price FROM products WHERE category = 'Electronics'"
+
+# Analyze data growth over time
+git prolly sql -b v1.0 "SELECT COUNT(*) as v1_orders FROM orders"
+git prolly sql -b v2.0 "SELECT COUNT(*) as v2_orders FROM orders"
+```
+
+### 2. Complex Data Analysis
 
 ```sql
 -- Create sales data
@@ -461,8 +551,32 @@ git checkout main
 # The new tables don't exist on main branch
 git prolly sql "SELECT * FROM categories"  # Error: table not found
 
+# Query the new schema without switching branches
+git prolly sql -b feature/new-schema "SELECT * FROM categories"
+
 # Merge when ready
 git merge feature/new-schema
+```
+
+### Cross-Branch Data Comparison
+
+Compare data between branches without switching contexts:
+
+```bash
+# Compare user counts between branches
+echo "Main branch users:"
+git prolly sql -b main "SELECT COUNT(*) FROM users"
+
+echo "Feature branch users:"
+git prolly sql -b feature/user-management "SELECT COUNT(*) FROM users"
+
+# Generate reports from different branches
+git prolly sql -b production -o json "SELECT * FROM daily_metrics WHERE date = '2024-01-15'" > prod_metrics.json
+git prolly sql -b staging -o json "SELECT * FROM daily_metrics WHERE date = '2024-01-15'" > staging_metrics.json
+
+# Compare table schemas between versions
+git prolly sql -b v1.0 "SELECT name FROM sqlite_master WHERE type='table'"
+git prolly sql -b v2.0 "SELECT name FROM sqlite_master WHERE type='table'"
 ```
 
 ## Best Practices
@@ -497,6 +611,23 @@ git checkout -b migration-test
 # If successful, merge to main
 ```
 
+### 5. Historical Data Querying
+
+- **Commit changes before using `-b`**: Always commit your staging changes before querying historical data
+- **Use for read-only analysis**: The `-b` parameter is perfect for generating reports without affecting current work
+- **Branch-specific schemas**: Use `-b` to query data from branches with different table structures
+- **Performance**: Historical queries access committed data, so they may be slower than current branch queries
+
+```bash
+# Good practice: commit first
+git prolly commit -m "Save current work"
+git prolly sql -b production "SELECT * FROM metrics"
+
+# Avoid: Don't leave uncommitted changes
+git prolly set user:new "data"  # Uncommitted change
+git prolly sql -b main "SELECT * FROM users"  # Will be blocked
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -514,6 +645,21 @@ git checkout -b migration-test
    - Use `--verbose` flag for detailed error messages
    - Check SQL syntax - the parser is strict about formatting
    - Ensure column names match exactly (case-sensitive)
+
+4. **"Cannot use -b/--branch parameter with uncommitted staging changes"**
+   - Check staging status with `git prolly status`
+   - Commit your changes first: `git prolly commit -m "Save changes"`
+   - Or discard changes if not needed
+
+5. **"Only SELECT statements are allowed when using -b/--branch parameter"**
+   - Historical data is read-only for safety
+   - Use regular `git prolly sql` (without `-b`) for data modifications
+   - Switch to the target branch if you need to make changes there
+
+6. **"Failed to checkout branch/commit"**
+   - Verify the branch/commit exists: `git branch -a` or `git log --oneline`
+   - Check branch name spelling (case-sensitive)
+   - Ensure you have access to the specified commit
 
 ### Performance Tips
 
