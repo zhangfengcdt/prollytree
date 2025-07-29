@@ -20,7 +20,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::{
+    agent::{AgentMemorySystem, MemoryType},
     config::TreeConfig,
+    git::{types::StorageBackend, GitVersionedKvStore},
     proof::Proof,
     storage::{FileNodeStorage, InMemoryNodeStorage},
     tree::{ProllyTree, Tree},
@@ -349,9 +351,570 @@ impl PyProllyTree {
     }
 }
 
+#[pyclass(name = "MemoryType", eq, eq_int)]
+#[derive(Clone, PartialEq)]
+enum PyMemoryType {
+    ShortTerm,
+    Semantic,
+    Episodic,
+    Procedural,
+}
+
+#[pymethods]
+impl PyMemoryType {
+    fn __str__(&self) -> &str {
+        match self {
+            PyMemoryType::ShortTerm => "ShortTerm",
+            PyMemoryType::Semantic => "Semantic",
+            PyMemoryType::Episodic => "Episodic",
+            PyMemoryType::Procedural => "Procedural",
+        }
+    }
+}
+
+impl From<PyMemoryType> for MemoryType {
+    fn from(py_type: PyMemoryType) -> Self {
+        match py_type {
+            PyMemoryType::ShortTerm => MemoryType::ShortTerm,
+            PyMemoryType::Semantic => MemoryType::Semantic,
+            PyMemoryType::Episodic => MemoryType::Episodic,
+            PyMemoryType::Procedural => MemoryType::Procedural,
+        }
+    }
+}
+
+impl From<MemoryType> for PyMemoryType {
+    fn from(mem_type: MemoryType) -> Self {
+        match mem_type {
+            MemoryType::ShortTerm => PyMemoryType::ShortTerm,
+            MemoryType::Semantic => PyMemoryType::Semantic,
+            MemoryType::Episodic => PyMemoryType::Episodic,
+            MemoryType::Procedural => PyMemoryType::Procedural,
+        }
+    }
+}
+
+#[pyclass(name = "AgentMemorySystem")]
+struct PyAgentMemorySystem {
+    inner: Arc<Mutex<AgentMemorySystem>>,
+}
+
+#[pymethods]
+impl PyAgentMemorySystem {
+    #[new]
+    #[pyo3(signature = (path, agent_id))]
+    fn new(path: String, agent_id: String) -> PyResult<Self> {
+        let memory_system = AgentMemorySystem::init(path, agent_id, None).map_err(|e| {
+            PyValueError::new_err(format!("Failed to initialize memory system: {}", e))
+        })?;
+
+        Ok(PyAgentMemorySystem {
+            inner: Arc::new(Mutex::new(memory_system)),
+        })
+    }
+
+    #[staticmethod]
+    fn open(path: String, agent_id: String) -> PyResult<Self> {
+        let memory_system = AgentMemorySystem::open(path, agent_id, None)
+            .map_err(|e| PyValueError::new_err(format!("Failed to open memory system: {}", e)))?;
+
+        Ok(PyAgentMemorySystem {
+            inner: Arc::new(Mutex::new(memory_system)),
+        })
+    }
+
+    #[pyo3(signature = (thread_id, role, content, metadata=None))]
+    fn store_conversation_turn(
+        &self,
+        py: Python,
+        thread_id: String,
+        role: String,
+        content: String,
+        metadata: Option<HashMap<String, String>>,
+    ) -> PyResult<String> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let mut memory_system = self.inner.lock().unwrap();
+
+            // Convert HashMap<String, String> to HashMap<String, serde_json::Value>
+            let metadata_values = metadata.map(|m| {
+                m.into_iter()
+                    .map(|(k, v)| (k, serde_json::Value::String(v)))
+                    .collect()
+            });
+
+            runtime.block_on(async {
+                memory_system
+                    .short_term
+                    .store_conversation_turn(&thread_id, &role, &content, metadata_values)
+                    .await
+                    .map_err(|e| {
+                        PyValueError::new_err(format!("Failed to store conversation: {}", e))
+                    })
+            })
+        })
+    }
+
+    #[pyo3(signature = (thread_id, limit=None))]
+    fn get_conversation_history(
+        &self,
+        py: Python,
+        thread_id: String,
+        limit: Option<usize>,
+    ) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let memory_system = self.inner.lock().unwrap();
+
+            runtime.block_on(async {
+                let history = memory_system
+                    .short_term
+                    .get_conversation_history(&thread_id, limit)
+                    .await
+                    .map_err(|e| PyValueError::new_err(format!("Failed to get history: {}", e)))?;
+
+                Python::with_gil(|py| {
+                    let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = history
+                        .iter()
+                        .map(|doc| {
+                            let mut map = HashMap::new();
+                            map.insert("id".to_string(), doc.id.clone().into_py(py));
+                            map.insert("content".to_string(), doc.content.to_string().into_py(py));
+                            map.insert(
+                                "created_at".to_string(),
+                                doc.metadata.created_at.to_rfc3339().into_py(py),
+                            );
+                            Ok(map)
+                        })
+                        .collect();
+                    results
+                })
+            })
+        })
+    }
+
+    fn store_fact(
+        &self,
+        py: Python,
+        entity_type: String,
+        entity_id: String,
+        facts: String, // JSON string
+        confidence: f64,
+        source: String,
+    ) -> PyResult<String> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let mut memory_system = self.inner.lock().unwrap();
+
+            let facts_value: serde_json::Value = serde_json::from_str(&facts)
+                .map_err(|e| PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
+
+            runtime.block_on(async {
+                memory_system
+                    .semantic
+                    .store_fact(&entity_type, &entity_id, facts_value, confidence, &source)
+                    .await
+                    .map_err(|e| PyValueError::new_err(format!("Failed to store fact: {}", e)))
+            })
+        })
+    }
+
+    fn get_entity_facts(
+        &self,
+        py: Python,
+        entity_type: String,
+        entity_id: String,
+    ) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let memory_system = self.inner.lock().unwrap();
+
+            runtime.block_on(async {
+                let facts = memory_system
+                    .semantic
+                    .get_entity_facts(&entity_type, &entity_id)
+                    .await
+                    .map_err(|e| PyValueError::new_err(format!("Failed to get facts: {}", e)))?;
+
+                Python::with_gil(|py| {
+                    let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = facts
+                        .iter()
+                        .map(|doc| {
+                            let mut map = HashMap::new();
+                            map.insert("id".to_string(), doc.id.clone().into_py(py));
+                            map.insert("facts".to_string(), doc.content.to_string().into_py(py));
+                            map.insert(
+                                "confidence".to_string(),
+                                doc.metadata.confidence.into_py(py),
+                            );
+                            map.insert(
+                                "source".to_string(),
+                                doc.metadata.source.clone().into_py(py),
+                            );
+                            Ok(map)
+                        })
+                        .collect();
+                    results
+                })
+            })
+        })
+    }
+
+    #[pyo3(signature = (category, name, description, steps, prerequisites=None, priority=1))]
+    fn store_procedure(
+        &self,
+        py: Python,
+        category: String,
+        name: String,
+        description: String,
+        steps: Vec<String>, // JSON strings
+        prerequisites: Option<Vec<String>>,
+        priority: u32,
+    ) -> PyResult<String> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let mut memory_system = self.inner.lock().unwrap();
+
+            let steps_values: Result<Vec<serde_json::Value>, _> =
+                steps.iter().map(|s| serde_json::from_str(s)).collect();
+            let steps_values = steps_values
+                .map_err(|e| PyValueError::new_err(format!("Invalid JSON in steps: {}", e)))?;
+
+            // Convert prerequisites to serde_json::Value
+            let conditions = prerequisites.map(|p| {
+                serde_json::Value::Array(p.into_iter().map(serde_json::Value::String).collect())
+            });
+
+            runtime.block_on(async {
+                memory_system
+                    .procedural
+                    .store_procedure(
+                        &category,
+                        &name,
+                        &description,
+                        steps_values,
+                        conditions,
+                        priority,
+                    )
+                    .await
+                    .map_err(|e| PyValueError::new_err(format!("Failed to store procedure: {}", e)))
+            })
+        })
+    }
+
+    fn get_procedures_by_category(
+        &self,
+        py: Python,
+        category: String,
+    ) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let memory_system = self.inner.lock().unwrap();
+
+            runtime.block_on(async {
+                let procedures = memory_system
+                    .procedural
+                    .get_procedures_by_category(&category)
+                    .await
+                    .map_err(|e| {
+                        PyValueError::new_err(format!("Failed to get procedures: {}", e))
+                    })?;
+
+                Python::with_gil(|py| {
+                    let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = procedures
+                        .iter()
+                        .map(|doc| {
+                            let mut map = HashMap::new();
+                            map.insert("id".to_string(), doc.id.clone().into_py(py));
+                            map.insert("content".to_string(), doc.content.to_string().into_py(py));
+                            map.insert(
+                                "created_at".to_string(),
+                                doc.metadata.created_at.to_rfc3339().into_py(py),
+                            );
+                            Ok(map)
+                        })
+                        .collect();
+                    results
+                })
+            })
+        })
+    }
+
+    fn checkpoint(&self, py: Python, message: String) -> PyResult<String> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let mut memory_system = self.inner.lock().unwrap();
+
+            runtime.block_on(async {
+                memory_system.checkpoint(&message).await.map_err(|e| {
+                    PyValueError::new_err(format!("Failed to create checkpoint: {}", e))
+                })
+            })
+        })
+    }
+
+    fn optimize(&self, py: Python) -> PyResult<HashMap<String, usize>> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let mut memory_system = self.inner.lock().unwrap();
+
+            runtime.block_on(async {
+                let report = memory_system
+                    .optimize()
+                    .await
+                    .map_err(|e| PyValueError::new_err(format!("Failed to optimize: {}", e)))?;
+
+                let mut result = HashMap::new();
+                result.insert("expired_cleaned".to_string(), report.expired_cleaned);
+                result.insert(
+                    "memories_consolidated".to_string(),
+                    report.memories_consolidated,
+                );
+                result.insert("memories_archived".to_string(), report.memories_archived);
+                result.insert("memories_pruned".to_string(), report.memories_pruned);
+                result.insert("total_processed".to_string(), report.total_processed());
+                Ok(result)
+            })
+        })
+    }
+}
+
+#[pyclass(name = "StorageBackend", eq, eq_int)]
+#[derive(Clone, PartialEq)]
+enum PyStorageBackend {
+    InMemory,
+    File,
+    Git,
+}
+
+#[pymethods]
+impl PyStorageBackend {
+    fn __str__(&self) -> &str {
+        match self {
+            PyStorageBackend::InMemory => "InMemory",
+            PyStorageBackend::File => "File",
+            PyStorageBackend::Git => "Git",
+        }
+    }
+}
+
+impl From<PyStorageBackend> for StorageBackend {
+    fn from(py_backend: PyStorageBackend) -> Self {
+        match py_backend {
+            PyStorageBackend::InMemory => StorageBackend::InMemory,
+            PyStorageBackend::File => StorageBackend::File,
+            PyStorageBackend::Git => StorageBackend::Git,
+        }
+    }
+}
+
+impl From<StorageBackend> for PyStorageBackend {
+    fn from(backend: StorageBackend) -> Self {
+        match backend {
+            StorageBackend::InMemory => PyStorageBackend::InMemory,
+            StorageBackend::File => PyStorageBackend::File,
+            StorageBackend::Git => PyStorageBackend::Git,
+            #[cfg(feature = "rocksdb_storage")]
+            StorageBackend::RocksDB => PyStorageBackend::Git, // Fallback to Git for RocksDB
+        }
+    }
+}
+
+#[pyclass(name = "VersionedKvStore")]
+struct PyVersionedKvStore {
+    inner: Arc<Mutex<GitVersionedKvStore<32>>>,
+}
+
+#[pymethods]
+impl PyVersionedKvStore {
+    #[new]
+    fn new(path: String) -> PyResult<Self> {
+        let store = GitVersionedKvStore::<32>::init(path)
+            .map_err(|e| PyValueError::new_err(format!("Failed to initialize store: {}", e)))?;
+
+        Ok(PyVersionedKvStore {
+            inner: Arc::new(Mutex::new(store)),
+        })
+    }
+
+    #[staticmethod]
+    fn open(path: String) -> PyResult<Self> {
+        let store = GitVersionedKvStore::<32>::open(path)
+            .map_err(|e| PyValueError::new_err(format!("Failed to open store: {}", e)))?;
+
+        Ok(PyVersionedKvStore {
+            inner: Arc::new(Mutex::new(store)),
+        })
+    }
+
+    fn insert(&self, key: &Bound<'_, PyBytes>, value: &Bound<'_, PyBytes>) -> PyResult<()> {
+        let key_vec = key.as_bytes().to_vec();
+        let value_vec = value.as_bytes().to_vec();
+
+        let mut store = self.inner.lock().unwrap();
+        store
+            .insert(key_vec, value_vec)
+            .map_err(|e| PyValueError::new_err(format!("Failed to insert: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn get(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
+        let key_vec = key.as_bytes().to_vec();
+
+        let store = self.inner.lock().unwrap();
+        match store.get(&key_vec) {
+            Some(value) => Ok(Some(PyBytes::new_bound(py, &value).into())),
+            None => Ok(None),
+        }
+    }
+
+    fn update(&self, key: &Bound<'_, PyBytes>, value: &Bound<'_, PyBytes>) -> PyResult<bool> {
+        let key_vec = key.as_bytes().to_vec();
+        let value_vec = value.as_bytes().to_vec();
+
+        let mut store = self.inner.lock().unwrap();
+        store
+            .update(key_vec, value_vec)
+            .map_err(|e| PyValueError::new_err(format!("Failed to update: {}", e)))
+    }
+
+    fn delete(&self, key: &Bound<'_, PyBytes>) -> PyResult<bool> {
+        let key_vec = key.as_bytes().to_vec();
+
+        let mut store = self.inner.lock().unwrap();
+        store
+            .delete(&key_vec)
+            .map_err(|e| PyValueError::new_err(format!("Failed to delete: {}", e)))
+    }
+
+    fn list_keys(&self, py: Python) -> PyResult<Vec<Py<PyBytes>>> {
+        let store = self.inner.lock().unwrap();
+        let keys = store.list_keys();
+
+        let py_keys: Vec<Py<PyBytes>> = keys
+            .iter()
+            .map(|key| PyBytes::new_bound(py, key).into())
+            .collect();
+
+        Ok(py_keys)
+    }
+
+    fn status(&self, py: Python) -> PyResult<Vec<(Py<PyBytes>, String)>> {
+        let store = self.inner.lock().unwrap();
+        let status = store.status();
+
+        let py_status: Vec<(Py<PyBytes>, String)> = status
+            .iter()
+            .map(|(key, status_str)| (PyBytes::new_bound(py, key).into(), status_str.clone()))
+            .collect();
+
+        Ok(py_status)
+    }
+
+    fn commit(&self, message: String) -> PyResult<String> {
+        let mut store = self.inner.lock().unwrap();
+        let commit_id = store
+            .commit(&message)
+            .map_err(|e| PyValueError::new_err(format!("Failed to commit: {}", e)))?;
+
+        Ok(commit_id.to_hex().to_string())
+    }
+
+    fn branch(&self, name: String) -> PyResult<()> {
+        let mut store = self.inner.lock().unwrap();
+        store
+            .branch(&name)
+            .map_err(|e| PyValueError::new_err(format!("Failed to create branch: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn create_branch(&self, name: String) -> PyResult<()> {
+        let mut store = self.inner.lock().unwrap();
+        store.create_branch(&name).map_err(|e| {
+            PyValueError::new_err(format!("Failed to create and switch branch: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    fn checkout(&self, branch_or_commit: String) -> PyResult<()> {
+        let mut store = self.inner.lock().unwrap();
+        store
+            .checkout(&branch_or_commit)
+            .map_err(|e| PyValueError::new_err(format!("Failed to checkout: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn current_branch(&self) -> PyResult<String> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.current_branch().to_string())
+    }
+
+    fn list_branches(&self) -> PyResult<Vec<String>> {
+        let store = self.inner.lock().unwrap();
+        store
+            .list_branches()
+            .map_err(|e| PyValueError::new_err(format!("Failed to list branches: {}", e)))
+    }
+
+    fn log(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+        let store = self.inner.lock().unwrap();
+        let history = store
+            .log()
+            .map_err(|e| PyValueError::new_err(format!("Failed to get log: {}", e)))?;
+
+        Python::with_gil(|py| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = history
+                .iter()
+                .map(|commit| {
+                    let mut map = HashMap::new();
+                    map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
+                    map.insert("author".to_string(), commit.author.clone().into_py(py));
+                    map.insert(
+                        "committer".to_string(),
+                        commit.committer.clone().into_py(py),
+                    );
+                    map.insert("message".to_string(), commit.message.clone().into_py(py));
+                    map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
+                    Ok(map)
+                })
+                .collect();
+            results
+        })
+    }
+
+    fn storage_backend(&self) -> PyResult<PyStorageBackend> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.storage_backend().clone().into())
+    }
+}
+
 #[pymodule]
 fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTreeConfig>()?;
     m.add_class::<PyProllyTree>()?;
+    m.add_class::<PyMemoryType>()?;
+    m.add_class::<PyAgentMemorySystem>()?;
+    m.add_class::<PyStorageBackend>()?;
+    m.add_class::<PyVersionedKvStore>()?;
     Ok(())
 }

@@ -108,3 +108,345 @@ class ProllyTree:
     def save_config(self) -> None:
         """Save the tree configuration to storage"""
         ...
+
+class MemoryType:
+    """Enum representing different types of memory in the agent system"""
+    ShortTerm: "MemoryType"
+    Semantic: "MemoryType"
+    Episodic: "MemoryType"
+    Procedural: "MemoryType"
+    
+    def __str__(self) -> str: ...
+
+class AgentMemorySystem:
+    """Comprehensive memory system for AI agents"""
+    
+    def __init__(self, path: str, agent_id: str) -> None:
+        """
+        Initialize a new agent memory system.
+        
+        Args:
+            path: Directory path for memory storage
+            agent_id: Unique identifier for the agent
+        """
+        ...
+    
+    @staticmethod
+    def open(path: str, agent_id: str) -> "AgentMemorySystem":
+        """
+        Open an existing agent memory system.
+        
+        Args:
+            path: Directory path where memory is stored
+            agent_id: Unique identifier for the agent
+        """
+        ...
+    
+    def store_conversation_turn(
+        self,
+        thread_id: str,
+        role: str,
+        content: str,
+        metadata: Optional[Dict[str, str]] = None
+    ) -> str:
+        """
+        Store a conversation turn in short-term memory.
+        
+        Args:
+            thread_id: Conversation thread identifier
+            role: Role of the speaker (e.g., "user", "assistant")
+            content: The message content
+            metadata: Optional metadata dictionary
+            
+        Returns:
+            Unique ID of the stored memory
+        """
+        ...
+    
+    def get_conversation_history(
+        self,
+        thread_id: str,
+        limit: Optional[int] = None
+    ) -> List[Dict[str, Union[str, float]]]:
+        """
+        Retrieve conversation history for a thread.
+        
+        Args:
+            thread_id: Conversation thread identifier
+            limit: Maximum number of messages to retrieve
+            
+        Returns:
+            List of message dictionaries with id, content, and created_at fields
+        """
+        ...
+    
+    def store_fact(
+        self,
+        entity_type: str,
+        entity_id: str,
+        facts: str,  # JSON string
+        confidence: float,
+        source: str
+    ) -> str:
+        """
+        Store a fact in semantic memory.
+        
+        Args:
+            entity_type: Type of entity (e.g., "person", "place")
+            entity_id: Unique identifier for the entity
+            facts: JSON string containing the facts
+            confidence: Confidence score (0.0 to 1.0)
+            source: Source of the information
+            
+        Returns:
+            Unique ID of the stored fact
+        """
+        ...
+    
+    def get_entity_facts(
+        self,
+        entity_type: str,
+        entity_id: str
+    ) -> List[Dict[str, Union[str, float]]]:
+        """
+        Retrieve facts about an entity.
+        
+        Args:
+            entity_type: Type of entity
+            entity_id: Unique identifier for the entity
+            
+        Returns:
+            List of fact dictionaries
+        """
+        ...
+    
+    def store_procedure(
+        self,
+        category: str,
+        name: str,
+        description: str,
+        steps: List[str],  # List of JSON strings
+        prerequisites: Optional[List[str]] = None,
+        priority: int = 1
+    ) -> str:
+        """
+        Store a procedure in procedural memory.
+        
+        Args:
+            category: Category of the procedure
+            name: Name of the procedure
+            description: Description of what the procedure does
+            steps: List of JSON strings describing each step
+            prerequisites: Optional list of prerequisites
+            priority: Priority level (default: 1)
+            
+        Returns:
+            Unique ID of the stored procedure
+        """
+        ...
+    
+    def get_procedures_by_category(
+        self,
+        category: str
+    ) -> List[Dict[str, str]]:
+        """
+        Retrieve procedures by category.
+        
+        Args:
+            category: Category to search for
+            
+        Returns:
+            List of procedure dictionaries
+        """
+        ...
+    
+    def checkpoint(self, message: str) -> str:
+        """
+        Create a memory checkpoint.
+        
+        Args:
+            message: Commit message for the checkpoint
+            
+        Returns:
+            Checkpoint ID
+        """
+        ...
+    
+    def optimize(self) -> Dict[str, int]:
+        """
+        Optimize the memory system by cleaning up and consolidating memories.
+        
+        Returns:
+            Dictionary with optimization statistics
+        """
+        ...
+
+class StorageBackend:
+    """Enum representing different storage backend types"""
+    InMemory: "StorageBackend"
+    File: "StorageBackend"
+    Git: "StorageBackend"
+    
+    def __str__(self) -> str: ...
+
+class VersionedKvStore:
+    """A versioned key-value store backed by Git and ProllyTree"""
+    
+    def __init__(self, path: str) -> None:
+        """
+        Initialize a new versioned key-value store.
+        
+        Args:
+            path: Directory path for the store (must be within a git repository)
+        """
+        ...
+    
+    @staticmethod
+    def open(path: str) -> "VersionedKvStore":
+        """
+        Open an existing versioned key-value store.
+        
+        Args:
+            path: Directory path where the store is located
+        """
+        ...
+    
+    def insert(self, key: bytes, value: bytes) -> None:
+        """
+        Insert a key-value pair (stages the change).
+        
+        Args:
+            key: The key as bytes
+            value: The value as bytes
+        """
+        ...
+    
+    def get(self, key: bytes) -> Optional[bytes]:
+        """
+        Get a value by key.
+        
+        Args:
+            key: The key to look up
+            
+        Returns:
+            The value as bytes, or None if not found
+        """
+        ...
+    
+    def update(self, key: bytes, value: bytes) -> bool:
+        """
+        Update an existing key-value pair (stages the change).
+        
+        Args:
+            key: The key to update
+            value: The new value
+            
+        Returns:
+            True if the key existed and was updated, False otherwise
+        """
+        ...
+    
+    def delete(self, key: bytes) -> bool:
+        """
+        Delete a key-value pair (stages the change).
+        
+        Args:
+            key: The key to delete
+            
+        Returns:
+            True if the key existed and was deleted, False otherwise
+        """
+        ...
+    
+    def list_keys(self) -> List[bytes]:
+        """
+        List all keys in the store (includes staged changes).
+        
+        Returns:
+            List of keys as bytes
+        """
+        ...
+    
+    def status(self) -> List[Tuple[bytes, str]]:
+        """
+        Show current staging area status.
+        
+        Returns:
+            List of tuples (key, status) where status is "added", "modified", or "deleted"
+        """
+        ...
+    
+    def commit(self, message: str) -> str:
+        """
+        Commit staged changes.
+        
+        Args:
+            message: Commit message
+            
+        Returns:
+            Commit hash as hex string
+        """
+        ...
+    
+    def branch(self, name: str) -> None:
+        """
+        Create a new branch.
+        
+        Args:
+            name: Name of the new branch
+        """
+        ...
+    
+    def create_branch(self, name: str) -> None:
+        """
+        Create a new branch and switch to it.
+        
+        Args:
+            name: Name of the new branch
+        """
+        ...
+    
+    def checkout(self, branch_or_commit: str) -> None:
+        """
+        Switch to a different branch or commit.
+        
+        Args:
+            branch_or_commit: Branch name or commit hash
+        """
+        ...
+    
+    def current_branch(self) -> str:
+        """
+        Get the current branch name.
+        
+        Returns:
+            Current branch name
+        """
+        ...
+    
+    def list_branches(self) -> List[str]:
+        """
+        List all branches in the repository.
+        
+        Returns:
+            List of branch names
+        """
+        ...
+    
+    def log(self) -> List[Dict[str, Union[str, int]]]:
+        """
+        Get commit history.
+        
+        Returns:
+            List of commit dictionaries with id, author, committer, message, and timestamp
+        """
+        ...
+    
+    def storage_backend(self) -> StorageBackend:
+        """
+        Get the current storage backend type.
+        
+        Returns:
+            Storage backend enum value
+        """
+        ...
