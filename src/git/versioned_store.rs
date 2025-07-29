@@ -29,6 +29,10 @@ pub trait HistoricalAccess<const N: usize> {
 }
 
 /// Trait for accessing commit history and tracking changes to specific keys
+pub trait TreeConfigSaver<const N: usize> {
+    fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError>;
+}
+
 pub trait HistoricalCommitAccess<const N: usize> {
     /// Get all commits that contain changes to a specific key
     /// Returns commits in reverse chronological order (newest first)
@@ -68,7 +72,10 @@ pub type FileVersionedKvStore<const N: usize> = VersionedKvStore<N, FileNodeStor
 #[cfg(feature = "rocksdb_storage")]
 pub type RocksDBVersionedKvStore<const N: usize> = VersionedKvStore<N, RocksDBNodeStorage<N>>;
 
-impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
+impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
+where
+    Self: TreeConfigSaver<N>,
+{
     /// Find the git repository root by walking up the directory tree
     fn find_git_root<P: AsRef<Path>>(start_path: P) -> Option<std::path::PathBuf> {
         let mut current = start_path.as_ref().to_path_buf();
@@ -209,6 +216,9 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
         self.tree
             .save_config()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
+
+        // For all storage types, also save the tree config to git for historical access
+        self.save_tree_config_to_git_internal()?;
 
         // Create tree object in Git using git commands
         // Get the git root directory
@@ -656,8 +666,47 @@ where
     }
 }
 
+// Implement TreeConfigSaver for GitNodeStorage
+impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, GitNodeStorage<N>> {
+    fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError> {
+        self.save_tree_config_to_git()
+    }
+}
+
 // Storage-specific implementations
 impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
+    /// Save both tree config and hash mappings to git for GitNodeStorage
+    fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
+        // Get the current tree config
+        let config = &self.tree.config;
+
+        // Serialize the config to JSON
+        let config_json = serde_json::to_vec_pretty(&config).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to serialize config: {e}"))
+        })?;
+
+        // Get the git root directory to save the config file
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
+            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
+
+        // Write the config file to the git root
+        let config_path = git_root.join("prolly_config_tree_config");
+        std::fs::write(&config_path, &config_json).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write config file: {e}"))
+        })?;
+
+        // For GitNodeStorage, also save the hash mappings to git
+        let mappings_path = self.tree.storage.dataset_dir().join("prolly_hash_mappings");
+        if mappings_path.exists() {
+            let git_mappings_path = git_root.join("prolly_hash_mappings");
+            std::fs::copy(&mappings_path, &git_mappings_path).map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to copy hash mappings: {e}"))
+            })?;
+        }
+
+        Ok(())
+    }
+
     /// Initialize a new versioned KV store with Git storage (default)
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
@@ -1545,6 +1594,107 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
     }
 }
 
+// Implement TreeConfigSaver for InMemoryNodeStorage
+impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, InMemoryNodeStorage<N>> {
+    fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError> {
+        self.save_tree_config_to_git()
+    }
+}
+
+// Specialized implementation for InMemoryNodeStorage
+impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
+    /// Save tree config to git for InMemoryNodeStorage
+    fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
+        // Get the current tree config
+        let config = &self.tree.config;
+
+        // Serialize the config to JSON
+        let config_json = serde_json::to_vec_pretty(&config).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to serialize config: {e}"))
+        })?;
+
+        // Get the git root directory to save the config file
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
+            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
+
+        // Write the config file to the git root
+        let config_path = git_root.join("prolly_config_tree_config");
+        std::fs::write(&config_path, &config_json).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write config file: {e}"))
+        })?;
+
+        Ok(())
+    }
+}
+
+// Implement TreeConfigSaver for FileNodeStorage
+impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, FileNodeStorage<N>> {
+    fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError> {
+        self.save_tree_config_to_git()
+    }
+}
+
+// Specialized implementation for FileNodeStorage
+impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
+    /// Save tree config to git for FileNodeStorage
+    fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
+        // Get the current tree config
+        let config = &self.tree.config;
+
+        // Serialize the config to JSON
+        let config_json = serde_json::to_vec_pretty(&config).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to serialize config: {e}"))
+        })?;
+
+        // Get the git root directory to save the config file
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
+            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
+
+        // Write the config file to the git root
+        let config_path = git_root.join("prolly_config_tree_config");
+        std::fs::write(&config_path, &config_json).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write config file: {e}"))
+        })?;
+
+        Ok(())
+    }
+}
+
+// Implement TreeConfigSaver for RocksDBNodeStorage
+#[cfg(feature = "rocksdb_storage")]
+impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, RocksDBNodeStorage<N>> {
+    fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError> {
+        self.save_tree_config_to_git()
+    }
+}
+
+// Specialized implementation for RocksDBNodeStorage
+#[cfg(feature = "rocksdb_storage")]
+impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
+    /// Save tree config to git for RocksDBNodeStorage
+    fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
+        // Get the current tree config
+        let config = &self.tree.config;
+
+        // Serialize the config to JSON
+        let config_json = serde_json::to_vec_pretty(&config).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to serialize config: {}", e))
+        })?;
+
+        // Get the git root directory to save the config file
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
+            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
+
+        // Write the config file to the git root
+        let config_path = git_root.join("prolly_config_tree_config");
+        std::fs::write(&config_path, &config_json).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write config file: {}", e))
+        })?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1974,29 +2124,25 @@ mod tests {
             let commit_id = store.commit("Initial data").unwrap();
 
             // Test historical access
-            // NOTE: Currently, InMemory storage doesn't save tree config to git commits,
-            // so historical access returns empty results. This demonstrates the API works
-            // but shows the limitation that non-git storage types need to implement
-            // proper config persistence to git for full historical functionality.
+            // InMemory storage now saves tree config to git commits, enabling full historical functionality
             let keys_at_head = store.get_keys_at_ref("HEAD").unwrap();
-            // For now, we expect 0 keys due to missing config in git commits
-            // In a full implementation, this should be 2
-            assert_eq!(keys_at_head.len(), 0);
+            assert_eq!(keys_at_head.len(), 2);
+            assert!(keys_at_head.contains_key(&b"key1".to_vec()));
+            assert!(keys_at_head.contains_key(&b"key2".to_vec()));
 
             // Test access by commit ID
             let keys_at_commit = store
                 .get_keys_at_ref(&commit_id.to_hex().to_string())
                 .unwrap();
-            assert_eq!(keys_at_commit.len(), 0);
+            assert_eq!(keys_at_commit.len(), 2);
 
             // Test commit history access - this should work as it only reads git commit metadata
             let commit_history = store.get_commit_history().unwrap();
             assert!(!commit_history.is_empty());
 
-            // Test get_commits_for_key - returns empty since no historical tree data available
+            // Test get_commits_for_key - now works with tree config available
             let key1_commits = store.get_commits(b"key1").unwrap();
-            // Currently returns empty due to no historical tree state, but API works
-            assert_eq!(key1_commits.len(), 0);
+            assert!(!key1_commits.is_empty());
         }
 
         // Test File storage
@@ -2005,20 +2151,23 @@ mod tests {
 
             // Add some data and commit
             store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-            let commit_id = store.commit("Initial data").unwrap();
+            store.insert(b"key2".to_vec(), b"value2".to_vec()).unwrap();
+            let _commit_id = store.commit("Initial data").unwrap();
 
             // Test historical access
-            // NOTE: File storage has same limitation as InMemory - no tree config in git
+            // File storage now saves tree config to git commits, enabling full historical functionality
             let keys_at_head = store.get_keys_at_ref("HEAD").unwrap();
-            assert_eq!(keys_at_head.len(), 0);
+            assert_eq!(keys_at_head.len(), 2);
+            assert!(keys_at_head.contains_key(&b"key1".to_vec()));
+            assert!(keys_at_head.contains_key(&b"key2".to_vec()));
 
             // Test commit history access - this should work
             let commit_history = store.get_commit_history().unwrap();
             assert!(!commit_history.is_empty());
 
-            // Test get_commits_for_key - returns empty due to no historical tree data
+            // Test get_commits_for_key - now works with tree config available
             let key1_commits = store.get_commits(b"key1").unwrap();
-            assert_eq!(key1_commits.len(), 0);
+            assert!(!key1_commits.is_empty());
         }
 
         // Test RocksDB storage (if enabled)
@@ -2028,20 +2177,23 @@ mod tests {
 
             // Add some data and commit
             store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
-            let commit_id = store.commit("Initial data").unwrap();
+            store.insert(b"key2".to_vec(), b"value2".to_vec()).unwrap();
+            let _commit_id = store.commit("Initial data").unwrap();
 
             // Test historical access
-            // NOTE: RocksDB storage has same limitation - no tree config in git
+            // RocksDB storage now saves tree config to git commits, enabling full historical functionality
             let keys_at_head = store.get_keys_at_ref("HEAD").unwrap();
-            assert_eq!(keys_at_head.len(), 0);
+            assert_eq!(keys_at_head.len(), 2);
+            assert!(keys_at_head.contains_key(&b"key1".to_vec()));
+            assert!(keys_at_head.contains_key(&b"key2".to_vec()));
 
             // Test commit history access - this should work
             let commit_history = store.get_commit_history().unwrap();
             assert!(!commit_history.is_empty());
 
-            // Test get_commits_for_key - returns empty due to no historical tree data
+            // Test get_commits_for_key - now works with tree config available
             let key1_commits = store.get_commits(b"key1").unwrap();
-            assert_eq!(key1_commits.len(), 0);
+            assert!(!key1_commits.is_empty());
         }
     }
 }
