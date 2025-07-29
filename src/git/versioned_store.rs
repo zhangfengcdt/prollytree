@@ -22,6 +22,23 @@ use gix::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Trait for accessing historical state from version control
+pub trait HistoricalAccess<const N: usize> {
+    /// Get all key-value pairs at a specific reference (commit, branch, etc.)
+    fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError>;
+}
+
+/// Trait for accessing commit history and tracking changes to specific keys
+pub trait HistoricalCommitAccess<const N: usize> {
+    /// Get all commits that contain changes to a specific key
+    /// Returns commits in reverse chronological order (newest first)
+    fn get_commits_for_key(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError>;
+    
+    /// Get the commit history for the repository  
+    /// Returns commits in reverse chronological order (newest first)
+    fn get_commit_history(&self) -> Result<Vec<CommitInfo>, GitKvError>;
+}
+
 #[cfg(feature = "rocksdb_storage")]
 use crate::storage::RocksDBNodeStorage;
 
@@ -576,6 +593,73 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
     }
 }
 
+// Generic diff functionality for all storage types
+impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
+where
+    VersionedKvStore<N, S>: HistoricalAccess<N>,
+{
+    /// Compare two commits or branches and return all keys that are added, updated or deleted
+    pub fn diff(&self, from: &str, to: &str) -> Result<Vec<KvDiff>, GitKvError> {
+        // Get all keys from both references
+        let from_keys = self.get_keys_at_ref(from)?;
+        let to_keys = self.get_keys_at_ref(to)?;
+
+        let mut diffs = Vec::new();
+
+        // Check for added or modified keys
+        for (key, to_value) in &to_keys {
+            match from_keys.get(key) {
+                None => {
+                    // Key was added
+                    diffs.push(KvDiff {
+                        key: key.clone(),
+                        operation: DiffOperation::Added(to_value.clone()),
+                    });
+                }
+                Some(from_value) => {
+                    if from_value != to_value {
+                        // Key was modified
+                        diffs.push(KvDiff {
+                            key: key.clone(),
+                            operation: DiffOperation::Modified {
+                                old: from_value.clone(),
+                                new: to_value.clone(),
+                            },
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check for removed keys
+        for (key, from_value) in &from_keys {
+            if !to_keys.contains_key(key) {
+                diffs.push(KvDiff {
+                    key: key.clone(),
+                    operation: DiffOperation::Removed(from_value.clone()),
+                });
+            }
+        }
+
+        // Sort diffs by key for consistent output
+        diffs.sort_by(|a, b| a.key.cmp(&b.key));
+
+        Ok(diffs)
+    }
+}
+
+// Generic commit history functionality for all storage types
+impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
+where
+    VersionedKvStore<N, S>: HistoricalCommitAccess<N>,
+{
+    /// Get all commits that contain changes to a specific key
+    /// Returns commits in reverse chronological order (newest first), similar to `git log -- <file>`
+    pub fn get_commits(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
+        self.get_commits_for_key(key)
+    }
+}
+
 // Storage-specific implementations
 impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     /// Initialize a new versioned KV store with Git storage (default)
@@ -704,59 +788,6 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         Ok(())
     }
 
-    /// Compare two commits or branches and return all keys that are added, updated or deleted
-    pub fn diff(&self, from: &str, to: &str) -> Result<Vec<KvDiff>, GitKvError> {
-        // Resolve the commit objects for both references
-        let from_commit = self.resolve_commit(from)?;
-        let to_commit = self.resolve_commit(to)?;
-
-        // Get all keys from both commits
-        let from_keys = self.collect_keys_at_commit(&from_commit)?;
-        let to_keys = self.collect_keys_at_commit(&to_commit)?;
-
-
-        let mut diffs = Vec::new();
-
-        // Check for added or modified keys
-        for (key, to_value) in &to_keys {
-            match from_keys.get(key) {
-                None => {
-                    // Key was added
-                    diffs.push(KvDiff {
-                        key: key.clone(),
-                        operation: DiffOperation::Added(to_value.clone()),
-                    });
-                }
-                Some(from_value) => {
-                    if from_value != to_value {
-                        // Key was modified
-                        diffs.push(KvDiff {
-                            key: key.clone(),
-                            operation: DiffOperation::Modified {
-                                old: from_value.clone(),
-                                new: to_value.clone(),
-                            },
-                        });
-                    }
-                }
-            }
-        }
-
-        // Check for removed keys
-        for (key, from_value) in &from_keys {
-            if !to_keys.contains_key(key) {
-                diffs.push(KvDiff {
-                    key: key.clone(),
-                    operation: DiffOperation::Removed(from_value.clone()),
-                });
-            }
-        }
-
-        // Sort diffs by key for consistent output
-        diffs.sort_by(|a, b| a.key.cmp(&b.key));
-
-        Ok(diffs)
-    }
 
     /// Resolve a branch name or commit SHA to a commit object ID
     fn resolve_commit(&self, reference: &str) -> Result<gix::ObjectId, GitKvError> {
@@ -960,7 +991,53 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
 
         Err(GitKvError::GitObjectError(format!("File not found in tree: {}", filename)))
     }
+}
 
+// Implement HistoricalAccess for GitNodeStorage
+impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, GitNodeStorage<N>> {
+    fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        let commit_id = self.resolve_commit(reference)?;
+        self.collect_keys_at_commit(&commit_id)
+    }
+}
+
+// Implement HistoricalCommitAccess for GitNodeStorage
+impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, GitNodeStorage<N>> {
+    fn get_commits_for_key(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
+        let mut commit_history = self.get_commit_history()?;
+        
+        // Reverse to process in chronological order (oldest first)
+        commit_history.reverse();
+        
+        let mut commits_with_key_changes = Vec::new();
+        let mut previous_value: Option<Vec<u8>> = None; // None = key not present, Some(val) = key present with value
+        
+        for commit in commit_history {
+            // Get the key value at this commit
+            let current_value = self.collect_keys_at_commit(&commit.id)?
+                .get(key)
+                .cloned();
+            
+            // Check if the value changed from the previous commit
+            let value_changed = previous_value != current_value;
+            
+            if value_changed {
+                commits_with_key_changes.push(commit);
+            }
+            
+            previous_value = current_value;
+        }
+        
+        // Reverse back to newest first for the final result
+        commits_with_key_changes.reverse();
+        
+        Ok(commits_with_key_changes)
+    }
+    
+    fn get_commit_history(&self) -> Result<Vec<CommitInfo>, GitKvError> {
+        // Reuse the existing log method
+        self.log()
+    }
 }
 
 impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
@@ -1006,6 +1083,46 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
         // For InMemory storage, "opening" is the same as initializing
         // since data is not persistent
         Self::init(path)
+    }
+}
+
+// Implement HistoricalAccess for InMemoryNodeStorage
+// Note: InMemory storage only has access to current state
+impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, InMemoryNodeStorage<N>> {
+    fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        // For non-git storage, we can only provide current state
+        // In a real implementation, you might want to store snapshots or use git for versioning
+        if reference == "HEAD" || reference == "current" {
+            let mut result = HashMap::new();
+            let keys = self.list_keys();
+            for key in keys {
+                if let Some(value) = self.get(&key) {
+                    result.insert(key, value);
+                }
+            }
+            Ok(result)
+        } else {
+            Err(GitKvError::GitObjectError(format!(
+                "Historical access not supported for InMemory storage. Reference '{}' not found", 
+                reference
+            )))
+        }
+    }
+}
+
+// Implement HistoricalCommitAccess for InMemoryNodeStorage
+// Note: InMemory storage only has access to current state, historical operations not supported
+impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, InMemoryNodeStorage<N>> {
+    fn get_commits_for_key(&self, _key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
+        Err(GitKvError::GitObjectError(
+            "Historical commit access not supported for InMemory storage. Use Git storage for commit history features.".to_string()
+        ))
+    }
+    
+    fn get_commit_history(&self) -> Result<Vec<CommitInfo>, GitKvError> {
+        Err(GitKvError::GitObjectError(
+            "Historical commit access not supported for InMemory storage. Use Git storage for commit history features.".to_string()
+        ))
     }
 }
 
@@ -1104,6 +1221,46 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     }
 }
 
+// Implement HistoricalAccess for FileNodeStorage
+// Note: File storage only has access to current state  
+impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, FileNodeStorage<N>> {
+    fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        // For non-git storage, we can only provide current state
+        // In a real implementation, you might want to store snapshots or use git for versioning
+        if reference == "HEAD" || reference == "current" {
+            let mut result = HashMap::new();
+            let keys = self.list_keys();
+            for key in keys {
+                if let Some(value) = self.get(&key) {
+                    result.insert(key, value);
+                }
+            }
+            Ok(result)
+        } else {
+            Err(GitKvError::GitObjectError(format!(
+                "Historical access not supported for File storage. Reference '{}' not found", 
+                reference
+            )))
+        }
+    }
+}
+
+// Implement HistoricalCommitAccess for FileNodeStorage
+// Note: File storage only has access to current state, historical operations not supported
+impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, FileNodeStorage<N>> {
+    fn get_commits_for_key(&self, _key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
+        Err(GitKvError::GitObjectError(
+            "Historical commit access not supported for File storage. Use Git storage for commit history features.".to_string()
+        ))
+    }
+    
+    fn get_commit_history(&self) -> Result<Vec<CommitInfo>, GitKvError> {
+        Err(GitKvError::GitObjectError(
+            "Historical commit access not supported for File storage. Use Git storage for commit history features.".to_string()
+        ))
+    }
+}
+
 #[cfg(feature = "rocksdb_storage")]
 impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     /// Initialize a new versioned KV store with RocksDB storage
@@ -1193,6 +1350,48 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
         // Note: RocksDB storage data is loaded directly, no need to reload from HEAD
 
         Ok(store)
+    }
+}
+
+// Implement HistoricalAccess for RocksDBNodeStorage
+// Note: RocksDB storage only has access to current state
+#[cfg(feature = "rocksdb_storage")]
+impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, RocksDBNodeStorage<N>> {
+    fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        // For non-git storage, we can only provide current state
+        // In a real implementation, you might want to store snapshots or use git for versioning
+        if reference == "HEAD" || reference == "current" {
+            let mut result = HashMap::new();
+            let keys = self.list_keys();
+            for key in keys {
+                if let Some(value) = self.get(&key) {
+                    result.insert(key, value);
+                }
+            }
+            Ok(result)
+        } else {
+            Err(GitKvError::GitObjectError(format!(
+                "Historical access not supported for RocksDB storage. Reference '{}' not found", 
+                reference
+            )))
+        }
+    }
+}
+
+// Implement HistoricalCommitAccess for RocksDBNodeStorage  
+// Note: RocksDB storage only has access to current state, historical operations not supported
+#[cfg(feature = "rocksdb_storage")]
+impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, RocksDBNodeStorage<N>> {
+    fn get_commits_for_key(&self, _key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
+        Err(GitKvError::GitObjectError(
+            "Historical commit access not supported for RocksDB storage. Use Git storage for commit history features.".to_string()
+        ))
+    }
+    
+    fn get_commit_history(&self) -> Result<Vec<CommitInfo>, GitKvError> {
+        Err(GitKvError::GitObjectError(
+            "Historical commit access not supported for RocksDB storage. Use Git storage for commit history features.".to_string()
+        ))
     }
 }
 
@@ -1459,6 +1658,197 @@ mod tests {
         
         // Should have no changes
         assert_eq!(diffs.len(), 0);
+    }
+
+    #[test]
+    fn test_diff_with_inmemory_storage() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+        
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        
+        let mut store = InMemoryVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        
+        // Add some data
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+        store.insert(b"key2".to_vec(), b"value2".to_vec()).unwrap();
+        store.commit("Initial data").unwrap();
+        
+        // Test diff with current state (the only reference supported for InMemory)
+        let diffs = store.diff("current", "current").unwrap();
+        
+        // Should have no changes when comparing current with itself
+        assert_eq!(diffs.len(), 0);
+        
+        // Test error case for unsupported reference
+        let result = store.diff("main", "feature");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Historical access not supported"));
+    }
+
+    #[test]
+    fn test_get_commits_for_key() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+        
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        
+        // Create commit 1: Add key1
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+        store.insert(b"key2".to_vec(), b"value2".to_vec()).unwrap();
+        let commit1 = store.commit("Add key1 and key2").unwrap();
+        
+        // Create commit 2: Modify key1, leave key2 unchanged
+        store.update(b"key1".to_vec(), b"value1_modified".to_vec()).unwrap();
+        let commit2 = store.commit("Modify key1").unwrap();
+        
+        // Create commit 3: Add key3, leave key1 and key2 unchanged
+        store.insert(b"key3".to_vec(), b"value3".to_vec()).unwrap();
+        let commit3 = store.commit("Add key3").unwrap();
+        
+        // Create commit 4: Delete key1
+        store.delete(b"key1").unwrap();
+        let commit4 = store.commit("Delete key1").unwrap();
+        
+        // Test get_commits for key1 (should have commits 4, 2, 1 - newest first)
+        let key1_commits = store.get_commits(b"key1").unwrap();
+        
+        // Debug: print commit information
+        eprintln!("key1_commits found: {}", key1_commits.len());
+        for (i, commit) in key1_commits.iter().enumerate() {
+            eprintln!("  [{}] {} - {}", i, commit.id, commit.message.trim());
+        }
+        eprintln!("Expected commits:");
+        eprintln!("  commit4 (delete): {}", commit4);
+        eprintln!("  commit2 (modify): {}", commit2);  
+        eprintln!("  commit1 (add): {}", commit1);
+        
+        assert_eq!(key1_commits.len(), 3);
+        assert_eq!(key1_commits[0].id, commit4); // Delete commit
+        assert_eq!(key1_commits[1].id, commit2); // Modify commit  
+        assert_eq!(key1_commits[2].id, commit1); // Add commit
+        
+        // Test get_commits for key2 (should have only commit 1)
+        let key2_commits = store.get_commits(b"key2").unwrap();
+        assert_eq!(key2_commits.len(), 1);
+        assert_eq!(key2_commits[0].id, commit1); // Add commit
+        
+        // Test get_commits for key3 (should have only commit 3)
+        let key3_commits = store.get_commits(b"key3").unwrap();
+        assert_eq!(key3_commits.len(), 1);
+        assert_eq!(key3_commits[0].id, commit3); // Add commit
+        
+        // Test get_commits for non-existent key (should be empty)
+        let nonexistent_commits = store.get_commits(b"nonexistent").unwrap();
+        assert_eq!(nonexistent_commits.len(), 0);
+    }
+
+    #[test]
+    fn test_get_commits_with_repeated_changes() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+        
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        
+        // Create commit 1: Add key
+        store.insert(b"key".to_vec(), b"value1".to_vec()).unwrap();
+        let commit1 = store.commit("Add key with value1").unwrap();
+        
+        // Create commit 2: Change key to same value (should not be tracked)
+        store.update(b"key".to_vec(), b"value1".to_vec()).unwrap();
+        let _commit2 = store.commit("Update key to same value").unwrap();
+        
+        // Create commit 3: Change key to different value
+        store.update(b"key".to_vec(), b"value2".to_vec()).unwrap();
+        let commit3 = store.commit("Change key to value2").unwrap();
+        
+        // Create commit 4: Change key back to original value
+        store.update(b"key".to_vec(), b"value1".to_vec()).unwrap();
+        let commit4 = store.commit("Change key back to value1").unwrap();
+        
+        // Test get_commits for key - should have commits 4, 3, 1 (skipping commit2 since no real change)
+        let key_commits = store.get_commits(b"key").unwrap();
+        assert_eq!(key_commits.len(), 3);
+        assert_eq!(key_commits[0].id, commit4); // Back to value1
+        assert_eq!(key_commits[1].id, commit3); // Changed to value2
+        assert_eq!(key_commits[2].id, commit1); // Initial add
+    }
+
+    #[test]
+    fn test_historical_commit_access_non_git_storages() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+        
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        
+        // Test InMemory storage
+        {
+            let store = InMemoryVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+            
+            // Test get_commits_for_key returns error
+            let result = store.get_commits(b"test_key");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Historical commit access not supported for InMemory storage"));
+            
+            // Test get_commit_history through trait
+            let historical_store: &dyn HistoricalCommitAccess<32> = &store;
+            let result = historical_store.get_commit_history();
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Historical commit access not supported for InMemory storage"));
+        }
+        
+        // Test File storage
+        {
+            let store = FileVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+            
+            // Test get_commits_for_key returns error
+            let result = store.get_commits(b"test_key");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Historical commit access not supported for File storage"));
+            
+            // Test get_commit_history through trait
+            let historical_store: &dyn HistoricalCommitAccess<32> = &store;
+            let result = historical_store.get_commit_history();
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Historical commit access not supported for File storage"));
+        }
+        
+        // Test RocksDB storage (if enabled)
+        #[cfg(feature = "rocksdb_storage")]
+        {
+            let store = RocksDBVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+            
+            // Test get_commits_for_key returns error
+            let result = store.get_commits(b"test_key");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Historical commit access not supported for RocksDB storage"));
+            
+            // Test get_commit_history through trait
+            let historical_store: &dyn HistoricalCommitAccess<32> = &store;
+            let result = historical_store.get_commit_history();
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Historical commit access not supported for RocksDB storage"));
+        }
     }
 
 }
