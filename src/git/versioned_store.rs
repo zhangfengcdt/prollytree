@@ -13,6 +13,7 @@ limitations under the License.
 */
 
 use crate::config::TreeConfig;
+use crate::digest::ValueDigest;
 use crate::git::storage::GitNodeStorage;
 use crate::git::types::*;
 use crate::storage::{FileNodeStorage, InMemoryNodeStorage, NodeStorage};
@@ -192,8 +193,45 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
             .save_config()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
 
-        // Create tree object in Git (this will include prolly metadata files)
-        let tree_id = self.create_git_tree()?;
+        // Create tree object in Git using git commands
+        // Get the git root directory
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        
+        // Stage all files in the current directory recursively
+        let add_cmd = std::process::Command::new("git")
+            .args(["add", "-A", "."])
+            .current_dir(&git_root)
+            .output()
+            .map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to run git add: {e}"))
+            })?;
+
+        if !add_cmd.status.success() {
+            let stderr = String::from_utf8_lossy(&add_cmd.stderr);
+            eprintln!("Warning: git add failed: {stderr}");
+        }
+
+        // Use git write-tree to create tree from the current index
+        let write_tree_cmd = std::process::Command::new("git")
+            .args(["write-tree"])
+            .current_dir(&git_root)
+            .output()
+            .map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to run git write-tree: {e}"))
+            })?;
+
+        if !write_tree_cmd.status.success() {
+            let stderr = String::from_utf8_lossy(&write_tree_cmd.stderr);
+            return Err(GitKvError::GitObjectError(format!(
+                "git write-tree failed: {stderr}"
+            )));
+        }
+
+        let tree_hash = String::from_utf8_lossy(&write_tree_cmd.stdout)
+            .trim()
+            .to_string();
+        let tree_id = gix::ObjectId::from_hex(tree_hash.as_bytes())
+            .map_err(|e| GitKvError::GitObjectError(format!("Invalid tree hash: {e}")))?;
 
         // Create commit
         let commit_id = self.create_git_commit(tree_id, message)?;
@@ -384,70 +422,7 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
         Ok(history)
     }
 
-    /// Create a Git tree object from the current ProllyTree state
-    fn create_git_tree(&self) -> Result<gix::ObjectId, GitKvError> {
-        // Actually, we should let git handle the tree creation properly
-        // Use git's index to stage files and create tree from the index
 
-        // Get the git root directory
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
-        let current_dir = std::env::current_dir().map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
-        })?;
-
-        // Get relative path from git root to current directory
-        let relative_dir = current_dir.strip_prefix(&git_root).unwrap_or(&current_dir);
-
-        // Stage the prolly metadata files using git add
-        let config_file = "prolly_config_tree_config";
-        let mapping_file = "prolly_hash_mappings";
-
-        for filename in &[config_file, mapping_file] {
-            let file_path = current_dir.join(filename);
-            if file_path.exists() {
-                // Get relative path from git root
-                let relative_path = relative_dir.join(filename);
-                let relative_path_str = relative_path.to_string_lossy();
-
-                let add_cmd = std::process::Command::new("git")
-                    .args(["add", &relative_path_str])
-                    .current_dir(&git_root)
-                    .output()
-                    .map_err(|e| {
-                        GitKvError::GitObjectError(format!("Failed to run git add: {e}"))
-                    })?;
-
-                if !add_cmd.status.success() {
-                    let stderr = String::from_utf8_lossy(&add_cmd.stderr);
-                    eprintln!("Warning: git add failed for {filename}: {stderr}");
-                }
-            }
-        }
-
-        // Use git write-tree to create tree from the current index
-        let write_tree_cmd = std::process::Command::new("git")
-            .args(["write-tree"])
-            .current_dir(&git_root)
-            .output()
-            .map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to run git write-tree: {e}"))
-            })?;
-
-        if !write_tree_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&write_tree_cmd.stderr);
-            return Err(GitKvError::GitObjectError(format!(
-                "git write-tree failed: {stderr}"
-            )));
-        }
-
-        let tree_hash = String::from_utf8_lossy(&write_tree_cmd.stdout)
-            .trim()
-            .to_string();
-        let tree_id = gix::ObjectId::from_hex(tree_hash.as_bytes())
-            .map_err(|e| GitKvError::GitObjectError(format!("Invalid tree hash: {e}")))?;
-
-        Ok(tree_id)
-    }
 
     /// Get git user configuration (name and email)
     fn get_git_user_config(&self) -> Result<(String, String), GitKvError> {
@@ -728,6 +703,264 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
 
         Ok(())
     }
+
+    /// Compare two commits or branches and return all keys that are added, updated or deleted
+    pub fn diff(&self, from: &str, to: &str) -> Result<Vec<KvDiff>, GitKvError> {
+        // Resolve the commit objects for both references
+        let from_commit = self.resolve_commit(from)?;
+        let to_commit = self.resolve_commit(to)?;
+
+        // Get all keys from both commits
+        let from_keys = self.collect_keys_at_commit(&from_commit)?;
+        let to_keys = self.collect_keys_at_commit(&to_commit)?;
+
+
+        let mut diffs = Vec::new();
+
+        // Check for added or modified keys
+        for (key, to_value) in &to_keys {
+            match from_keys.get(key) {
+                None => {
+                    // Key was added
+                    diffs.push(KvDiff {
+                        key: key.clone(),
+                        operation: DiffOperation::Added(to_value.clone()),
+                    });
+                }
+                Some(from_value) => {
+                    if from_value != to_value {
+                        // Key was modified
+                        diffs.push(KvDiff {
+                            key: key.clone(),
+                            operation: DiffOperation::Modified {
+                                old: from_value.clone(),
+                                new: to_value.clone(),
+                            },
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check for removed keys
+        for (key, from_value) in &from_keys {
+            if !to_keys.contains_key(key) {
+                diffs.push(KvDiff {
+                    key: key.clone(),
+                    operation: DiffOperation::Removed(from_value.clone()),
+                });
+            }
+        }
+
+        // Sort diffs by key for consistent output
+        diffs.sort_by(|a, b| a.key.cmp(&b.key));
+
+        Ok(diffs)
+    }
+
+    /// Resolve a branch name or commit SHA to a commit object ID
+    fn resolve_commit(&self, reference: &str) -> Result<gix::ObjectId, GitKvError> {
+        // First try to resolve as a branch
+        let branch_ref = if reference.starts_with("refs/") {
+            reference.to_string()
+        } else {
+            format!("refs/heads/{}", reference)
+        };
+
+        match self.git_repo.refs.find(&branch_ref) {
+            Ok(reference) => {
+                let commit_id = reference
+                    .target
+                    .id();
+                Ok(commit_id.into())
+            }
+            Err(_) => {
+                // Try to parse as a commit SHA
+                gix::ObjectId::from_hex(reference.as_bytes())
+                    .map_err(|_| GitKvError::InvalidCommit(reference.to_string()))
+            }
+        }
+    }
+
+    /// Collect all key-value pairs from the tree at a specific commit
+    fn collect_keys_at_commit(
+        &self,
+        commit_id: &gix::ObjectId,
+    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        // Get the commit object
+        let mut buffer = Vec::new();
+        let commit = self
+            .git_repo
+            .objects
+            .find(commit_id, &mut buffer)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to find commit: {e}")))?;
+
+        let commit_ref = commit
+            .decode()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode commit: {e}")))?
+            .into_commit()
+            .ok_or_else(|| GitKvError::GitObjectError("Object is not a commit".to_string()))?;
+
+        // Get the tree object from the commit
+        let tree_id = commit_ref.tree();
+        let mut tree_buffer = Vec::new();
+        let tree = self
+            .git_repo
+            .objects
+            .find(&tree_id, &mut tree_buffer)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to find tree: {e}")))?;
+
+        let tree_ref = tree
+            .decode()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode tree: {e}")))?
+            .into_tree()
+            .ok_or_else(|| GitKvError::GitObjectError("Object is not a tree".to_string()))?;
+
+        // Convert TreeRef to Tree
+        let tree_obj = gix::objs::Tree {
+            entries: tree_ref.entries.iter().map(|e| gix::objs::tree::Entry {
+                mode: e.mode,
+                filename: e.filename.to_vec().into(),
+                oid: e.oid.into(),
+            }).collect(),
+        };
+        
+
+        // Try to load the prolly tree configuration from the tree
+        let config_result = self.read_file_from_tree(&tree_obj, "prolly_config_tree_config");
+        let mapping_result = self.read_file_from_tree(&tree_obj, "prolly_hash_mappings");
+
+        // If files are not found, this might be an initial empty commit, return empty
+        if config_result.is_err() || mapping_result.is_err() {
+            return Ok(HashMap::new());
+        }
+
+        let config_data = config_result?;
+        let config: TreeConfig<N> = serde_json::from_slice(&config_data)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to deserialize config: {e}")))?;
+
+        // Load the hash mappings from the tree as string format and parse
+        let mapping_data = mapping_result?;
+        let mapping_str = String::from_utf8(mapping_data)
+            .map_err(|e| GitKvError::GitObjectError(format!("Invalid UTF-8 in mappings: {e}")))?;
+        
+        let mut hash_mappings = HashMap::new();
+        for line in mapping_str.lines() {
+            if let Some((hash_hex, object_hex)) = line.split_once(':') {
+                // Parse hex string manually
+                if hash_hex.len() == N * 2 {
+                    let mut hash_bytes = Vec::new();
+                    for i in 0..N {
+                        if let Ok(byte) = u8::from_str_radix(&hash_hex[i * 2..i * 2 + 2], 16) {
+                            hash_bytes.push(byte);
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if hash_bytes.len() == N {
+                        if let Ok(object_id) = gix::ObjectId::from_hex(object_hex.as_bytes()) {
+                            let mut hash_array = [0u8; N];
+                            hash_array.copy_from_slice(&hash_bytes);
+                            let hash = ValueDigest(hash_array);
+                            hash_mappings.insert(hash, object_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // If there are no mappings, this is likely an empty tree
+        if hash_mappings.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Create a temporary storage with the loaded mappings
+        let temp_storage = GitNodeStorage::with_mappings(
+            self.git_repo.clone(),
+            self.tree.storage.dataset_dir().to_path_buf(),
+            hash_mappings,
+        )?;
+
+        // Load the tree with the config
+        let tree = ProllyTree::load_from_storage(temp_storage, config)
+            .ok_or_else(|| GitKvError::GitObjectError("Failed to load tree from storage".to_string()))?;
+
+        // Collect all key-value pairs
+        let mut key_values = HashMap::new();
+        for key in tree.collect_keys() {
+            if let Some(node) = tree.find(&key) {
+                // Find the value in the node
+                if let Some(index) = node.keys.iter().position(|k| k == &key) {
+                    key_values.insert(key, node.values[index].clone());
+                }
+            }
+        }
+
+        Ok(key_values)
+    }
+
+    /// Read a file from a git tree object (searches recursively)
+    fn read_file_from_tree(
+        &self,
+        tree: &gix::objs::Tree,
+        filename: &str,
+    ) -> Result<Vec<u8>, GitKvError> {
+        // First try to find the file in the current tree
+        if let Some(entry) = tree.entries.iter().find(|e| e.filename == filename.as_bytes()) {
+            // Read the blob
+            let mut blob_buffer = Vec::new();
+            let blob = self
+                .git_repo
+                .objects
+                .find(&entry.oid, &mut blob_buffer)
+                .map_err(|e| GitKvError::GitObjectError(format!("Failed to find blob: {e}")))?;
+
+            let blob_ref = blob
+                .decode()
+                .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode blob: {e}")))?
+                .into_blob()
+                .ok_or_else(|| GitKvError::GitObjectError("Object is not a blob".to_string()))?;
+
+            return Ok(blob_ref.data.to_vec());
+        }
+
+        // If not found, search in subdirectories
+        for entry in &tree.entries {
+            if entry.mode.is_tree() {
+                // Load the subtree
+                let mut subtree_buffer = Vec::new();
+                let subtree = self
+                    .git_repo
+                    .objects
+                    .find(&entry.oid, &mut subtree_buffer)
+                    .map_err(|e| GitKvError::GitObjectError(format!("Failed to find subtree: {e}")))?;
+
+                let subtree_ref = subtree
+                    .decode()
+                    .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode subtree: {e}")))?
+                    .into_tree()
+                    .ok_or_else(|| GitKvError::GitObjectError("Object is not a tree".to_string()))?;
+
+                // Convert TreeRef to Tree
+                let subtree_obj = gix::objs::Tree {
+                    entries: subtree_ref.entries.iter().map(|e| gix::objs::tree::Entry {
+                        mode: e.mode,
+                        filename: e.filename.to_vec().into(),
+                        oid: e.oid.into(),
+                    }).collect(),
+                };
+
+                // Recursively search in the subtree
+                if let Ok(data) = self.read_file_from_tree(&subtree_obj, filename) {
+                    return Ok(data);
+                }
+            }
+        }
+
+        Err(GitKvError::GitObjectError(format!("File not found in tree: {}", filename)))
+    }
+
 }
 
 impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
@@ -1093,4 +1326,139 @@ mod tests {
         );
         assert!(mapping_path.exists(), "prolly_hash_mappings should exist");
     }
+
+    #[test]
+    fn test_diff_between_commits() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+        
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        
+        
+        // Create first commit with some data
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+        store.insert(b"key2".to_vec(), b"value2".to_vec()).unwrap();
+        let commit1 = store.commit("Initial data").unwrap();
+        
+        // Create second commit with modifications
+        store.update(b"key1".to_vec(), b"value1_modified".to_vec()).unwrap();
+        store.insert(b"key3".to_vec(), b"value3".to_vec()).unwrap();
+        store.delete(b"key2").unwrap();
+        let commit2 = store.commit("Modify data").unwrap();
+        
+        // Diff between the two commits
+        let diffs = store.diff(&commit1.to_hex().to_string(), &commit2.to_hex().to_string()).unwrap();
+        
+        
+        // Should have 3 changes: key1 modified, key2 removed, key3 added
+        assert_eq!(diffs.len(), 3);
+        
+        // Check each diff (they are sorted by key)
+        assert_eq!(diffs[0].key, b"key1");
+        match &diffs[0].operation {
+            DiffOperation::Modified { old, new } => {
+                assert_eq!(old, b"value1");
+                assert_eq!(new, b"value1_modified");
+            }
+            _ => panic!("Expected key1 to be modified"),
+        }
+        
+        assert_eq!(diffs[1].key, b"key2");
+        match &diffs[1].operation {
+            DiffOperation::Removed(value) => {
+                assert_eq!(value, b"value2");
+            }
+            _ => panic!("Expected key2 to be removed"),
+        }
+        
+        assert_eq!(diffs[2].key, b"key3");
+        match &diffs[2].operation {
+            DiffOperation::Added(value) => {
+                assert_eq!(value, b"value3");
+            }
+            _ => panic!("Expected key3 to be added"),
+        }
+    }
+
+    #[test]
+    fn test_diff_between_branches() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+        
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        
+        
+        // Create initial commit on main branch
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+        store.insert(b"key2".to_vec(), b"value2".to_vec()).unwrap();
+        store.commit("Initial data").unwrap();
+        
+        // Create and switch to feature branch
+        store.create_branch("feature").unwrap();
+        
+        // Make changes on feature branch
+        store.update(b"key1".to_vec(), b"value1_feature".to_vec()).unwrap();
+        store.insert(b"key3".to_vec(), b"value3".to_vec()).unwrap();
+        store.commit("Feature changes").unwrap();
+        
+        // Diff between main and feature branches
+        let diffs = store.diff("main", "feature").unwrap();
+        
+        // Should have 2 changes: key1 modified, key3 added
+        assert_eq!(diffs.len(), 2);
+        
+        assert_eq!(diffs[0].key, b"key1");
+        match &diffs[0].operation {
+            DiffOperation::Modified { old, new } => {
+                assert_eq!(old, b"value1");
+                assert_eq!(new, b"value1_feature");
+            }
+            _ => panic!("Expected key1 to be modified"),
+        }
+        
+        assert_eq!(diffs[1].key, b"key3");
+        match &diffs[1].operation {
+            DiffOperation::Added(value) => {
+                assert_eq!(value, b"value3");
+            }
+            _ => panic!("Expected key3 to be added"),
+        }
+    }
+
+    #[test]
+    fn test_diff_with_no_changes() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+        
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        
+        // Create a commit
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+        let commit = store.commit("Initial data").unwrap();
+        
+        // Diff the commit with itself
+        let diffs = store.diff(&commit.to_hex().to_string(), &commit.to_hex().to_string()).unwrap();
+        
+        // Should have no changes
+        assert_eq!(diffs.len(), 0);
+    }
+
 }

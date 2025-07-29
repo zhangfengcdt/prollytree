@@ -55,6 +55,11 @@ impl<const N: usize> Clone for GitNodeStorage<N> {
 }
 
 impl<const N: usize> GitNodeStorage<N> {
+    /// Get the dataset directory path
+    pub fn dataset_dir(&self) -> &std::path::Path {
+        &self.dataset_dir
+    }
+
     /// Create a new GitNodeStorage instance
     pub fn new(
         repository: gix::Repository,
@@ -94,6 +99,25 @@ impl<const N: usize> GitNodeStorage<N> {
 
         // Load existing hash mappings
         storage.load_hash_mappings();
+
+        Ok(storage)
+    }
+
+    /// Create GitNodeStorage with pre-loaded hash mappings
+    pub fn with_mappings(
+        repository: gix::Repository,
+        dataset_dir: std::path::PathBuf,
+        hash_mappings: HashMap<ValueDigest<N>, gix::ObjectId>,
+    ) -> Result<Self, GitKvError> {
+        let cache_size = NonZeroUsize::new(1000).unwrap(); // Default cache size
+
+        let storage = GitNodeStorage {
+            _repository: Arc::new(Mutex::new(repository)),
+            cache: Mutex::new(LruCache::new(cache_size)),
+            configs: Mutex::new(HashMap::new()),
+            hash_to_object_id: Mutex::new(hash_mappings),
+            dataset_dir,
+        };
 
         Ok(storage)
     }
