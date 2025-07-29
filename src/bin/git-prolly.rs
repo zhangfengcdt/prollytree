@@ -144,7 +144,11 @@ enum Commands {
         interactive: bool,
         #[arg(long, help = "Show detailed error messages")]
         verbose: bool,
-        #[arg(short, long, help = "Execute against specific branch or commit (SELECT queries only, requires clean status)")]
+        #[arg(
+            short,
+            long,
+            help = "Execute against specific branch or commit (SELECT queries only, requires clean status)"
+        )]
         branch: Option<String>,
     },
 
@@ -969,10 +973,13 @@ async fn handle_sql(
         let current_status = store.status();
         if !current_status.is_empty() {
             eprintln!("Error: Cannot use -b/--branch parameter with uncommitted staging changes");
-            eprintln!("       You have {} staged change(s) that need to be committed first:", current_status.len());
+            eprintln!(
+                "       You have {} staged change(s) that need to be committed first:",
+                current_status.len()
+            );
             for (key, status_type) in current_status {
                 let key_str = String::from_utf8_lossy(&key);
-                eprintln!("         {}: {}", status_type, key_str);
+                eprintln!("         {status_type}: {key_str}");
             }
             eprintln!("       Please commit your changes with 'git prolly commit' first");
             std::process::exit(1);
@@ -981,24 +988,33 @@ async fn handle_sql(
         // Perform checkout now that we know the working directory is clean
         store.checkout(branch_or_commit).map_err(|e| {
             if verbose {
-                format!("Failed to checkout branch/commit '{}': {}", branch_or_commit, e)
+                format!("Failed to checkout branch/commit '{branch_or_commit}': {e}")
             } else {
-                format!("Failed to checkout branch/commit '{}'", branch_or_commit)   
+                format!("Failed to checkout branch/commit '{branch_or_commit}'")
             }
         })?;
-        
+
         if verbose {
-            println!("Checked out to: {} (will restore after SQL execution)", branch_or_commit);
+            println!("Checked out to: {branch_or_commit} (will restore after SQL execution)");
         }
     }
 
     // Execute SQL with restoration
-    execute_sql_with_restoration(store, query, file, format, interactive, verbose, branch, original_branch, current_dir).await
+    let config = SqlExecutionConfig {
+        query,
+        file,
+        format,
+        interactive,
+        verbose,
+        branch,
+        original_branch,
+        current_dir,
+    };
+    execute_sql_with_restoration(store, config).await
 }
 
 #[cfg(feature = "sql")]
-async fn execute_sql_with_restoration(
-    store: GitVersionedKvStore<32>,
+struct SqlExecutionConfig {
     query: Option<String>,
     file: Option<PathBuf>,
     format: Option<String>,
@@ -1007,51 +1023,62 @@ async fn execute_sql_with_restoration(
     branch: Option<String>,
     original_branch: Option<String>,
     current_dir: std::path::PathBuf,
+}
+
+#[cfg(feature = "sql")]
+async fn execute_sql_with_restoration(
+    store: GitVersionedKvStore<32>,
+    config: SqlExecutionConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create the ProllyTree storage
     let storage = ProllyStorage::<32>::new(store);
 
     let mut glue = Glue::new(storage);
-    let output_format = format.unwrap_or_else(|| "table".to_string());
+    let output_format = config.format.unwrap_or_else(|| "table".to_string());
 
     // Helper function to check if a query is a SELECT statement
-    let is_select_query = |query_str: &str| -> bool {
-        query_str.trim_start().to_lowercase().starts_with("select")
-    };
+    let is_select_query =
+        |query_str: &str| -> bool { query_str.trim_start().to_lowercase().starts_with("select") };
 
     // If branch parameter is provided, validate that we only allow SELECT statements
-    if branch.is_some() {
-        if let Some(query_str) = &query {
+    if config.branch.is_some() {
+        if let Some(query_str) = &config.query {
             if !is_select_query(query_str) {
-                eprintln!("Error: Only SELECT statements are allowed when using -b/--branch parameter");
+                eprintln!(
+                    "Error: Only SELECT statements are allowed when using -b/--branch parameter"
+                );
                 eprintln!("       Historical commits/branches are read-only for data integrity");
                 std::process::exit(1);
             }
         }
-        
-        if let Some(file_path) = &file {
+
+        if let Some(file_path) = &config.file {
             let file_query = std::fs::read_to_string(file_path)?;
             // Check all non-empty, non-comment lines
             for line in file_query.lines() {
                 let trimmed = line.trim();
-                if !trimmed.is_empty() && !trimmed.starts_with("--") && !trimmed.starts_with("#") {
-                    if !is_select_query(trimmed) {
-                        eprintln!("Error: Only SELECT statements are allowed when using -b/--branch parameter");
-                        eprintln!("       Historical commits/branches are read-only for data integrity");
-                        eprintln!("       Found non-SELECT statement in file: {}", trimmed);
-                        std::process::exit(1);
-                    }
+                if !trimmed.is_empty()
+                    && !trimmed.starts_with("--")
+                    && !trimmed.starts_with("#")
+                    && !is_select_query(trimmed)
+                {
+                    eprintln!("Error: Only SELECT statements are allowed when using -b/--branch parameter");
+                    eprintln!(
+                        "       Historical commits/branches are read-only for data integrity"
+                    );
+                    eprintln!("       Found non-SELECT statement in file: {trimmed}");
+                    std::process::exit(1);
                 }
             }
         }
     }
 
-    if interactive {
+    if config.interactive {
         // Start interactive SQL shell
         println!("🌟 ProllyTree SQL Interactive Shell");
         println!("====================================");
-        if let Some(branch_ref) = &branch {
-            println!("Executing against branch/commit: {}", branch_ref);
+        if let Some(branch_ref) = &config.branch {
+            println!("Executing against branch/commit: {branch_ref}");
             println!("⚠️  Only SELECT statements are allowed in this mode");
         }
         println!("Type 'exit' or 'quit' to exit");
@@ -1082,30 +1109,32 @@ async fn execute_sql_with_restoration(
             }
 
             // If branch parameter is provided, validate that we only allow SELECT statements
-            if branch.is_some() && !is_select_query(input) {
-                eprintln!("Error: Only SELECT statements are allowed when using -b/--branch parameter");
+            if config.branch.is_some() && !is_select_query(input) {
+                eprintln!(
+                    "Error: Only SELECT statements are allowed when using -b/--branch parameter"
+                );
                 eprintln!("       Historical commits/branches are read-only for data integrity");
                 continue;
             }
 
-            match execute_query(&mut glue, input, &output_format, verbose).await {
+            match execute_query(&mut glue, input, &output_format, config.verbose).await {
                 Ok(_) => {}
                 Err(e) => {
                     eprintln!("Error: {e}");
-                    if verbose {
+                    if config.verbose {
                         eprintln!("Query: {input}");
                     }
                 }
             }
             println!();
         }
-    } else if let Some(query_str) = query {
+    } else if let Some(query_str) = config.query {
         // Execute single query
-        execute_query(&mut glue, &query_str, &output_format, verbose).await?;
-    } else if let Some(file_path) = file {
+        execute_query(&mut glue, &query_str, &output_format, config.verbose).await?;
+    } else if let Some(file_path) = config.file {
         // Execute query from file
         let query_str = std::fs::read_to_string(file_path)?;
-        execute_query(&mut glue, &query_str, &output_format, verbose).await?;
+        execute_query(&mut glue, &query_str, &output_format, config.verbose).await?;
     } else {
         eprintln!("Error: Must provide either a query, file, or use interactive mode");
         eprintln!("Usage:");
@@ -1116,28 +1145,29 @@ async fn execute_sql_with_restoration(
     }
 
     // Restore original branch if we performed a temporary checkout
-    if let Some(ref orig_branch) = original_branch {
+    if let Some(ref orig_branch) = config.original_branch {
         // Re-open store since it was consumed by ProllyStorage
-        let mut restore_store = GitVersionedKvStore::<32>::open(&current_dir).map_err(|e| {
-            if verbose {
-                format!("Failed to re-open store for restoration: {e}")
-            } else {
-                "Failed to restore original branch".to_string()
-            }
-        })?;
-
-        // Only restore if we're not already on the original branch
-        if restore_store.current_branch() != orig_branch.as_str() {
-            restore_store.checkout(orig_branch).map_err(|e| {
-                if verbose {
-                    format!("Failed to restore original branch '{}': {}", orig_branch, e)
+        let mut restore_store =
+            GitVersionedKvStore::<32>::open(&config.current_dir).map_err(|e| {
+                if config.verbose {
+                    format!("Failed to re-open store for restoration: {e}")
                 } else {
                     "Failed to restore original branch".to_string()
                 }
             })?;
-            
-            if verbose {
-                println!("Restored to original branch: {}", orig_branch);
+
+        // Only restore if we're not already on the original branch
+        if restore_store.current_branch() != orig_branch.as_str() {
+            restore_store.checkout(orig_branch).map_err(|e| {
+                if config.verbose {
+                    format!("Failed to restore original branch '{orig_branch}': {e}")
+                } else {
+                    "Failed to restore original branch".to_string()
+                }
+            })?;
+
+            if config.verbose {
+                println!("Restored to original branch: {orig_branch}");
             }
         }
     }
@@ -1182,7 +1212,6 @@ async fn execute_query(
 
     Ok(())
 }
-
 
 #[cfg(feature = "sql")]
 fn format_payload(payload: &Payload, format: &str) -> Result<(), Box<dyn std::error::Error>> {
