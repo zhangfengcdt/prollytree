@@ -15,6 +15,7 @@ limitations under the License.
 use clap::{Parser, Subcommand};
 #[cfg(feature = "sql")]
 use gluesql_core::{executor::Payload, prelude::Glue};
+use prollytree::git::versioned_store::{HistoricalAccess, HistoricalCommitAccess};
 use prollytree::git::{DiffOperation, GitOperations, GitVersionedKvStore, MergeResult};
 #[cfg(feature = "sql")]
 use prollytree::sql::ProllyStorage;
@@ -96,6 +97,26 @@ enum Commands {
         keys_only: bool,
     },
 
+    /// Show commit history for a specific key
+    History {
+        #[arg(help = "Key to track")]
+        key: String,
+        #[arg(long, help = "Output format (compact, detailed, json)")]
+        format: Option<String>,
+        #[arg(long, help = "Maximum number of commits to show")]
+        limit: Option<usize>,
+    },
+
+    /// Show all keys that existed at a specific commit
+    KeysAt {
+        #[arg(help = "Commit/branch to inspect")]
+        reference: String,
+        #[arg(long, help = "Show values as well")]
+        values: bool,
+        #[arg(long, help = "Output format (list, json)")]
+        format: Option<String>,
+    },
+
     /// Merge another branch
     Merge {
         #[arg(help = "Branch to merge")]
@@ -123,6 +144,12 @@ enum Commands {
         interactive: bool,
         #[arg(long, help = "Show detailed error messages")]
         verbose: bool,
+        #[arg(
+            short,
+            long,
+            help = "Execute against specific branch or commit (SELECT queries only, requires clean status)"
+        )]
+        branch: Option<String>,
     },
 
     /// Clear all tree nodes, staging changes, and git blobs for the current dataset
@@ -144,6 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         format,
         interactive,
         verbose,
+        branch,
     } = &cli.command
     {
         // Create a tokio runtime for SQL commands
@@ -154,6 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format.clone(),
             *interactive,
             *verbose,
+            branch.clone(),
         ));
     }
 
@@ -189,6 +218,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Show { commit, keys_only } => {
             handle_show(commit, keys_only)?;
+        }
+        Commands::History { key, format, limit } => {
+            handle_history(key, format, limit)?;
+        }
+        Commands::KeysAt {
+            reference,
+            values,
+            format,
+        } => {
+            handle_keys_at(reference, values, format)?;
         }
         Commands::Merge { branch, strategy } => {
             handle_merge(branch, strategy)?;
@@ -759,6 +798,149 @@ fn handle_clear(confirm: bool, keep_history: bool) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+fn handle_history(
+    key: String,
+    format: Option<String>,
+    limit: Option<usize>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = env::current_dir()?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
+
+    let key_bytes = key.as_bytes();
+    let commits = store.get_commits_for_key(key_bytes)?;
+
+    if commits.is_empty() {
+        println!("No history found for key '{key}'");
+        return Ok(());
+    }
+
+    let format = format.unwrap_or_else(|| "compact".to_string());
+    let display_limit = limit.unwrap_or(commits.len());
+    let limited_commits: Vec<_> = commits.into_iter().take(display_limit).collect();
+
+    match format.as_str() {
+        "compact" => {
+            println!("History for key '{key}':");
+            for commit in limited_commits {
+                let timestamp = chrono::DateTime::from_timestamp(commit.timestamp, 0)
+                    .unwrap_or_default()
+                    .format("%Y-%m-%d %H:%M:%S");
+                let commit_short = &commit.id.to_string()[..8];
+                println!(
+                    "  {timestamp} {commit_short} {}",
+                    commit.message.lines().next().unwrap_or("")
+                );
+            }
+        }
+        "detailed" => {
+            println!("Detailed History for key '{key}':");
+            println!("═══════════════════════════════════════");
+            for (i, commit) in limited_commits.iter().enumerate() {
+                if i > 0 {
+                    println!();
+                }
+                let timestamp = chrono::DateTime::from_timestamp(commit.timestamp, 0)
+                    .unwrap_or_default()
+                    .format("%Y-%m-%d %H:%M:%S UTC");
+                println!("Commit: {}", commit.id);
+                println!("Date: {timestamp}");
+                println!("Author: {}", commit.author);
+                println!("Message: {}", commit.message);
+            }
+        }
+        "json" => {
+            println!("{{");
+            println!("  \"key\": \"{key}\",");
+            println!("  \"history\": [");
+            for (i, commit) in limited_commits.iter().enumerate() {
+                print!("    {{");
+                print!("\"commit\": \"{}\", ", commit.id);
+                print!("\"timestamp\": {}, ", commit.timestamp);
+                print!("\"author\": \"{}\", ", commit.author);
+                print!("\"message\": \"{}\"", commit.message.replace('\"', "\\\""));
+                print!("}}");
+                if i < limited_commits.len() - 1 {
+                    print!(",");
+                }
+                println!();
+            }
+            println!("  ]");
+            println!("}}");
+        }
+        _ => {
+            eprintln!("Unknown format: {format}. Use 'compact', 'detailed', or 'json'");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_keys_at(
+    reference: String,
+    values: bool,
+    format: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current_dir = env::current_dir()?;
+    let store = GitVersionedKvStore::<32>::open(&current_dir)?;
+
+    let keys_at_ref = store.get_keys_at_ref(&reference)?;
+
+    if keys_at_ref.is_empty() {
+        println!("No keys found at commit/branch '{reference}'");
+        return Ok(());
+    }
+
+    let format = format.unwrap_or_else(|| "list".to_string());
+
+    match format.as_str() {
+        "list" => {
+            println!("Keys at {reference}:");
+            let mut sorted_keys: Vec<_> = keys_at_ref.into_iter().collect();
+            sorted_keys.sort_by(|a, b| a.0.cmp(&b.0));
+
+            for (key, value) in sorted_keys {
+                let key_str = String::from_utf8_lossy(&key);
+                if values {
+                    let value_str = String::from_utf8_lossy(&value);
+                    println!("  {key_str} = \"{value_str}\"");
+                } else {
+                    println!("  {key_str}");
+                }
+            }
+        }
+        "json" => {
+            println!("{{");
+            println!("  \"reference\": \"{reference}\",");
+            println!("  \"keys\": [");
+            let mut sorted_keys: Vec<_> = keys_at_ref.into_iter().collect();
+            sorted_keys.sort_by(|a, b| a.0.cmp(&b.0));
+
+            for (i, (key, value)) in sorted_keys.iter().enumerate() {
+                let key_str = String::from_utf8_lossy(key);
+                print!("    {{\"key\": \"{}\"", key_str.replace('\"', "\\\""));
+                if values {
+                    let value_str = String::from_utf8_lossy(value);
+                    print!(", \"value\": \"{}\"", value_str.replace('\"', "\\\""));
+                }
+                print!("}}");
+                if i < sorted_keys.len() - 1 {
+                    print!(",");
+                }
+                println!();
+            }
+            println!("  ]");
+            println!("}}");
+        }
+        _ => {
+            eprintln!("Unknown format: {format}. Use 'list' or 'json'");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(feature = "sql")]
 async fn handle_sql(
     query: Option<String>,
@@ -766,25 +948,139 @@ async fn handle_sql(
     format: Option<String>,
     interactive: bool,
     verbose: bool,
+    branch: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
 
-    // Open the ProllyTree storage
-    let storage = ProllyStorage::<32>::open(&current_dir).map_err(|e| {
+    // Open the underlying GitVersionedKvStore first
+    let mut store = GitVersionedKvStore::<32>::open(&current_dir).map_err(|e| {
         if verbose {
-            format!("Failed to open ProllyTree storage: {e}")
+            format!("Failed to open GitVersionedKvStore: {e}")
         } else {
             "Failed to open dataset. Make sure you're in a git-prolly directory.".to_string()
         }
     })?;
 
-    let mut glue = Glue::new(storage);
-    let output_format = format.unwrap_or_else(|| "table".to_string());
+    // Save original branch before any operations
+    let original_branch = if branch.is_some() {
+        Some(store.current_branch().to_string())
+    } else {
+        None
+    };
 
-    if interactive {
+    // If branch parameter is provided, ensure clean working directory and checkout
+    if let Some(branch_or_commit) = &branch {
+        let current_status = store.status();
+        if !current_status.is_empty() {
+            eprintln!("Error: Cannot use -b/--branch parameter with uncommitted staging changes");
+            eprintln!(
+                "       You have {} staged change(s) that need to be committed first:",
+                current_status.len()
+            );
+            for (key, status_type) in current_status {
+                let key_str = String::from_utf8_lossy(&key);
+                eprintln!("         {status_type}: {key_str}");
+            }
+            eprintln!("       Please commit your changes with 'git prolly commit' first");
+            std::process::exit(1);
+        }
+
+        // Perform checkout now that we know the working directory is clean
+        store.checkout(branch_or_commit).map_err(|e| {
+            if verbose {
+                format!("Failed to checkout branch/commit '{branch_or_commit}': {e}")
+            } else {
+                format!("Failed to checkout branch/commit '{branch_or_commit}'")
+            }
+        })?;
+
+        if verbose {
+            println!("Checked out to: {branch_or_commit} (will restore after SQL execution)");
+        }
+    }
+
+    // Execute SQL with restoration
+    let config = SqlExecutionConfig {
+        query,
+        file,
+        format,
+        interactive,
+        verbose,
+        branch,
+        original_branch,
+        current_dir,
+    };
+    execute_sql_with_restoration(store, config).await
+}
+
+#[cfg(feature = "sql")]
+struct SqlExecutionConfig {
+    query: Option<String>,
+    file: Option<PathBuf>,
+    format: Option<String>,
+    interactive: bool,
+    verbose: bool,
+    branch: Option<String>,
+    original_branch: Option<String>,
+    current_dir: std::path::PathBuf,
+}
+
+#[cfg(feature = "sql")]
+async fn execute_sql_with_restoration(
+    store: GitVersionedKvStore<32>,
+    config: SqlExecutionConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Create the ProllyTree storage
+    let storage = ProllyStorage::<32>::new(store);
+
+    let mut glue = Glue::new(storage);
+    let output_format = config.format.unwrap_or_else(|| "table".to_string());
+
+    // Helper function to check if a query is a SELECT statement
+    let is_select_query =
+        |query_str: &str| -> bool { query_str.trim_start().to_lowercase().starts_with("select") };
+
+    // If branch parameter is provided, validate that we only allow SELECT statements
+    if config.branch.is_some() {
+        if let Some(query_str) = &config.query {
+            if !is_select_query(query_str) {
+                eprintln!(
+                    "Error: Only SELECT statements are allowed when using -b/--branch parameter"
+                );
+                eprintln!("       Historical commits/branches are read-only for data integrity");
+                std::process::exit(1);
+            }
+        }
+
+        if let Some(file_path) = &config.file {
+            let file_query = std::fs::read_to_string(file_path)?;
+            // Check all non-empty, non-comment lines
+            for line in file_query.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty()
+                    && !trimmed.starts_with("--")
+                    && !trimmed.starts_with("#")
+                    && !is_select_query(trimmed)
+                {
+                    eprintln!("Error: Only SELECT statements are allowed when using -b/--branch parameter");
+                    eprintln!(
+                        "       Historical commits/branches are read-only for data integrity"
+                    );
+                    eprintln!("       Found non-SELECT statement in file: {trimmed}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
+    if config.interactive {
         // Start interactive SQL shell
         println!("🌟 ProllyTree SQL Interactive Shell");
         println!("====================================");
+        if let Some(branch_ref) = &config.branch {
+            println!("Executing against branch/commit: {branch_ref}");
+            println!("⚠️  Only SELECT statements are allowed in this mode");
+        }
         println!("Type 'exit' or 'quit' to exit");
         println!("Type 'help' for available commands\n");
 
@@ -812,24 +1108,33 @@ async fn handle_sql(
                 _ => {}
             }
 
-            match execute_query(&mut glue, input, &output_format, verbose).await {
+            // If branch parameter is provided, validate that we only allow SELECT statements
+            if config.branch.is_some() && !is_select_query(input) {
+                eprintln!(
+                    "Error: Only SELECT statements are allowed when using -b/--branch parameter"
+                );
+                eprintln!("       Historical commits/branches are read-only for data integrity");
+                continue;
+            }
+
+            match execute_query(&mut glue, input, &output_format, config.verbose).await {
                 Ok(_) => {}
                 Err(e) => {
                     eprintln!("Error: {e}");
-                    if verbose {
+                    if config.verbose {
                         eprintln!("Query: {input}");
                     }
                 }
             }
             println!();
         }
-    } else if let Some(query_str) = query {
+    } else if let Some(query_str) = config.query {
         // Execute single query
-        execute_query(&mut glue, &query_str, &output_format, verbose).await?;
-    } else if let Some(file_path) = file {
+        execute_query(&mut glue, &query_str, &output_format, config.verbose).await?;
+    } else if let Some(file_path) = config.file {
         // Execute query from file
         let query_str = std::fs::read_to_string(file_path)?;
-        execute_query(&mut glue, &query_str, &output_format, verbose).await?;
+        execute_query(&mut glue, &query_str, &output_format, config.verbose).await?;
     } else {
         eprintln!("Error: Must provide either a query, file, or use interactive mode");
         eprintln!("Usage:");
@@ -837,6 +1142,34 @@ async fn handle_sql(
         eprintln!("  git prolly sql --file query.sql");
         eprintln!("  git prolly sql --interactive");
         std::process::exit(1);
+    }
+
+    // Restore original branch if we performed a temporary checkout
+    if let Some(ref orig_branch) = config.original_branch {
+        // Re-open store since it was consumed by ProllyStorage
+        let mut restore_store =
+            GitVersionedKvStore::<32>::open(&config.current_dir).map_err(|e| {
+                if config.verbose {
+                    format!("Failed to re-open store for restoration: {e}")
+                } else {
+                    "Failed to restore original branch".to_string()
+                }
+            })?;
+
+        // Only restore if we're not already on the original branch
+        if restore_store.current_branch() != orig_branch.as_str() {
+            restore_store.checkout(orig_branch).map_err(|e| {
+                if config.verbose {
+                    format!("Failed to restore original branch '{orig_branch}': {e}")
+                } else {
+                    "Failed to restore original branch".to_string()
+                }
+            })?;
+
+            if config.verbose {
+                println!("Restored to original branch: {orig_branch}");
+            }
+        }
     }
 
     Ok(())

@@ -320,6 +320,118 @@ git-prolly show HEAD --keys-only
 #           user:456
 ```
 
+#### `git-prolly history <key>`
+Show commit history for a specific key, tracking all changes made to that key over time.
+
+**Usage:**
+```bash
+git-prolly history <key> [--format=<format>] [--limit=<number>]
+```
+
+**Options:**
+- `--format=compact`: Show concise one-line format (default)
+- `--format=detailed`: Show detailed commit information
+- `--format=json`: Output in JSON format
+- `--limit=<number>`: Maximum number of commits to show
+
+**Examples:**
+```bash
+# Basic history
+git-prolly history user:123
+# Output: History for key 'user:123':
+#           2024-01-15 10:30:00 f1e2d3c4 Update user profile
+#           2024-01-15 09:15:00 a1b2c3d4 Add new user
+
+# Detailed history
+git-prolly history user:123 --format=detailed
+# Output: Detailed History for key 'user:123':
+#         ═══════════════════════════════════════
+#         Commit: f1e2d3c4b5a6789012345678901234567890abcd
+#         Date: 2024-01-15 10:30:00 UTC
+#         Author: Developer
+#         Message: Update user profile
+#         
+#         Commit: a1b2c3d4e5f6789012345678901234567890abcd
+#         Date: 2024-01-15 09:15:00 UTC
+#         Author: Developer
+#         Message: Add new user
+
+# Limited results
+git-prolly history user:123 --limit=5
+# Output: History for key 'user:123' (showing 5 most recent):
+#           2024-01-15 10:30:00 f1e2d3c4 Update user profile
+#           2024-01-15 09:15:00 a1b2c3d4 Add new user
+
+# JSON output
+git-prolly history user:123 --format=json
+# Output: {
+#           "key": "user:123",
+#           "history": [
+#             {
+#               "commit": "f1e2d3c4b5a6789012345678901234567890abcd",
+#               "timestamp": 1705315800,
+#               "author": "Developer",
+#               "message": "Update user profile"
+#             }
+#           ]
+#         }
+```
+
+#### `git-prolly keys-at <reference>`
+Show all keys that existed at a specific commit or branch reference.
+
+**Usage:**
+```bash
+git-prolly keys-at <reference> [--values] [--format=<format>]
+```
+
+**Options:**
+- `--values`: Show values as well as keys
+- `--format=list`: Show as a simple list (default)
+- `--format=json`: Output in JSON format
+
+**Examples:**
+```bash
+# List keys at HEAD
+git-prolly keys-at HEAD
+# Output: Keys at HEAD:
+#           config:theme
+#           user:123
+#           user:456
+
+# List keys with values
+git-prolly keys-at HEAD --values
+# Output: Keys at HEAD:
+#           config:theme = "dark"
+#           user:123 = "John Doe"
+#           user:456 = "Jane Smith"
+
+# Keys at specific commit
+git-prolly keys-at a1b2c3d4
+# Output: Keys at a1b2c3d4:
+#           config:theme
+#           user:123
+
+# Keys at branch
+git-prolly keys-at feature/new-users
+# Output: Keys at feature/new-users:
+#           config:theme
+#           user:123
+#           user:456
+#           user:789
+
+# JSON output with values
+git-prolly keys-at HEAD --values --format=json
+# Output: {
+#           "reference": "HEAD",
+#           "keys": [
+#             {"key": "config:theme", "value": "dark"},
+#             {"key": "user:123", "value": "John Doe"},
+#             {"key": "user:456", "value": "Jane Smith"}
+#           ]
+#         }
+```
+
 ### Advanced Operations
 
 #### `git-prolly revert <commit>`

@@ -226,8 +226,11 @@ The following features are for Prolly tree library for Version 0.2.1:
 - [X] add usage examples for git-prolly use cases
 - [X] add usage examples for AI agent memory use cases
 - [X] support rocksdb as storage backend
+- [X] add agent memory system api support
+
+The following features are for Prolly tree library for future versions:
 - [ ] support IPDL as storage backend
-- [X] generic storage backend support for VersionedKvStore
+
 
 ## Contributing
 
