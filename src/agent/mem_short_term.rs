@@ -4,7 +4,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::store::BaseMemoryStore;
+use super::mem_store::BaseMemoryStore;
 use super::traits::{MemoryError, MemoryStore};
 use super::types::*;
 

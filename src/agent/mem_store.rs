@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use super::simple_persistence::SimpleMemoryPersistence;
+use super::persistence_simple::SimpleMemoryPersistence;
 use super::traits::{EmbeddingGenerator, MemoryError, MemoryPersistence, MemoryStore};
 use super::types::*;
 // use crate::git::GitKvError;

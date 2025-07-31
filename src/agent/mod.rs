@@ -90,23 +90,23 @@
 pub mod traits;
 pub mod types;
 // pub mod persistence; // Disabled due to Send/Sync issues with GitVersionedKvStore
-pub mod lifecycle;
-pub mod long_term;
-pub mod search;
-pub mod short_term;
-pub mod simple_persistence;
-pub mod store;
+pub mod mem_lifecycle;
+pub mod mem_long_term;
+pub mod embedding_search;
+pub mod mem_short_term;
+pub mod persistence_simple;
+pub mod mem_store;
 
 // Re-export main types and traits for convenience
 pub use traits::*;
 pub use types::*;
 // pub use persistence::ProllyMemoryPersistence; // Disabled
-pub use lifecycle::MemoryLifecycleManager;
-pub use long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemoryStore};
-pub use search::{DistanceCalculator, MemorySearchEngine, MockEmbeddingGenerator};
-pub use short_term::ShortTermMemoryStore;
-pub use simple_persistence::SimpleMemoryPersistence;
-pub use store::BaseMemoryStore;
+pub use mem_lifecycle::MemoryLifecycleManager;
+pub use mem_long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemoryStore};
+pub use embedding_search::{DistanceCalculator, MemorySearchEngine, MockEmbeddingGenerator};
+pub use mem_short_term::ShortTermMemoryStore;
+pub use persistence_simple::SimpleMemoryPersistence;
+pub use mem_store::BaseMemoryStore;
 
 /// High-level memory system that combines all memory types
 pub struct AgentMemorySystem {
@@ -257,7 +257,7 @@ impl AgentMemorySystem {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentMemoryStats {
     pub overall: MemoryStats,
-    pub short_term: short_term::ShortTermStats,
+    pub short_term: mem_short_term::ShortTermStats,
 }
 
 /// Report from memory optimization operations
