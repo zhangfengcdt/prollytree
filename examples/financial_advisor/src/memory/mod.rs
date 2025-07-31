@@ -381,7 +381,7 @@ impl MemoryStore {
 
         // Store memory in the memories table
         let memory_sql = format!(
-            r#"INSERT INTO memories 
+            r#"INSERT INTO memories
             (id, content, timestamp, validation_hash, sources, confidence, cross_references)
             VALUES ('{}', '{}', {}, '{}', '{}', {}, '{}')"#,
             memory.id,
@@ -660,7 +660,7 @@ impl MemoryStore {
         };
 
         let sql = format!(
-            r#"INSERT INTO audit_log 
+            r#"INSERT INTO audit_log
             (id, action, memory_type, memory_id, branch, timestamp, details)
             VALUES ('{}', '{}', '{}', '{}', '{}', {}, '{}')"#,
             audit_entry.id,
@@ -1443,7 +1443,7 @@ impl MemoryStore {
         self.get_recommendations(None, None, Some(limit)).await
     }
 
-    /// Get recommendations with optional branch/commit and limit  
+    /// Get recommendations with optional branch/commit and limit
     pub async fn get_recommendations(
         &self,
         branch: Option<&str>,
