@@ -90,23 +90,23 @@
 pub mod traits;
 pub mod types;
 // pub mod persistence; // Disabled due to Send/Sync issues with GitVersionedKvStore
+pub mod embedding_search;
 pub mod mem_lifecycle;
 pub mod mem_long_term;
-pub mod embedding_search;
 pub mod mem_short_term;
-pub mod persistence_simple;
 pub mod mem_store;
+pub mod persistence_simple;
 
 // Re-export main types and traits for convenience
 pub use traits::*;
 pub use types::*;
 // pub use persistence::ProllyMemoryPersistence; // Disabled
+pub use embedding_search::{DistanceCalculator, MemorySearchEngine, MockEmbeddingGenerator};
 pub use mem_lifecycle::MemoryLifecycleManager;
 pub use mem_long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemoryStore};
-pub use embedding_search::{DistanceCalculator, MemorySearchEngine, MockEmbeddingGenerator};
 pub use mem_short_term::ShortTermMemoryStore;
-pub use persistence_simple::SimpleMemoryPersistence;
 pub use mem_store::BaseMemoryStore;
+pub use persistence_simple::SimpleMemoryPersistence;
 
 /// High-level memory system that combines all memory types
 pub struct AgentMemorySystem {
