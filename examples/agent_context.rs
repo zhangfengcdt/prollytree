@@ -689,50 +689,97 @@ Examples:
     pub async fn demonstrate_time_travel_debugging(&mut self) -> Result<(), Box<dyn Error>> {
         println!("🕰️  VERSIONED STORAGE DEMO: Time Travel Debugging");
         println!("{}", "═".repeat(60));
-        
+
         // Store initial version of a fact
         println!("📝 Storing initial hurricane data...");
         self.execute_tool(AgentTool::StoreFact {
             category: "hurricanes".to_string(),
             fact: "Hurricane frequency: 10 per year average (1990-2000)".to_string(),
-        }).await?;
-        
-        let checkpoint_v1 = self.memory_system.checkpoint("Initial hurricane data").await?;
+        })
+        .await?;
+
+        let checkpoint_v1 = self
+            .memory_system
+            .checkpoint("Initial hurricane data")
+            .await?;
         println!("💾 Checkpoint V1 created: {}", checkpoint_v1);
-        
+
         // Update the fact (new version)
         println!("\n📝 Updating hurricane data with new research...");
         self.execute_tool(AgentTool::StoreFact {
             category: "hurricanes".to_string(),
             fact: "Hurricane frequency: 15 per year average (2010-2020) - 50% increase".to_string(),
-        }).await?;
-        
-        let checkpoint_v2 = self.memory_system.checkpoint("Updated hurricane frequency data").await?;
+        })
+        .await?;
+
+        let checkpoint_v2 = self
+            .memory_system
+            .checkpoint("Updated hurricane frequency data")
+            .await?;
         println!("💾 Checkpoint V2 created: {}", checkpoint_v2);
-        
+
         // Further update (another version)
         println!("\n📝 Adding more recent data...");
         self.execute_tool(AgentTool::StoreFact {
             category: "hurricanes".to_string(),
-            fact: "Hurricane frequency: 18 per year average (2020-2024) - continued acceleration".to_string(),
-        }).await?;
-        
-        let checkpoint_v3 = self.memory_system.checkpoint("Latest hurricane acceleration data").await?;
+            fact: "Hurricane frequency: 18 per year average (2020-2024) - continued acceleration"
+                .to_string(),
+        })
+        .await?;
+
+        let checkpoint_v3 = self
+            .memory_system
+            .checkpoint("Latest hurricane acceleration data")
+            .await?;
         println!("💾 Checkpoint V3 created: {}", checkpoint_v3);
-        
+
         // Demonstrate current state
         println!("\n🔍 Current memory state:");
-        let current_facts = self.execute_tool(AgentTool::RecallFacts { 
-            category: "hurricanes".to_string() 
-        }).await?;
+        let current_facts = self
+            .execute_tool(AgentTool::RecallFacts {
+                category: "hurricanes".to_string(),
+            })
+            .await?;
         println!("   {}", current_facts.result);
-        
-        println!("\n✨ BENEFIT: With versioned storage, we can:");
-        println!("   • View complete evolution of hurricane frequency understanding");
-        println!("   • Debug when incorrect data was introduced");
-        println!("   • Rollback to any previous version if needed");
-        println!("   • Audit trail shows data provenance and decision history");
-        
+
+        println!("\n🕰️  DEMONSTRATING TIME TRAVEL NAVIGATION:");
+        println!("   Let's travel back to V1 and see the difference...");
+
+        // Time travel to V1
+        match self.memory_system.rollback(&checkpoint_v1).await {
+            Ok(()) => {
+                println!("   ✅ Time traveled to checkpoint V1");
+                let v1_facts = self
+                    .execute_tool(AgentTool::RecallFacts {
+                        category: "hurricanes".to_string(),
+                    })
+                    .await?;
+                println!("   📊 V1 State: {}", v1_facts.result);
+
+                // Time travel to V3 (most recent)
+                self.memory_system.rollback(&checkpoint_v3).await?;
+                println!("   ✅ Time traveled back to checkpoint V3 (latest)");
+                let v3_facts = self
+                    .execute_tool(AgentTool::RecallFacts {
+                        category: "hurricanes".to_string(),
+                    })
+                    .await?;
+                println!("   📊 V3 State: {}", v3_facts.result);
+
+                println!("\n   🎯 TIME TRAVEL COMPLETE: Successfully navigated between versions!");
+            }
+            Err(e) => {
+                println!("   ⚠️  Time travel demonstration limited: {}", e);
+            }
+        }
+
+        println!("\n✨ BENEFITS: With versioned storage, we can:");
+        println!("   • 🕰️  Time Travel: Navigate to any historical version instantly");
+        println!("   • 📈 View Evolution: Complete progression of data understanding");
+        println!("   • 🐛 Debug Issues: Identify exactly when incorrect data was introduced");
+        println!("   • 🔄 Safe Rollback: Restore to any previous version with confidence");
+        println!("   • 📋 Audit Trail: Immutable record of data provenance and decisions");
+
         Ok(())
     }
 
@@ -740,7 +787,7 @@ Examples:
     pub async fn demonstrate_memory_evolution(&mut self) -> Result<(), Box<dyn Error>> {
         println!("\n🧬 VERSIONED STORAGE DEMO: Memory Evolution Tracking");
         println!("{}", "═".repeat(60));
-        
+
         // Simulate agent learning process with evolving understanding
         let learning_stages = vec![
             ("Initial Research", "Fact: Sea level rise: 3mm per year globally category: flooding"),
@@ -748,44 +795,54 @@ Examples:
             ("Accelerated Understanding", "Fact: Sea level rise: 8mm per year in Miami area due to land subsidence category: flooding"),
             ("Comprehensive Data", "Fact: Sea level rise: 12mm per year in Norfolk, VA - highest US rate category: flooding"),
         ];
-        
+
         let mut checkpoints = Vec::new();
-        
+
         for (stage, fact_data) in learning_stages {
             println!("\n📚 Learning Stage: {}", stage);
-            
+
             // Parse the fact format
             if let Some(fact_start) = fact_data.find("Fact: ") {
                 if let Some(category_start) = fact_data.find(" category: ") {
                     let fact = fact_data[fact_start + 6..category_start].trim();
                     let category = fact_data[category_start + 11..].trim();
-                    
+
                     self.execute_tool(AgentTool::StoreFact {
                         category: category.to_string(),
                         fact: fact.to_string(),
-                    }).await?;
+                    })
+                    .await?;
                 }
             }
-            
-            let checkpoint = self.memory_system.checkpoint(&format!("Learning stage: {}", stage)).await?;
+
+            let checkpoint = self
+                .memory_system
+                .checkpoint(&format!("Learning stage: {}", stage))
+                .await?;
             checkpoints.push((stage, checkpoint));
-            println!("💾 Checkpoint: {} ({})", stage, checkpoints.last().unwrap().1);
+            println!(
+                "💾 Checkpoint: {} ({})",
+                stage,
+                checkpoints.last().unwrap().1
+            );
         }
-        
+
         // Show evolution benefits
         println!("\n🔍 Final memory state - Flooding facts:");
-        let final_facts = self.execute_tool(AgentTool::RecallFacts { 
-            category: "flooding".to_string() 
-        }).await?;
+        let final_facts = self
+            .execute_tool(AgentTool::RecallFacts {
+                category: "flooding".to_string(),
+            })
+            .await?;
         println!("   {}", final_facts.result);
-        
+
         println!("\n✨ BENEFITS of Memory Evolution Tracking:");
         println!("   • 📈 Track how agent's understanding becomes more sophisticated");
-        println!("   • 🐛 Debug when agent learned incorrect information"); 
+        println!("   • 🐛 Debug when agent learned incorrect information");
         println!("   • 🔄 Revert to previous knowledge state if corruption occurs");
         println!("   • 📊 Analyze learning patterns to optimize agent training");
         println!("   • 🔍 Audit trail shows knowledge refinement process");
-        
+
         Ok(())
     }
 
@@ -793,53 +850,69 @@ Examples:
     pub async fn demonstrate_audit_trail(&mut self) -> Result<(), Box<dyn Error>> {
         println!("\n📋 VERSIONED STORAGE DEMO: Audit Trail & Transparency");
         println!("{}", "═".repeat(60));
-        
+
         // Simulate a decision-making process with full audit trail
-        println!("🎯 Decision Scenario: Should we recommend evacuation for a Category 2 hurricane?");
-        
+        println!(
+            "🎯 Decision Scenario: Should we recommend evacuation for a Category 2 hurricane?"
+        );
+
         // Store decision-making rule
         println!("\n📏 Storing evacuation policy...");
         self.execute_tool(AgentTool::StoreRule {
             rule_name: "cat2_evacuation".to_string(),
             condition: "hurricane category = 2 AND storm_surge > 6ft".to_string(),
             action: "recommend voluntary evacuation for coastal areas".to_string(),
-        }).await?;
-        
-        let policy_checkpoint = self.memory_system.checkpoint("Initial Cat 2 evacuation policy").await?;
+        })
+        .await?;
+
+        let policy_checkpoint = self
+            .memory_system
+            .checkpoint("Initial Cat 2 evacuation policy")
+            .await?;
         println!("💾 Policy Checkpoint: {}", policy_checkpoint);
-        
+
         // Store supporting fact
         println!("\n📚 Adding supporting hurricane damage data...");
         self.execute_tool(AgentTool::StoreFact {
             category: "hurricanes".to_string(),
             fact: "Category 2 hurricanes with >6ft storm surge caused average $2.3B damage in Southeast US".to_string(),
         }).await?;
-        
-        let data_checkpoint = self.memory_system.checkpoint("Supporting damage data for Cat 2 policy").await?;
+
+        let data_checkpoint = self
+            .memory_system
+            .checkpoint("Supporting damage data for Cat 2 policy")
+            .await?;
         println!("💾 Data Checkpoint: {}", data_checkpoint);
-        
+
         // Demonstrate rule application
         println!("\n🤔 Applying decision logic...");
         let rules = self.execute_tool(AgentTool::RecallRules).await?;
         println!("📏 Available rules: {}", rules.result);
-        
-        let facts = self.execute_tool(AgentTool::RecallFacts { 
-            category: "hurricanes".to_string() 
-        }).await?;
+
+        let facts = self
+            .execute_tool(AgentTool::RecallFacts {
+                category: "hurricanes".to_string(),
+            })
+            .await?;
         println!("📚 Supporting facts: {}", facts.result);
-        
+
         // Final decision checkpoint
-        let decision_checkpoint = self.memory_system.checkpoint("Cat 2 evacuation decision made with full audit trail").await?;
+        let decision_checkpoint = self
+            .memory_system
+            .checkpoint("Cat 2 evacuation decision made with full audit trail")
+            .await?;
         println!("\n✅ Decision Checkpoint: {}", decision_checkpoint);
-        
+
         println!("\n✨ AUDIT TRAIL BENEFITS:");
         println!("   • 🔍 Complete Decision History: Every rule, fact, and checkpoint traced");
         println!("   • ⚖️  Compliance Ready: Immutable record of AI decision process");
         println!("   • 🛡️  Accountability: Can prove what data influenced each decision");
         println!("   • 🔬 Post-Mortem Analysis: Full history available for incident investigation");
         println!("   • 📝 Explainable AI: Can reconstruct reasoning chain for any decision");
-        println!("   • 🕵️  Bias Detection: Historical patterns reveal potential biases in data/rules");
-        
+        println!(
+            "   • 🕵️  Bias Detection: Historical patterns reveal potential biases in data/rules"
+        );
+
         Ok(())
     }
 
@@ -847,45 +920,86 @@ Examples:
     pub async fn demonstrate_rollback_recovery(&mut self) -> Result<(), Box<dyn Error>> {
         println!("\n🔄 VERSIONED STORAGE DEMO: Rollback & Error Recovery");
         println!("{}", "═".repeat(60));
-        
+
         // Simulate good state
         println!("📝 Establishing good baseline state...");
         self.execute_tool(AgentTool::StoreFact {
             category: "economic".to_string(),
             fact: "Climate change costs US economy $150B annually (EPA 2023)".to_string(),
-        }).await?;
-        
-        let good_checkpoint = self.memory_system.checkpoint("Good economic baseline data").await?;
+        })
+        .await?;
+
+        let good_checkpoint = self
+            .memory_system
+            .checkpoint("Good economic baseline data")
+            .await?;
         println!("💾 Good State Checkpoint: {}", good_checkpoint);
-        
+
         // Simulate corruption/bad data
         println!("\n⚠️  Simulating data corruption or bad input...");
         self.execute_tool(AgentTool::StoreFact {
             category: "economic".to_string(),
-            fact: "Climate change saves money!!! Only costs $5 per year total!!! [CLEARLY WRONG DATA]".to_string(),
-        }).await?;
-        
+            fact:
+                "Climate change saves money!!! Only costs $5 per year total!!! [CLEARLY WRONG DATA]"
+                    .to_string(),
+        })
+        .await?;
+
         println!("📊 Current corrupted state:");
-        let corrupted_facts = self.execute_tool(AgentTool::RecallFacts { 
-            category: "economic".to_string() 
-        }).await?;
+        let corrupted_facts = self
+            .execute_tool(AgentTool::RecallFacts {
+                category: "economic".to_string(),
+            })
+            .await?;
         println!("   {}", corrupted_facts.result);
-        
-        // In a real system, you would implement rollback functionality
-        // For demo purposes, we show what would happen
-        println!("\n🔄 ROLLBACK CAPABILITY (Conceptual):");
-        println!("   1. Detect bad data through validation or user report");
-        println!("   2. Identify last good checkpoint: {}", good_checkpoint);
-        println!("   3. Restore memory state to checkpoint");
-        println!("   4. Resume operations with clean data");
-        
+
+        // NOW IMPLEMENTING ACTUAL ROLLBACK FUNCTIONALITY!
+        println!("\n🔄 PERFORMING ACTUAL ROLLBACK:");
+        println!("   1. ✅ Detected bad data: corrupted economic facts");
+        println!(
+            "   2. ✅ Identified last good checkpoint: {}",
+            good_checkpoint
+        );
+        println!("   3. 🔄 Executing rollback to restore memory state...");
+
+        match self.memory_system.rollback(&good_checkpoint).await {
+            Ok(()) => {
+                println!("   4. ✅ ROLLBACK SUCCESSFUL! Memory restored to good state");
+
+                // Verify the rollback worked
+                println!("\n📊 Verifying rollback - Current economic facts:");
+                let restored_facts = self
+                    .execute_tool(AgentTool::RecallFacts {
+                        category: "economic".to_string(),
+                    })
+                    .await?;
+                println!("   {}", restored_facts.result);
+
+                println!("\n🎉 ROLLBACK VERIFICATION:");
+                if restored_facts.result.contains("$150B annually")
+                    && !restored_facts.result.contains("$5 per year")
+                {
+                    println!("   ✅ SUCCESS: Bad data removed, good data restored!");
+                    println!("   ✅ Memory integrity fully recovered");
+                } else {
+                    println!("   ⚠️  Partial success - manual verification may be needed");
+                }
+            }
+            Err(e) => {
+                println!("   ❌ Rollback failed: {}", e);
+                println!("   🔧 Fallback: Manual data correction would be required");
+            }
+        }
+
         println!("\n✨ ERROR RECOVERY BENEFITS:");
-        println!("   • 🛡️  Data Integrity: Corrupted memory can be restored to any previous good state");
+        println!(
+            "   • 🛡️  Data Integrity: Corrupted memory can be restored to any previous good state"
+        );
         println!("   • ⚡ Rapid Recovery: Instant rollback vs. manual data reconstruction");
         println!("   • 🔒 Safety Net: Experiment with confidence knowing you can always revert");
         println!("   • 📊 Impact Analysis: Compare before/after states to assess damage");
         println!("   • 🔍 Root Cause: Version history reveals when/how corruption occurred");
-        
+
         Ok(())
     }
 }
@@ -1059,13 +1173,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Time Travel Debugging
     agent.demonstrate_time_travel_debugging().await?;
-    
+
     // Memory Evolution Tracking
     agent.demonstrate_memory_evolution().await?;
-    
+
     // Audit Trail & Transparency
     agent.demonstrate_audit_trail().await?;
-    
+
     // Rollback & Error Recovery
     agent.demonstrate_rollback_recovery().await?;
 

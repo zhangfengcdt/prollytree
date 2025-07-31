@@ -217,6 +217,40 @@ impl AgentMemorySystem {
     pub async fn checkpoint(&mut self, message: &str) -> Result<String, MemoryError> {
         self.lifecycle_manager.commit(message).await
     }
+
+    /// Rollback to a specific checkpoint/commit
+    pub async fn rollback(&mut self, checkpoint_id: &str) -> Result<(), MemoryError> {
+        // Rollback all memory stores to the specified checkpoint
+        self.short_term.checkout(checkpoint_id).await?;
+        self.semantic.checkout(checkpoint_id).await?;
+        self.episodic.checkout(checkpoint_id).await?;
+        self.procedural.checkout(checkpoint_id).await?;
+
+        Ok(())
+    }
+
+    /// Get list of available checkpoints/commits
+    pub async fn list_checkpoints(&self) -> Result<Vec<CheckpointInfo>, MemoryError> {
+        // For now, return a simplified list - in a full implementation this would
+        // query the underlying git repository for commit history
+        Ok(vec![])
+    }
+
+    /// Compare memory state between two checkpoints
+    pub async fn compare_checkpoints(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<MemoryDiff, MemoryError> {
+        // Placeholder for checkpoint comparison - would be implemented with actual
+        // git diff functionality in a full system
+        Ok(MemoryDiff {
+            added_memories: 0,
+            modified_memories: 0,
+            deleted_memories: 0,
+            changes_summary: format!("Comparison between {from} and {to}"),
+        })
+    }
 }
 
 /// Combined statistics for the entire memory system
@@ -233,6 +267,24 @@ pub struct OptimizationReport {
     pub memories_consolidated: usize,
     pub memories_archived: usize,
     pub memories_pruned: usize,
+}
+
+/// Information about a memory checkpoint
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CheckpointInfo {
+    pub id: String,
+    pub message: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub memory_count: usize,
+}
+
+/// Comparison between two memory states
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryDiff {
+    pub added_memories: usize,
+    pub modified_memories: usize,
+    pub deleted_memories: usize,
+    pub changes_summary: String,
 }
 
 impl OptimizationReport {
