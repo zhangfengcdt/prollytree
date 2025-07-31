@@ -96,6 +96,7 @@ pub mod mem_long_term;
 pub mod mem_short_term;
 pub mod mem_store;
 pub mod persistence_simple;
+// pub mod persistence_prolly; // Complete implementation available but disabled due to thread safety
 
 // Re-export main types and traits for convenience
 pub use traits::*;
@@ -107,6 +108,7 @@ pub use mem_long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemo
 pub use mem_short_term::ShortTermMemoryStore;
 pub use mem_store::BaseMemoryStore;
 pub use persistence_simple::SimpleMemoryPersistence;
+// pub use persistence_prolly::{ProllyMemoryPersistence, ProllyMemoryStats}; // Disabled
 
 /// High-level memory system that combines all memory types
 pub struct AgentMemorySystem {
@@ -118,7 +120,7 @@ pub struct AgentMemorySystem {
 }
 
 impl AgentMemorySystem {
-    /// Initialize a complete agent memory system
+    /// Initialize a complete agent memory system with Simple persistence backend
     pub fn init<P: AsRef<std::path::Path>>(
         path: P,
         agent_id: String,
@@ -142,6 +144,39 @@ impl AgentMemorySystem {
             lifecycle_manager,
         })
     }
+
+    // /// Initialize a complete agent memory system with Prolly persistence backend (git-backed)
+    // /// 
+    // /// Complete implementation available but disabled due to thread safety limitations.
+    // /// The underlying Git library (gix) contains RefCell components that prevent Sync.
+    // /// 
+    // /// To use this functionality:
+    // /// 1. Uncomment this method and related code in persistence_prolly.rs
+    // /// 2. Use only in guaranteed single-threaded contexts
+    // /// 3. Expect compilation failures in multi-threaded scenarios
+    // pub fn init_with_prolly<P: AsRef<std::path::Path>>(
+    //     path: P,
+    //     agent_id: String,
+    //     embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    // ) -> Result<Self, Box<dyn std::error::Error>> {
+    //     let base_store = BaseMemoryStore::init_with_prolly(path, agent_id.clone(), embedding_generator)?;
+    //     
+    //     let short_term =
+    //         ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+    //     
+    //     let semantic = SemanticMemoryStore::new(base_store.clone());
+    //     let episodic = EpisodicMemoryStore::new(base_store.clone());
+    //     let procedural = ProceduralMemoryStore::new(base_store.clone());
+    //     let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+    //     
+    //     Ok(Self {
+    //         short_term,
+    //         semantic,
+    //         episodic,
+    //         procedural,
+    //         lifecycle_manager,
+    //     })
+    // }
 
     /// Open an existing agent memory system
     pub fn open<P: AsRef<std::path::Path>>(
