@@ -97,7 +97,7 @@ pub mod mem_short_term;
 pub mod mem_store;
 pub mod persistence;
 // mod versioned_persistence; // Disabled due to thread safety issues
-pub mod thread_safe_persistence;
+pub mod versioned_persistence;
 // pub mod persistence_prolly; // Complete implementation available but disabled due to thread safety
 
 // Re-export main types and traits for convenience
@@ -110,7 +110,7 @@ pub use mem_long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemo
 pub use mem_short_term::ShortTermMemoryStore;
 pub use mem_store::BaseMemoryStore;
 pub use persistence::InMemoryPersistence;
-pub use thread_safe_persistence::{ThreadSafeVersionedPersistence, ThreadSafeProllyMemoryStats};
+pub use versioned_persistence::{ThreadSafeVersionedPersistence, ThreadSafeProllyMemoryStats};
 // pub use persistence_prolly::{ProllyMemoryPersistence, ProllyMemoryStats}; // Disabled
 
 /// High-level memory system that combines all memory types

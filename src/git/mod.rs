@@ -16,7 +16,6 @@ pub mod operations;
 pub mod storage;
 pub mod types;
 pub mod versioned_store;
-pub mod thread_safe_store;
 
 // Re-export commonly used types
 pub use operations::GitOperations;
@@ -25,5 +24,4 @@ pub use types::{
     CommitDetails, CommitInfo, DiffOperation, GitKvError, KvConflict, KvDiff, KvStorageMetadata,
     MergeResult,
 };
-pub use versioned_store::{GitVersionedKvStore, VersionedKvStore};
-pub use thread_safe_store::{ThreadSafeVersionedKvStore, ThreadSafeGitVersionedKvStore};
+pub use versioned_store::{GitVersionedKvStore, VersionedKvStore, ThreadSafeVersionedKvStore, ThreadSafeGitVersionedKvStore};

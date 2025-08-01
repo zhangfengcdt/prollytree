@@ -21,6 +21,7 @@ use crate::tree::{ProllyTree, Tree};
 use gix::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// Trait for accessing historical state from version control
 pub trait HistoricalAccess<const N: usize> {
@@ -71,6 +72,28 @@ pub type FileVersionedKvStore<const N: usize> = VersionedKvStore<N, FileNodeStor
 /// Type alias for RocksDB storage
 #[cfg(feature = "rocksdb_storage")]
 pub type RocksDBVersionedKvStore<const N: usize> = VersionedKvStore<N, RocksDBNodeStorage<N>>;
+
+/// Thread-safe wrapper for VersionedKvStore
+/// 
+/// This wrapper provides thread-safe access to the underlying VersionedKvStore by using
+/// Arc<Mutex<>> internally. All operations are synchronized, making it safe to use
+/// across multiple threads.
+pub struct ThreadSafeVersionedKvStore<const N: usize, S: NodeStorage<N>> {
+    inner: Arc<Mutex<VersionedKvStore<N, S>>>,
+}
+
+/// Type alias for thread-safe Git storage  
+pub type ThreadSafeGitVersionedKvStore<const N: usize> = ThreadSafeVersionedKvStore<N, GitNodeStorage<N>>;
+
+/// Type alias for thread-safe InMemory storage
+pub type ThreadSafeInMemoryVersionedKvStore<const N: usize> = ThreadSafeVersionedKvStore<N, InMemoryNodeStorage<N>>;
+
+/// Type alias for thread-safe File storage
+pub type ThreadSafeFileVersionedKvStore<const N: usize> = ThreadSafeVersionedKvStore<N, FileNodeStorage<N>>;
+
+/// Type alias for thread-safe RocksDB storage
+#[cfg(feature = "rocksdb_storage")]
+pub type ThreadSafeRocksDBVersionedKvStore<const N: usize> = ThreadSafeVersionedKvStore<N, RocksDBNodeStorage<N>>;
 
 impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
 where
@@ -1720,6 +1743,141 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     }
 }
 
+// ==============================================================================
+// Thread-Safe Wrapper Implementation
+// ==============================================================================
+
+impl<const N: usize> ThreadSafeGitVersionedKvStore<N> {
+    /// Initialize a new thread-safe git-backed versioned key-value store
+    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let inner = GitVersionedKvStore::init(path)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
+    }
+
+    /// Open an existing thread-safe git-backed versioned key-value store
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let inner = GitVersionedKvStore::open(path)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
+    }
+}
+
+impl<const N: usize, S: NodeStorage<N>> ThreadSafeVersionedKvStore<N, S>
+where
+    VersionedKvStore<N, S>: TreeConfigSaver<N>,
+{
+    /// Insert a key-value pair (stages the change)
+    pub fn insert(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
+        let mut store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        store.insert(key, value)
+    }
+
+    /// Update an existing key-value pair (stages the change)
+    pub fn update(&self, key: Vec<u8>, value: Vec<u8>) -> Result<bool, GitKvError> {
+        let mut store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        store.update(key, value)
+    }
+
+    /// Delete a key-value pair (stages the change)
+    pub fn delete(&self, key: &[u8]) -> Result<bool, GitKvError> {
+        let mut store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        store.delete(key)
+    }
+
+    /// Get a value by key (checks staging area first, then committed data)
+    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let store = self.inner.lock().ok()?;
+        store.get(key)
+    }
+
+    /// List all keys (includes staged changes)
+    pub fn list_keys(&self) -> Result<Vec<Vec<u8>>, GitKvError> {
+        let store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        Ok(store.list_keys())
+    }
+
+    /// Show current staging area status
+    pub fn status(&self) -> Result<Vec<(Vec<u8>, String)>, GitKvError> {
+        let store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        Ok(store.status())
+    }
+
+    /// Commit staged changes
+    pub fn commit(&self, message: &str) -> Result<gix::ObjectId, GitKvError> {
+        let mut store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        store.commit(message)
+    }
+
+    /// Create a new branch
+    pub fn create_branch(&self, name: &str) -> Result<(), GitKvError> {
+        let mut store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        store.create_branch(name)
+    }
+
+    /// Get commit history
+    pub fn log(&self) -> Result<Vec<CommitInfo>, GitKvError> {
+        let store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        store.log()
+    }
+
+    /// Get current branch name
+    pub fn current_branch(&self) -> Result<String, GitKvError> {
+        let store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        Ok(store.current_branch().to_string())
+    }
+
+    /// Get the underlying git repository reference (creates a clone)
+    pub fn git_repo(&self) -> Result<gix::Repository, GitKvError> {
+        let store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        Ok(store.git_repo().clone())
+    }
+}
+
+impl<const N: usize> ThreadSafeGitVersionedKvStore<N> {
+    /// Switch to a different branch - Git-specific implementation
+    pub fn checkout(&self, name: &str) -> Result<(), GitKvError> {
+        let mut store = self.inner.lock().map_err(|_| {
+            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
+        })?;
+        store.checkout(name)
+    }
+}
+
+impl<const N: usize, S: NodeStorage<N>> Clone for ThreadSafeVersionedKvStore<N, S> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+// Implement Send and Sync for the thread-safe wrapper
+unsafe impl<const N: usize, S: NodeStorage<N>> Send for ThreadSafeVersionedKvStore<N, S> where S: Send {}
+unsafe impl<const N: usize, S: NodeStorage<N>> Sync for ThreadSafeVersionedKvStore<N, S> where S: Send {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2759,5 +2917,78 @@ mod tests {
         assert_eq!(long_key_commits[0].id, long_key_commit);
 
         println!("=== Edge cases test completed successfully ===");
+    }
+
+    #[test]
+    fn test_thread_safe_basic_operations() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize a git repository
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+        
+        // Create a subdirectory for the dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        
+        let store = ThreadSafeGitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        // Test basic operations
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+        assert_eq!(store.get(b"key1"), Some(b"value1".to_vec()));
+
+        // Commit changes
+        store.commit("Initial commit").unwrap();
+
+        // Update key
+        store.update(b"key1".to_vec(), b"value2".to_vec()).unwrap();
+        assert_eq!(store.get(b"key1"), Some(b"value2".to_vec()));
+    }
+
+    #[test]
+    fn test_thread_safe_concurrent_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initialize a git repository
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+        
+        // Create a subdirectory for the dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        
+        let store = Arc::new(ThreadSafeGitVersionedKvStore::<32>::init(&dataset_dir).unwrap());
+
+        // Test concurrent reads and writes
+        let handles: Vec<_> = (0..5)
+            .map(|i| {
+                let store_clone = Arc::clone(&store);
+                thread::spawn(move || {
+                    let key = format!("key{}", i).into_bytes();
+                    let value = format!("value{}", i).into_bytes();
+                    store_clone.insert(key.clone(), value.clone()).unwrap();
+                    assert_eq!(store_clone.get(&key), Some(value));
+                })
+            })
+            .collect();
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify all keys were inserted
+        store.commit("Concurrent insertions").unwrap();
+        let keys = store.list_keys().unwrap();
+        assert_eq!(keys.len(), 5);
     }
 }

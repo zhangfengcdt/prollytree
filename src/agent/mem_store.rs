@@ -8,17 +8,14 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use super::persistence::InMemoryPersistence;
-use super::thread_safe_persistence::ThreadSafeVersionedPersistence;
-// use super::persistence_prolly::ProllyMemoryPersistence; // Complete implementation available but disabled
+use super::versioned_persistence::ThreadSafeVersionedPersistence;
 use super::traits::{EmbeddingGenerator, MemoryError, MemoryPersistence, MemoryStore};
 use super::types::*;
-// use crate::git::GitKvError;
 
 /// Enum for different persistence backends
 pub enum PersistenceBackend {
     Simple(InMemoryPersistence),
     ThreadSafeProlly(ThreadSafeVersionedPersistence),
-    // Prolly(ProllyMemoryPersistence), // Complete implementation available but disabled due to thread safety
 }
 
 #[async_trait::async_trait]
@@ -27,7 +24,6 @@ impl MemoryPersistence for PersistenceBackend {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.save(key, data).await,
             PersistenceBackend::ThreadSafeProlly(persistence) => persistence.save(key, data).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.save(key, data).await,
         }
     }
 
@@ -35,7 +31,6 @@ impl MemoryPersistence for PersistenceBackend {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.load(key).await,
             PersistenceBackend::ThreadSafeProlly(persistence) => persistence.load(key).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.load(key).await,
         }
     }
 
@@ -43,7 +38,6 @@ impl MemoryPersistence for PersistenceBackend {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.delete(key).await,
             PersistenceBackend::ThreadSafeProlly(persistence) => persistence.delete(key).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.delete(key).await,
         }
     }
 
@@ -51,7 +45,6 @@ impl MemoryPersistence for PersistenceBackend {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.list_keys(prefix).await,
             PersistenceBackend::ThreadSafeProlly(persistence) => persistence.list_keys(prefix).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.list_keys(prefix).await,
         }
     }
 
@@ -59,7 +52,6 @@ impl MemoryPersistence for PersistenceBackend {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.checkpoint(message).await,
             PersistenceBackend::ThreadSafeProlly(persistence) => persistence.checkpoint(message).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.checkpoint(message).await,
         }
     }
 }
@@ -72,7 +64,6 @@ impl PersistenceBackend {
                 Err("Branch operations not supported with Simple persistence backend".into())
             }
             PersistenceBackend::ThreadSafeProlly(persistence) => persistence.create_branch(name).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.create_branch(name).await,
         }
     }
 
@@ -86,7 +77,6 @@ impl PersistenceBackend {
                 Err("Branch operations not supported with Simple persistence backend".into())
             }
             PersistenceBackend::ThreadSafeProlly(persistence) => persistence.checkout_branch(branch_or_commit).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.checkout_branch(branch_or_commit).await,
         }
     }
 }
@@ -138,23 +128,6 @@ impl BaseMemoryStore {
         })
     }
 
-    // /// Initialize a new memory store with Prolly persistence backend (git-backed)
-    // /// Complete implementation available but disabled due to thread safety limitations.
-    // pub fn init_with_prolly<P: AsRef<Path>>(
-    //     path: P,
-    //     agent_id: String,
-    //     embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
-    // ) -> Result<Self, Box<dyn std::error::Error>> {
-    //     let persistence = ProllyMemoryPersistence::init(path, &format!("agent_memory_{agent_id}"))?;
-    //     Ok(Self {
-    //         persistence: Arc::new(RwLock::new(PersistenceBackend::Prolly(persistence))),
-    //         embedding_generator: embedding_generator
-    //             .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
-    //         agent_id,
-    //         current_branch: "main".to_string(),
-    //     })
-    // }
-
     /// Open an existing memory store with Simple persistence backend
     pub fn open<P: AsRef<Path>>(
         path: P,
@@ -170,37 +143,6 @@ impl BaseMemoryStore {
             current_branch: "main".to_string(),
         })
     }
-
-    // /// Open an existing memory store with Prolly persistence backend (git-backed)
-    // /// Complete implementation available but disabled due to thread safety limitations.
-    // pub fn open_with_prolly<P: AsRef<Path>>(
-    //     path: P,
-    //     agent_id: String,
-    //     embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
-    // ) -> Result<Self, Box<dyn std::error::Error>> {
-    //     let persistence = ProllyMemoryPersistence::open(path, &format!("agent_memory_{agent_id}"))?;
-    //     Ok(Self {
-    //         persistence: Arc::new(RwLock::new(PersistenceBackend::Prolly(persistence))),
-    //         embedding_generator: embedding_generator
-    //             .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
-    //         agent_id,
-    //         current_branch: "main".to_string(),
-    //     })
-    // }
-
-    // /// Get access to git logs (only available with Prolly backend)
-    // /// Complete implementation available but disabled due to thread safety limitations.
-    // pub async fn get_git_logs(&self) -> Result<Vec<crate::git::CommitInfo>, Box<dyn std::error::Error>> {
-    //     let persistence = self.persistence.read().await;
-    //     match &*persistence {
-    //         PersistenceBackend::Prolly(prolly) => {
-    //             prolly.get_git_log().await.map_err(|e| e.into())
-    //         }
-    //         PersistenceBackend::Simple(_) => {
-    //             Err("Git logs not available with Simple persistence backend".into())
-    //         }
-    //     }
-    // }
 
     /// Generate key for memory document
     fn memory_key(&self, namespace: &MemoryNamespace, id: &str) -> String {
