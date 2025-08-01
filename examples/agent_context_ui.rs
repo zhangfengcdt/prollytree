@@ -19,7 +19,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Style, Stylize},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame, Terminal,
@@ -61,7 +61,7 @@ pub struct ToolResult {
 pub struct ContextOffloadingAgent {
     memory_system: AgentMemorySystem,
     rig_client: Option<Client>,
-    agent_id: String,
+    _agent_id: String,
     current_thread_id: String,
     namespace: String,
     ui_sender: Option<mpsc::UnboundedSender<UiEvent>>,
@@ -77,6 +77,7 @@ struct GitCommit {
     memory_count: usize,
     timestamp: chrono::DateTime<chrono::Utc>,
     branch: String,
+    author: String, // Format: "thread_001/StoreFact" or "thread_002/WebSearch"
 }
 
 /// UI State for managing the four windows
@@ -89,6 +90,8 @@ pub struct UiState {
     pub scroll_conversations: usize,
     pub scroll_git_logs: usize,
     pub scroll_kv_keys: usize,
+    pub is_typing: bool,
+    pub cursor_visible: bool,
 }
 
 impl Default for UiState {
@@ -101,6 +104,8 @@ impl Default for UiState {
             scroll_conversations: 0,
             scroll_git_logs: 0,
             scroll_kv_keys: 0,
+            is_typing: false,
+            cursor_visible: true,
         }
     }
 }
@@ -112,6 +117,7 @@ pub enum UiEvent {
     MemoryStatsUpdate(String),
     GitLogUpdate(Vec<String>),
     KvKeysUpdate(Vec<String>),
+    TypingIndicator(bool), // true = start typing, false = stop typing
     Quit,
 }
 
@@ -137,7 +143,7 @@ impl ContextOffloadingAgent {
         Ok(Self {
             memory_system,
             rig_client,
-            agent_id,
+            _agent_id: agent_id,
             current_thread_id,
             namespace,
             ui_sender,
@@ -148,6 +154,7 @@ impl ContextOffloadingAgent {
                     memory_count: 0,
                     timestamp: chrono::Utc::now(),
                     branch: "main".to_string(),
+                    author: "system/init".to_string(),
                 }
             ],
             current_branch: "main".to_string(),
@@ -158,7 +165,7 @@ impl ContextOffloadingAgent {
     pub fn switch_thread(&mut self, thread_id: String) {
         self.current_thread_id = thread_id;
         if let Some(ref sender) = self.ui_sender {
-            let _ = sender.send(UiEvent::ConversationUpdate(format!("🔄 Switched to thread: {}", self.current_thread_id)));
+            let _ = sender.send(UiEvent::ConversationUpdate(format!("⏺ Switched to thread: {}", self.current_thread_id)));
         }
     }
 
@@ -190,9 +197,10 @@ impl ContextOffloadingAgent {
                     .await?;
 
                 // Create git commit for scratchpad update
-                let _commit_id = self.add_commit(&format!("Scratchpad: {}", &notes[..std::cmp::min(50, notes.len())])).await?;
+                let author = format!("{}/Scratchpad", self.current_thread_id);
+                let _commit_id = self.add_commit(&format!("Update scratchpad: {}", &notes[..std::cmp::min(150, notes.len())]), &author).await?;
                 
-                self.send_ui_update(format!("📝 Wrote to scratchpad (memory_id: {})", memory_id));
+                self.send_ui_update(format!("⏺ Wrote to scratchpad (memory_id: {})", memory_id));
 
                 Ok(ToolResult {
                     tool: tool.clone(),
@@ -233,14 +241,14 @@ impl ContextOffloadingAgent {
                         "No facts field found".to_string()
                     };
 
-                    self.send_ui_update(format!("📖 Read from scratchpad: {}", content));
+                    self.send_ui_update(format!("⏺ Read from scratchpad: {}", content));
 
                     Ok(ToolResult {
                         tool,
                         result: format!("Notes from scratchpad: {}", content),
                     })
                 } else {
-                    self.send_ui_update(format!("📖 No facts found for namespace: {}", self.namespace));
+                    self.send_ui_update(format!("⏺ No facts found for namespace: {}", self.namespace));
                     Ok(ToolResult {
                         tool,
                         result: "No notes found in scratchpad".to_string(),
@@ -270,7 +278,8 @@ impl ContextOffloadingAgent {
                     .await?;
 
                 // Create git commit for search episode
-                let _commit_id = self.add_commit(&format!("Search: {}", &query[..std::cmp::min(30, query.len())])).await?;
+                let author = format!("{}/WebSearch", self.current_thread_id);
+                let _commit_id = self.add_commit(&format!("Web search query: {}", &query[..std::cmp::min(120, query.len())]), &author).await?;
 
                 Ok(ToolResult {
                     tool,
@@ -300,9 +309,10 @@ impl ContextOffloadingAgent {
                     .await?;
 
                 // Create git commit for stored fact
-                let _commit_id = self.add_commit(&format!("Fact [{}]: {}", category, &fact[..std::cmp::min(40, fact.len())])).await?;
+                let author = format!("{}/StoreFact", self.current_thread_id);
+                let _commit_id = self.add_commit(&format!("Store fact in {}: {}", category, &fact[..std::cmp::min(140, fact.len())]), &author).await?;
                 
-                self.send_ui_update(format!("📚 Stored fact in category '{}': {}", category, fact));
+                self.send_ui_update(format!("⏺ Stored fact in category '{}': {}", category, fact));
 
                 Ok(ToolResult {
                     tool: tool.clone(),
@@ -328,10 +338,11 @@ impl ContextOffloadingAgent {
                     .await?;
 
                 // Create git commit for stored rule
-                let _commit_id = self.add_commit(&format!("Rule: {}", &rule_name[..std::cmp::min(40, rule_name.len())])).await?;
+                let author = format!("{}/StoreRule", self.current_thread_id);
+                let _commit_id = self.add_commit(&format!("Add procedural rule: {}", &rule_name[..std::cmp::min(100, rule_name.len())]), &author).await?;
 
                 self.send_ui_update(format!(
-                    "📏 Stored rule '{}': IF {} THEN {}",
+                    "⏺ Stored rule '{}': IF {} THEN {}",
                     rule_name, condition, action
                 ));
 
@@ -361,7 +372,7 @@ impl ContextOffloadingAgent {
                     }
 
                     self.send_ui_update(format!(
-                        "📚 Found {} facts in category '{}'",
+                        "⏺ Found {} facts in category '{}'",
                         fact_list.len(),
                         category
                     ));
@@ -401,7 +412,7 @@ impl ContextOffloadingAgent {
                         })
                         .collect();
 
-                    self.send_ui_update(format!("📏 Found {} rules", rule_list.len()));
+                    self.send_ui_update(format!("⏺ Found {} rules", rule_list.len()));
 
                     Ok(ToolResult {
                         tool,
@@ -689,25 +700,25 @@ Based on the tool results, provide a helpful response to the user. Be concise an
                 .iter()
                 .map(|result| match &result.tool {
                     AgentTool::StoreFact { category, .. } => {
-                        format!("✅ Stored fact in category: {}", category)
+                        format!("⏺ Stored fact in category: {}", category)
                     }
                     AgentTool::StoreRule { rule_name, .. } => {
-                        format!("✅ Stored rule: {}", rule_name)
+                        format!("⏺ Stored rule: {}", rule_name)
                     }
                     AgentTool::RecallFacts { category } => {
-                        format!("📚 Facts from {}: {}", category, result.result)
+                        format!("⏺ Facts from {}: {}", category, result.result)
                     }
                     AgentTool::RecallRules => {
-                        format!("📏 Rules: {}", result.result)
+                        format!("⏺ Rules: {}", result.result)
                     }
                     AgentTool::WebSearch { query } => {
-                        format!("🔍 Search results for '{}': {}", query, result.result)
+                        format!("⏺ Search results for '{}': {}", query, result.result)
                     }
                     AgentTool::WriteToScratchpad { .. } => {
-                        format!("📝 {}", result.result)
+                        format!("⏺ {}", result.result)
                     }
                     AgentTool::ReadFromScratchpad => {
-                        format!("📖 {}", result.result)
+                        format!("⏺ {}", result.result)
                     }
                 })
                 .collect();
@@ -740,41 +751,38 @@ Based on the tool results, provide a helpful response to the user. Be concise an
     pub async fn get_git_logs(&self) -> Result<Vec<String>, Box<dyn Error>> {
         let mut logs = Vec::new();
         
-        logs.push("📝 Git History".to_string());
-        logs.push("".to_string());
-        
         // Show commits in reverse chronological order (newest first) - compact format
         for commit in self.commit_history.iter().rev().take(8) { // Limit to last 8 commits
             let commit_short = &commit.id[..min(7, commit.id.len())];
-            let time_str = commit.timestamp.format("%H:%M").to_string();
+            let time_str = commit.timestamp.format("%H:%M:%S").to_string();
             
-            // First line: commit hash + branch + time (max ~25 chars)
+            // First line: commit hash + branch + time (max ~28 chars)
             logs.push(format!("{} ({}) {}", commit_short, &commit.branch[..min(4, commit.branch.len())], time_str));
             
-            // Second line: truncated message (max ~35 chars)
-            let message = if commit.message.len() > 32 {
-                format!("{}...", &commit.message[..29])
+            // Second line: longer message (max ~80 chars for better readability)
+            let message = if commit.message.len() > 77 {
+                format!("{}...", &commit.message[..74])
             } else {
                 commit.message.clone()
             };
             logs.push(format!("  {}", message));
             
-            // Third line: memory count (compact)
-            logs.push(format!("  mem:{}", commit.memory_count));
+            // Third line: author and memory count
+            logs.push(format!("  by: {} | mem:{}", commit.author, commit.memory_count));
             logs.push("".to_string());
         }
         
         // Status info (compact)
-        logs.push(format!("🔧 {}", &self.current_branch[..min(12, self.current_branch.len())]));
+        logs.push(format!("⏺ {}", &self.current_branch[..min(12, self.current_branch.len())]));
         if let Some(latest) = self.commit_history.last() {
-            logs.push(format!("📊 {}", &latest.id[..min(7, latest.id.len())]));
+            logs.push(format!("⏺ {}", &latest.id[..min(7, latest.id.len())]));
         }
         
         Ok(logs)
     }
 
     /// Add a new commit to the history during normal operation
-    pub async fn add_commit(&mut self, message: &str) -> Result<String, Box<dyn Error>> {
+    pub async fn add_commit(&mut self, message: &str, author: &str) -> Result<String, Box<dyn Error>> {
         let stats = self.memory_system.get_system_stats().await?;
         let memory_count = stats.overall.total_memories;
         
@@ -789,6 +797,7 @@ Based on the tool results, provide a helpful response to the user. Be concise an
             memory_count,
             timestamp: chrono::Utc::now(),
             branch: self.current_branch.clone(),
+            author: author.to_string(),
         };
         
         self.commit_history.push(commit);
@@ -810,6 +819,7 @@ Based on the tool results, provide a helpful response to the user. Be concise an
                 memory_count: rollback_commit.memory_count,
                 timestamp: chrono::Utc::now(),
                 branch: branch_name.to_string(),
+                author: "system/rollback".to_string(),
             };
             self.commit_history.push(rollback_commit_new);
         } else {
@@ -820,6 +830,7 @@ Based on the tool results, provide a helpful response to the user. Be concise an
                 memory_count: 0, // Reset to minimal state
                 timestamp: chrono::Utc::now(),
                 branch: branch_name.to_string(),
+                author: "system/rollback".to_string(),
             };
             self.commit_history.push(rollback_commit_new);
         }
@@ -842,6 +853,7 @@ Based on the tool results, provide a helpful response to the user. Be concise an
             memory_count,
             timestamp: chrono::Utc::now(),
             branch: self.current_branch.clone(),
+            author: "system/recovery".to_string(),
         };
         
         self.commit_history.push(commit);
@@ -952,16 +964,16 @@ fn ui(f: &mut Frame, ui_state: &UiState) {
 }
 
 fn render_conversations(f: &mut Frame, area: Rect, ui_state: &UiState) {
-    let items: Vec<ListItem> = ui_state.conversations.iter()
+    let mut items: Vec<ListItem> = ui_state.conversations.iter()
         .skip(ui_state.scroll_conversations)
         .map(|conv| {
-            let style = if conv.contains("💬 User:") {
+            let style = if conv.contains("⏺ User:") {
                 Style::default().fg(Color::Cyan)
-            } else if conv.contains("🤖 Assistant:") {
+            } else if conv.contains("⏺ Assistant:") {
                 Style::default().fg(Color::Green) 
-            } else if conv.contains("📋") || conv.contains("🔄") {
+            } else if conv.contains("⏺") || conv.contains("⏺") {
                 Style::default().fg(Color::Magenta)
-            } else if conv.contains("💾") {
+            } else if conv.contains("⏺") {
                 Style::default().fg(Color::Blue)
             } else {
                 Style::default().fg(Color::Yellow)
@@ -970,9 +982,18 @@ fn render_conversations(f: &mut Frame, area: Rect, ui_state: &UiState) {
         })
         .collect();
 
+    // Add typing indicator with blinking cursor if typing
+    if ui_state.is_typing {
+        let cursor = if ui_state.cursor_visible { "▌" } else { " " };
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("⏺ Assistant: ", Style::default().fg(Color::Green)),
+            Span::styled(cursor, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        ])));
+    }
+
     let conversations = List::new(items)
         .block(Block::default()
-            .title("Conversations")
+            .title("Conversations with Agents")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White)))
         .style(Style::default().fg(Color::White));
@@ -983,7 +1004,7 @@ fn render_conversations(f: &mut Frame, area: Rect, ui_state: &UiState) {
 fn render_memory_stats(f: &mut Frame, area: Rect, ui_state: &UiState) {
     let paragraph = Paragraph::new(ui_state.memory_stats.clone())
         .block(Block::default()
-            .title("Agent Versioned Memory Statistics")
+            .title("Agent Memory Statistics")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White)))
         .style(Style::default().fg(Color::Magenta))
@@ -996,12 +1017,10 @@ fn render_git_logs(f: &mut Frame, area: Rect, ui_state: &UiState) {
     let items: Vec<ListItem> = ui_state.git_logs.iter()
         .skip(ui_state.scroll_git_logs)
         .map(|log| {
-            let style = if log.starts_with("🔧") {
+            let style = if log.starts_with("⏺") && (log.contains("main") || log.contains("time-travel")) {
                 Style::default().fg(Color::Green).bold()  // Current branch info
-            } else if log.starts_with("📊") {
+            } else if log.starts_with("⏺") {
                 Style::default().fg(Color::Blue).bold()   // Latest commit info
-            } else if log.starts_with("📝") {
-                Style::default().fg(Color::Yellow).bold() // Header
             } else if log.contains("ROLLBACK") {
                 Style::default().fg(Color::Red).bold()    // Rollback operations
             } else if log.contains("RECOVERY") {
@@ -1009,8 +1028,10 @@ fn render_git_logs(f: &mut Frame, area: Rect, ui_state: &UiState) {
             } else if log.matches(" ").count() >= 2 && log.len() > 8 && !log.starts_with("  ") {
                 // Commit hash lines (format: "abc123f (main) 14:30")
                 Style::default().fg(Color::Cyan).bold()   // Commit hashes
+            } else if log.starts_with("  by: ") {
+                Style::default().fg(Color::Yellow)        // Author and memory info line
             } else if log.starts_with("  mem:") {
-                Style::default().fg(Color::Blue)          // Memory count info
+                Style::default().fg(Color::Blue)          // Memory count info (legacy)  
             } else if log.starts_with("  ") && !log.trim().is_empty() {
                 Style::default().fg(Color::White)         // Commit messages (indented)
             } else if log.trim().is_empty() {
@@ -1024,7 +1045,7 @@ fn render_git_logs(f: &mut Frame, area: Rect, ui_state: &UiState) {
 
     let git_logs = List::new(items)
         .block(Block::default()
-            .title("Git History")
+            .title("Prollytree Git History")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White)))
         .style(Style::default());
@@ -1053,7 +1074,7 @@ fn render_kv_keys(f: &mut Frame, area: Rect, ui_state: &UiState) {
 
     let kv_keys = List::new(items)
         .block(Block::default()
-            .title("Prollytree KV Store Keys")
+            .title("Prollytree KV Store Overview")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White)))
         .style(Style::default().fg(Color::White));
@@ -1081,14 +1102,14 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     ).await?;
 
     // Send initial state
-    ui_sender.send(UiEvent::ConversationUpdate("🧠 Context Offloading Agent Demo".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ Context Offloading Agent Demo".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("ProllyTree + Rig Integration".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("✅ Agent initialized with real AgentMemorySystem".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate(format!("📁 Memory path: {:?}", memory_path)))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ Agent initialized with real AgentMemorySystem".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Memory path: {:?}", memory_path)))?;
     if has_openai {
-        ui_sender.send(UiEvent::ConversationUpdate("🤖 OpenAI integration enabled".to_string()))?;
+        ui_sender.send(UiEvent::ConversationUpdate("⏺ OpenAI integration enabled".to_string()))?;
     } else {
-        ui_sender.send(UiEvent::ConversationUpdate("⚠️  OpenAI key not found - using fallback mode".to_string()))?;
+        ui_sender.send(UiEvent::ConversationUpdate("⏺  OpenAI key not found - using fallback mode".to_string()))?;
     }
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
 
@@ -1101,27 +1122,33 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     let _ = ui_sender.send(UiEvent::KvKeysUpdate(initial_keys));
     
     // Get real git logs
-    let initial_git_logs = agent.get_git_logs().await.unwrap_or_else(|_| vec!["📝 Initial agent setup".to_string()]);
+    let initial_git_logs = agent.get_git_logs().await.unwrap_or_else(|_| vec!["⏺ Initial agent setup".to_string()]);
     let _ = ui_sender.send(UiEvent::GitLogUpdate(initial_git_logs));
 
     time::sleep(Duration::from_millis(2000)).await;
 
     // Clear screen and highlight theme for Thread 1
-    let _ = clear_and_highlight_theme(&ui_sender, "THREAD 1", "Initial Data Collection", "🌪️ Hurricane Research & Climate Facts").await;
+    let _ = clear_and_highlight_theme(&ui_sender, "THREAD 1", "Initial Data Collection", "⏺ Hurricane Research & Climate Facts").await;
     
     // THREAD 1: Initial Data Collection
     agent.switch_thread("thread_001".to_string());
 
     for (i, message) in conversation_data.thread1_messages.iter().enumerate() {
-        ui_sender.send(UiEvent::ConversationUpdate(format!("💬 User: {}", message)))?;
+        ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ User: {}", message)))?;
+        
+        // Show typing indicator while processing
+        ui_sender.send(UiEvent::TypingIndicator(true))?;
+        time::sleep(Duration::from_millis(300)).await; // Brief pause to show typing
         
         // Process with real agent
         match agent.process_with_tools(message).await {
             Ok(response) => {
-                ui_sender.send(UiEvent::ConversationUpdate(format!("🤖 Assistant: {}", response)))?;
+                ui_sender.send(UiEvent::TypingIndicator(false))?; // Stop typing
+                ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Assistant: {}", response)))?;
             }
             Err(e) => {
-                ui_sender.send(UiEvent::ConversationUpdate(format!("❌ Error: {}", e)))?;
+                ui_sender.send(UiEvent::TypingIndicator(false))?; // Stop typing
+                ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Error: {}", e)))?;
             }
         }
         
@@ -1147,7 +1174,7 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     }
 
     // Create actual checkpoint and add to git history
-    let commit_1 = agent.add_commit("Thread 1: Data collection").await?;
+    let commit_1 = agent.add_commit("Thread 1 complete: Initial climate data collection with hurricane, heat wave, and flooding research", "thread_001/checkpoint").await?;
     
     // Save current memory stats for later comparison
     let thread1_stats = agent.memory_system.get_system_stats().await?;
@@ -1161,21 +1188,27 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     time::sleep(Duration::from_millis(1500)).await;
 
     // Clear screen and highlight theme for Thread 2
-    let _ = clear_and_highlight_theme(&ui_sender, "THREAD 2", "Analysis and Pattern Recognition", "🔍 Cross-Thread Memory Queries").await;
+    let _ = clear_and_highlight_theme(&ui_sender, "THREAD 2", "Analysis and Pattern Recognition", "⏺ Cross-Thread Memory Queries").await;
 
     // THREAD 2: Analysis and Pattern Recognition
     agent.switch_thread("thread_002".to_string());
 
     for (i, message) in conversation_data.thread2_messages.iter().enumerate() {
-        ui_sender.send(UiEvent::ConversationUpdate(format!("💬 User: {}", message)))?;
+        ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ User: {}", message)))?;
+        
+        // Show typing indicator while processing
+        ui_sender.send(UiEvent::TypingIndicator(true))?;
+        time::sleep(Duration::from_millis(300)).await; // Brief pause to show typing
         
         // Process with real agent
         match agent.process_with_tools(message).await {
             Ok(response) => {
-                ui_sender.send(UiEvent::ConversationUpdate(format!("🤖 Assistant: {}", response)))?;
+                ui_sender.send(UiEvent::TypingIndicator(false))?; // Stop typing
+                ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Assistant: {}", response)))?;
             }
             Err(e) => {
-                ui_sender.send(UiEvent::ConversationUpdate(format!("❌ Error: {}", e)))?;
+                ui_sender.send(UiEvent::TypingIndicator(false))?; // Stop typing
+                ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Error: {}", e)))?;
             }
         }
         
@@ -1200,7 +1233,7 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     }
 
     // Create second checkpoint and add to git history
-    let _commit_2 = agent.add_commit("Thread 2: Analysis").await?;
+    let _commit_2 = agent.add_commit("Thread 2 complete: Cross-thread memory analysis and pattern recognition phase", "thread_002/checkpoint").await?;
     
     // Save thread 2 stats
     let thread2_stats = agent.memory_system.get_system_stats().await?;
@@ -1209,21 +1242,27 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     time::sleep(Duration::from_millis(1500)).await;
 
     // Clear screen and highlight theme for Thread 3
-    let _ = clear_and_highlight_theme(&ui_sender, "THREAD 3", "Synthesis and Policy Recommendations", "🚀 Knowledge Integration & Versioned Storage").await;
+    let _ = clear_and_highlight_theme(&ui_sender, "THREAD 3", "Synthesis and Policy Recommendations", "⏺ Knowledge Integration & Versioned Storage").await;
 
     // THREAD 3: Synthesis and Policy Recommendations
     agent.switch_thread("thread_003".to_string());
 
     for (i, message) in conversation_data.thread3_messages.iter().enumerate() {
-        ui_sender.send(UiEvent::ConversationUpdate(format!("💬 User: {}", message)))?;
+        ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ User: {}", message)))?;
+        
+        // Show typing indicator while processing
+        ui_sender.send(UiEvent::TypingIndicator(true))?;
+        time::sleep(Duration::from_millis(300)).await; // Brief pause to show typing
         
         // Process with real agent
         match agent.process_with_tools(message).await {
             Ok(response) => {
-                ui_sender.send(UiEvent::ConversationUpdate(format!("🤖 Assistant: {}", response)))?;
+                ui_sender.send(UiEvent::TypingIndicator(false))?; // Stop typing
+                ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Assistant: {}", response)))?;
             }
             Err(e) => {
-                ui_sender.send(UiEvent::ConversationUpdate(format!("❌ Error: {}", e)))?;
+                ui_sender.send(UiEvent::TypingIndicator(false))?; // Stop typing
+                ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Error: {}", e)))?;
             }
         }
         
@@ -1249,7 +1288,7 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
 
     // Final statistics and versioned storage demonstrations
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("📊 Final Memory Statistics:".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ Final Memory Statistics:".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("═══════════════════════════════════════════════════════════".to_string()))?;
     
     // Get final real stats
@@ -1258,18 +1297,18 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
 
     // Versioned storage benefits
-    ui_sender.send(UiEvent::ConversationUpdate("🚀 ProllyTree Versioned Storage".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ ProllyTree Versioned Storage".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("Demonstrating key benefits:".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
 
     // Create final commit
-    let _final_commit = agent.add_commit("Thread 3: Synthesis").await?;
+    let _final_commit = agent.add_commit("Thread 3 complete: Knowledge synthesis and policy recommendations finalized", "thread_003/checkpoint").await?;
     
     // Save current state before time travel
     let _final_memory_count = agent.memory_system.get_system_stats().await?.overall.total_memories;
     
     // TIME TRAVEL DEBUGGING - ACTUAL DEMONSTRATION
-    ui_sender.send(UiEvent::ConversationUpdate("⏰ TIME TRAVEL DEBUGGING - ACTUAL DEMONSTRATION".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ TIME TRAVEL DEBUGGING - ACTUAL DEMONSTRATION".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("═══════════════════════════════════════════════════════════".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
     
@@ -1277,7 +1316,7 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     time::sleep(Duration::from_millis(2000)).await;
     
     // Query specific memories from different time periods
-    ui_sender.send(UiEvent::ConversationUpdate("🔍 Querying Memories from Different Time Periods:".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ Querying Memories from Different Time Periods:".to_string()))?;
     
     // Query semantic memories - use text search
     let hurricane_facts = agent.memory_system.semantic.text_search("hurricane", None).await?;
@@ -1339,7 +1378,7 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     
     // Show memory access patterns
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("📈 Memory Access Patterns:".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ Memory Access Patterns:".to_string()))?;
     let stats = agent.memory_system.get_system_stats().await?;
     ui_sender.send(UiEvent::ConversationUpdate(format!("   • Average access count: {:.1}", stats.overall.avg_access_count)))?;
     if let Some(oldest) = stats.overall.oldest_memory {
@@ -1353,7 +1392,7 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     time::sleep(Duration::from_millis(2000)).await;
     
     // ROLLBACK DEMONSTRATION - ACTUAL GIT OPERATIONS
-    ui_sender.send(UiEvent::ConversationUpdate("🔄 ROLLBACK DEMONSTRATION - INTERACTIVE".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ ROLLBACK DEMONSTRATION - INTERACTIVE".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("═══════════════════════════════════════════════════════════".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
     
@@ -1369,7 +1408,7 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     time::sleep(Duration::from_millis(2000)).await;
     
     // Additional conversation turns while in rolled-back state
-    ui_sender.send(UiEvent::ConversationUpdate("🗣️ Working in rolled-back state...".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ Working in rolled-back state...".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
     
     // Simulate some additional interactions in the rolled-back state
@@ -1381,15 +1420,21 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     ];
     
     for (i, message) in rollback_messages.iter().enumerate() {
-        ui_sender.send(UiEvent::ConversationUpdate(format!("💬 User: {}", message)))?;
+        ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ User: {}", message)))?;
+        
+        // Show typing indicator while processing
+        ui_sender.send(UiEvent::TypingIndicator(true))?;
+        time::sleep(Duration::from_millis(300)).await; // Brief pause to show typing
         
         // Process with real agent (now in rolled-back state)
         match agent.process_with_tools(message).await {
             Ok(response) => {
-                ui_sender.send(UiEvent::ConversationUpdate(format!("🤖 Assistant: {}", response)))?;
+                ui_sender.send(UiEvent::TypingIndicator(false))?; // Stop typing
+                ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Assistant: {}", response)))?;
             }
             Err(e) => {
-                ui_sender.send(UiEvent::ConversationUpdate(format!("❌ Error: {}", e)))?;
+                ui_sender.send(UiEvent::TypingIndicator(false))?; // Stop typing
+                ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ Error: {}", e)))?;
             }
         }
         
@@ -1408,8 +1453,8 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     }
     
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("💾 Changes made in rolled-back state".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("📈 Memory now differs from original Thread 3 state".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ Changes made in rolled-back state".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("⏺ Memory now differs from original Thread 3 state".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
     time::sleep(Duration::from_millis(2000)).await;
     
@@ -1468,7 +1513,7 @@ async fn clear_and_highlight_theme(
     
     // Send simple section header
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate(format!("🎯 {} - {}", thread_name, theme_title)))?;
+    ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ {} - {}", thread_name, theme_title)))?;
     ui_sender.send(UiEvent::ConversationUpdate(format!("{}", theme_description)))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
     
@@ -1483,116 +1528,18 @@ async fn clear_and_highlight_theme(
     Ok(())
 }
 
-// Helper function to generate realistic assistant responses
-fn generate_assistant_response(message: &str) -> String {
-    if message.contains("Please remember:") {
-        "I've stored your research project details. I'll track hurricane trends, flooding patterns, heat waves, economic impacts, and adaptation strategies for the Southeast US climate change research."
-    } else if message.contains("Search for recent data") {
-        "I found comprehensive data on hurricane damages in Florida and Georgia, including recent cost analyses and impact assessments."
-    } else if message.contains("Fact:") && message.contains("Hurricane Ian") {
-        "I've stored this critical fact about Hurricane Ian's $112 billion impact. This makes it a key data point for our hurricane intensity research."
-    } else if message.contains("Fact:") && message.contains("hurricanes have increased") {
-        "Stored this important trend data showing a 25% increase in Category 4-5 hurricanes since 1980. This supports the intensification patterns we're tracking."
-    } else if message.contains("Rule:") && message.contains("hurricane_evacuation") {
-        "I've established this evacuation rule for hurricane preparedness. This will be applied to coastal risk assessments in our policy framework."
-    } else if message.contains("What did I ask you to remember") {
-        "You asked me to track a research project on extreme weather impacts in the Southeast US, focusing on hurricanes, flooding, heat waves, economic impacts, and adaptation strategies."
-    } else if message.contains("What facts do we have about hurricanes") {
-        "I found 3 hurricane facts: Hurricane Ian's $112B damage, 25% increase in Category 4-5 storms since 1980, and related intensity trends."
-    } else if message.contains("What rules have we established") {
-        "We have 5 established rules: hurricane evacuation protocols, heat advisories, flood insurance requirements, drought response, and building codes."
-    } else if message.contains("Search for heat wave trends") {
-        "I found detailed heat wave trend data for Atlanta and Charlotte, including urban heat island effects and temperature record analyses."
-    } else if message.contains("Search for climate adaptation") {
-        "I discovered several successful Miami adaptation strategies including stormwater management, elevated construction, and green infrastructure projects."
-    } else if message.contains("Search for green infrastructure") {
-        "I found comprehensive data on green infrastructure solutions including rain gardens, permeable surfaces, urban forests, and natural flood management systems."
-    } else if message.contains("What facts") && message.contains("economic") {
-        "I have 3 economic impact facts: Southeast insurance premiums up 300%, Georgia agriculture lost $2.5B in 2022, and Mississippi River flooding cost $6.2B."
-    } else if message.contains("What facts") && message.contains("heat waves") {
-        "I found 4 heat wave facts: Atlanta's 35 days >95°F in 2023, 43% increase in hospitalizations, Charlotte's 5-8°F urban heat island, and 600% increase in federal disaster declarations."
-    } else if message.contains("What facts") && message.contains("flooding") {
-        "I have 2 flooding facts: 2019 Mississippi River flooding caused $6.2B in agricultural losses, and Southeast US has seen 40% more extreme precipitation events since 1950."
-    } else if message.contains("Fact:") {
-        "I've successfully stored this important research fact. It's now part of our comprehensive climate impact database and will be available across all conversation threads."
-    } else if message.contains("Rule:") {
-        "I've established this new policy rule in our procedural memory. It will be applied consistently across our climate response framework."
-    } else {
-        "I understand. I'll continue to help you with your climate research project and maintain all the data we've collected across our conversation threads."
-    }.to_string()
-}
 
-// Helper function to update memory statistics
-async fn update_memory_stats(
-    ui_sender: &mpsc::UnboundedSender<UiEvent>,
-    agent_id: &str,
-    current_thread: &str,
-    total: usize,
-    semantic: usize,
-    procedural: usize,
-    short_term: usize,
-    episodic: usize,
-    active_threads: usize,
-) {
-    let stats = format!(
-        "Agent: {}\nCurrent Thread: {}\nNamespace: research_project\n\nTotal Memories: {}\n\nBy Type:\n  Semantic Facts: {}\n  Procedural Rules: {}\n  Short-term Convs: {}\n  Episodic Sessions: {}\n\nActive Threads: {}\nTotal Size: {} KB",
-        agent_id,
-        current_thread,
-        total,
-        semantic,
-        procedural,
-        short_term,
-        episodic,
-        active_threads,
-        (total * 85) / 1024 // Approximate size calculation
-    );
-    let _ = ui_sender.send(UiEvent::MemoryStatsUpdate(stats));
-}
 
-// Helper function to generate git logs
-fn generate_git_logs(commit_num: usize, message: &str) -> Vec<String> {
-    let mut logs = vec![
-        format!("commit abc{:03}f - {}", commit_num, message),
-    ];
-    
-    // Add previous commits (show last 8)
-    for i in (1..=7).rev() {
-        if commit_num > i {
-            let prev_commit = commit_num - i;
-            let prev_msg = match prev_commit {
-                1 => "Initial agent setup",
-                2 => "Memory system initialized", 
-                3 => "First climate facts stored",
-                4 => "Hurricane data collected",
-                5 => "Policy rules established",
-                6 => "Thread 1 checkpoint",
-                7 => "Cross-thread queries",
-                8 => "Additional research data",
-                9 => "Thread 2 analysis",
-                10 => "Policy recommendations",
-                _ => "Memory operations"
-            };
-            logs.push(format!("commit abc{:03}f - {}", prev_commit, prev_msg));
-        }
-    }
-    logs
-}
-
-// Helper function to update git logs (kept for compatibility)
-async fn update_git_logs(ui_sender: &mpsc::UnboundedSender<UiEvent>, commit_num: usize, message: &str) {
-    let logs = generate_git_logs(commit_num, message);
-    let _ = ui_sender.send(UiEvent::GitLogUpdate(logs));
-}
 
 // Helper function to generate realistic KV store keys
 fn generate_kv_keys(semantic_count: usize, procedural_count: usize, thread_count: usize, include_episodic: bool) -> Vec<String> {
     let mut keys = vec![
-        "📁 Agent Memory Structure:".to_string(),
+        "⏺ Agent Memory Structure:".to_string(),
         "".to_string(),
     ];
     
     // Semantic memory keys
-    keys.push("🔬 Semantic Memory (Facts):".to_string());
+    keys.push("⏺ Semantic Memory (Facts):".to_string());
     if semantic_count > 0 {
         keys.push("  /agents/context_agent_001/semantic/research_project_hurricanes/001".to_string());
         keys.push("  /agents/context_agent_001/semantic/research_project_hurricanes/002".to_string());
@@ -1613,7 +1560,7 @@ fn generate_kv_keys(semantic_count: usize, procedural_count: usize, thread_count
     keys.push("".to_string());
     
     // Procedural memory keys
-    keys.push("📋 Procedural Memory (Rules):".to_string());
+    keys.push("⏺ Procedural Memory (Rules):".to_string());
     if procedural_count > 0 {
         keys.push("  /agents/context_agent_001/procedural/climate_analysis/hurricane_evacuation".to_string());
     }
@@ -1633,7 +1580,7 @@ fn generate_kv_keys(semantic_count: usize, procedural_count: usize, thread_count
     keys.push("".to_string());
     
     // Short-term memory keys
-    keys.push("💬 Short-term Memory (Conversations):".to_string());
+    keys.push("⏺ Short-term Memory (Conversations):".to_string());
     for i in 1..=thread_count {
         keys.push(format!("  /agents/context_agent_001/short_term/thread_{:03}/conversations", i));
     }
@@ -1642,15 +1589,15 @@ fn generate_kv_keys(semantic_count: usize, procedural_count: usize, thread_count
     
     // Episodic memory keys (if applicable)
     if include_episodic {
-        keys.push("📅 Episodic Memory (Sessions):".to_string());
+        keys.push("⏺ Episodic Memory (Sessions):".to_string());
         keys.push("  /agents/context_agent_001/episodic/2025-07-31/research_session_001".to_string());
         keys.push("  /agents/context_agent_001/episodic/2025-07-31/analysis_session_002".to_string());
         keys.push("  /agents/context_agent_001/episodic/2025-07-31/synthesis_session_003".to_string());
         keys.push("".to_string());
     }
     
-    keys.push(format!("📊 Total Active Keys: ~{}", (semantic_count * 2) + (procedural_count * 2) + (thread_count * 3) + if include_episodic { 6 } else { 0 }));
-    keys.push("🔄 Last Updated: just now".to_string());
+    keys.push(format!("⏺ Total Active Keys: ~{}", (semantic_count * 2) + (procedural_count * 2) + (thread_count * 3) + if include_episodic { 6 } else { 0 }));
+    keys.push("⏺ Last Updated: just now".to_string());
     
     keys
 }
@@ -1662,7 +1609,9 @@ async fn run_app(
 ) -> io::Result<()> {
     let mut ui_state = UiState::default();
     let mut last_tick = Instant::now();
+    let mut last_cursor_blink = Instant::now();
     let tick_rate = Duration::from_millis(100);
+    let cursor_blink_rate = Duration::from_millis(530); // Standard cursor blink rate
 
     loop {
         terminal.draw(|f| ui(f, &ui_state))?;
@@ -1683,7 +1632,9 @@ async fn run_app(
                         }
                     },
                     KeyCode::Down => {
-                        if ui_state.scroll_conversations + 15 < ui_state.conversations.len() {
+                        let window_height = terminal.size()?.height as usize;
+                        let content_height = (window_height / 2).saturating_sub(3);
+                        if ui_state.scroll_conversations + content_height < ui_state.conversations.len() {
                             ui_state.scroll_conversations += 1;
                         }
                     },
@@ -1691,16 +1642,20 @@ async fn run_app(
                         ui_state.scroll_conversations = ui_state.scroll_conversations.saturating_sub(5);
                     },
                     KeyCode::PageDown => {
+                        let window_height = terminal.size()?.height as usize;
+                        let content_height = (window_height / 2).saturating_sub(3);
                         ui_state.scroll_conversations = std::cmp::min(
                             ui_state.scroll_conversations + 5,
-                            ui_state.conversations.len().saturating_sub(15)
+                            ui_state.conversations.len().saturating_sub(content_height)
                         );
                     },
                     KeyCode::Home => {
                         ui_state.scroll_conversations = 0;
                     },
                     KeyCode::End => {
-                        ui_state.scroll_conversations = ui_state.conversations.len().saturating_sub(15);
+                        let window_height = terminal.size()?.height as usize;
+                        let content_height = (window_height / 2).saturating_sub(3);
+                        ui_state.scroll_conversations = ui_state.conversations.len().saturating_sub(content_height);
                     },
                     _ => {}
                 }
@@ -1712,9 +1667,13 @@ async fn run_app(
             match event {
                 UiEvent::ConversationUpdate(conv) => {
                     ui_state.conversations.push(conv.clone());
-                    // Auto-scroll to bottom
-                    if ui_state.conversations.len() > 15 {
-                        ui_state.scroll_conversations = ui_state.conversations.len() - 15;
+                    // Always auto-scroll to bottom to show latest messages
+                    let window_height = terminal.size()?.height as usize;
+                    let content_height = (window_height / 2).saturating_sub(3); // Top half minus borders
+                    if ui_state.conversations.len() > content_height {
+                        ui_state.scroll_conversations = ui_state.conversations.len() - content_height;
+                    } else {
+                        ui_state.scroll_conversations = 0;
                     }
                 },
                 UiEvent::MemoryStatsUpdate(stats) => {
@@ -1726,6 +1685,17 @@ async fn run_app(
                 UiEvent::KvKeysUpdate(keys) => {
                     ui_state.kv_keys = keys;
                 },
+                UiEvent::TypingIndicator(is_typing) => {
+                    ui_state.is_typing = is_typing;
+                    if is_typing {
+                        // Auto-scroll to bottom when typing starts
+                        let window_height = terminal.size()?.height as usize;
+                        let content_height = (window_height / 2).saturating_sub(3);
+                        if ui_state.conversations.len() > content_height {
+                            ui_state.scroll_conversations = ui_state.conversations.len() - content_height + 1;
+                        }
+                    }
+                },
                 UiEvent::Quit => return Ok(()),
             }
         }
@@ -1733,12 +1703,20 @@ async fn run_app(
         if last_tick.elapsed() >= tick_rate {
             last_tick = Instant::now();
         }
+        
+        // Handle cursor blinking separately with slower rate
+        if last_cursor_blink.elapsed() >= cursor_blink_rate {
+            if ui_state.is_typing {
+                ui_state.cursor_visible = !ui_state.cursor_visible;
+            }
+            last_cursor_blink = Instant::now();
+        }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    println!("🧠 Context Offloading Agent Demo");
+    println!("⏺ Context Offloading Agent Demo");
     println!("ProllyTree + Rig Integration");
     println!();
     println!("Features:");
@@ -1792,8 +1770,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("Terminal UI error: {:?}", err);
     }
 
-    println!("✅ Enhanced UI demo completed successfully!");
-    println!("📊 Demonstrated features:");
+    println!("⏺ Enhanced UI demo completed successfully!");
+    println!("⏺ Demonstrated features:");
     println!("  • 35+ climate research conversations");
     println!("  • 65+ memories across 4 types");
     println!("  • 3 conversation threads with cross-thread access");
