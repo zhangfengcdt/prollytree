@@ -167,40 +167,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### AI Agent Memory System
 
 ```rust
-use prollytree::agent::{SearchableMemoryStore, MemoryQuery, MemoryType};
+use prollytree::agent::{AgentMemorySystem, MemoryQuery, MemoryType, MemoryStore};
+use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize agent memory
-    let mut memory = SearchableMemoryStore::new("./agent_memory")?;
+    // Initialize with thread-safe git-backed persistence
+    let mut memory = AgentMemorySystem::init_with_thread_safe_git(
+        "./agent_memory", "assistant_001".to_string(), None
+    )?;
     
-    // Store different types of memories
-    memory.store_memory(
-        "conversation",
-        "User asked about weather in Tokyo",
-        MemoryType::ShortTerm,
-        json!({"intent": "weather_query", "location": "Tokyo"})
+    // Store conversation in short-term memory
+    memory.short_term.store_conversation_turn(
+        "session_123", "user", "What's the weather in Tokyo?", None
     ).await?;
     
-    memory.store_memory(
-        "learned_fact",
-        "Tokyo is 9 hours ahead of UTC",
-        MemoryType::LongTerm,
-        json!({"category": "timezone", "confidence": 0.95})
+    // Store facts in semantic memory
+    memory.semantic.store_fact(
+        "location", "tokyo",
+        json!({"timezone": "JST", "temp": "22°C"}),
+        0.9, "weather_api"
     ).await?;
     
-    // Query memories with semantic search
+    // Query memories
     let query = MemoryQuery {
-        text: Some("What do I know about Tokyo?"),
-        memory_type: Some(MemoryType::LongTerm),
-        limit: 5,
-        ..Default::default()
+        namespace: None,
+        memory_types: Some(vec![MemoryType::Semantic]),
+        tags: None,
+        time_range: None,
+        text_query: Some("Tokyo".to_string()),
+        semantic_query: None,
+        limit: Some(5),
+        include_expired: false,
     };
+    let results = memory.semantic.query(query).await?;
     
-    let memories = memory.search_memories(query).await?;
-    for mem in memories {
-        println!("Found: {} (relevance: {:.2})", mem.content, mem.relevance);
-    }
+    // Create checkpoint
+    let commit_id = memory.checkpoint("Weather session").await?;
+    println!("Stored {} memories, checkpoint: {}", results.len(), commit_id);
     
     Ok(())
 }

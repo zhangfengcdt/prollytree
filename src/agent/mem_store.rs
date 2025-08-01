@@ -7,16 +7,23 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use super::persistence_simple::SimpleMemoryPersistence;
-// use super::persistence_prolly::ProllyMemoryPersistence; // Complete implementation available but disabled
+use super::persistence::InMemoryPersistence;
 use super::traits::{EmbeddingGenerator, MemoryError, MemoryPersistence, MemoryStore};
 use super::types::*;
-// use crate::git::GitKvError;
+use super::versioned_persistence::ThreadSafeVersionedPersistence;
+use crate::git::{
+    ThreadSafeFileVersionedKvStore, ThreadSafeGitVersionedKvStore,
+    ThreadSafeInMemoryVersionedKvStore,
+};
 
 /// Enum for different persistence backends
 pub enum PersistenceBackend {
-    Simple(SimpleMemoryPersistence),
-    // Prolly(ProllyMemoryPersistence), // Complete implementation available but disabled due to thread safety
+    Simple(InMemoryPersistence),
+    ThreadSafeGit(Arc<ThreadSafeGitVersionedKvStore<32>>),
+    ThreadSafeInMemory(Arc<ThreadSafeInMemoryVersionedKvStore<32>>),
+    ThreadSafeFile(Arc<ThreadSafeFileVersionedKvStore<32>>),
+    // Legacy alias for git-backed persistence (maintained for compatibility)
+    ThreadSafe(ThreadSafeVersionedPersistence),
 }
 
 #[async_trait::async_trait]
@@ -24,58 +31,166 @@ impl MemoryPersistence for PersistenceBackend {
     async fn save(&mut self, key: &str, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.save(key, data).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.save(key, data).await,
+            PersistenceBackend::ThreadSafeGit(store) => {
+                store.insert(key.as_bytes().to_vec(), data.to_vec())?;
+                Ok(())
+            }
+            PersistenceBackend::ThreadSafeInMemory(store) => {
+                store.insert(key.as_bytes().to_vec(), data.to_vec())?;
+                Ok(())
+            }
+            PersistenceBackend::ThreadSafeFile(store) => {
+                store.insert(key.as_bytes().to_vec(), data.to_vec())?;
+                Ok(())
+            }
+            PersistenceBackend::ThreadSafe(persistence) => persistence.save(key, data).await,
         }
     }
 
     async fn load(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.load(key).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.load(key).await,
+            PersistenceBackend::ThreadSafeGit(store) => Ok(store.get(key.as_bytes())),
+            PersistenceBackend::ThreadSafeInMemory(store) => Ok(store.get(key.as_bytes())),
+            PersistenceBackend::ThreadSafeFile(store) => Ok(store.get(key.as_bytes())),
+            PersistenceBackend::ThreadSafe(persistence) => persistence.load(key).await,
         }
     }
 
     async fn delete(&mut self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.delete(key).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.delete(key).await,
+            PersistenceBackend::ThreadSafeGit(store) => {
+                store.delete(key.as_bytes())?;
+                Ok(())
+            }
+            PersistenceBackend::ThreadSafeInMemory(store) => {
+                store.delete(key.as_bytes())?;
+                Ok(())
+            }
+            PersistenceBackend::ThreadSafeFile(store) => {
+                store.delete(key.as_bytes())?;
+                Ok(())
+            }
+            PersistenceBackend::ThreadSafe(persistence) => persistence.delete(key).await,
         }
     }
 
     async fn list_keys(&self, prefix: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.list_keys(prefix).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.list_keys(prefix).await,
+            PersistenceBackend::ThreadSafeGit(store) => {
+                let all_keys = store.list_keys()?;
+                let prefix_bytes = prefix.as_bytes();
+                let filtered_keys: Vec<String> = all_keys
+                    .into_iter()
+                    .filter_map(|key_bytes| {
+                        if key_bytes.starts_with(prefix_bytes) {
+                            String::from_utf8(key_bytes).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Ok(filtered_keys)
+            }
+            PersistenceBackend::ThreadSafeInMemory(store) => {
+                let all_keys = store.list_keys()?;
+                let prefix_bytes = prefix.as_bytes();
+                let filtered_keys: Vec<String> = all_keys
+                    .into_iter()
+                    .filter_map(|key_bytes| {
+                        if key_bytes.starts_with(prefix_bytes) {
+                            String::from_utf8(key_bytes).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Ok(filtered_keys)
+            }
+            PersistenceBackend::ThreadSafeFile(store) => {
+                let all_keys = store.list_keys()?;
+                let prefix_bytes = prefix.as_bytes();
+                let filtered_keys: Vec<String> = all_keys
+                    .into_iter()
+                    .filter_map(|key_bytes| {
+                        if key_bytes.starts_with(prefix_bytes) {
+                            String::from_utf8(key_bytes).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Ok(filtered_keys)
+            }
+            PersistenceBackend::ThreadSafe(persistence) => persistence.list_keys(prefix).await,
         }
     }
 
     async fn checkpoint(&mut self, message: &str) -> Result<String, Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.checkpoint(message).await,
-            // PersistenceBackend::Prolly(persistence) => persistence.checkpoint(message).await,
+            PersistenceBackend::ThreadSafeGit(store) => {
+                let commit_id = store.commit(message)?;
+                Ok(format!("{commit_id}"))
+            }
+            PersistenceBackend::ThreadSafeInMemory(store) => {
+                let commit_id = store.commit(message)?;
+                Ok(format!("{commit_id}"))
+            }
+            PersistenceBackend::ThreadSafeFile(store) => {
+                let commit_id = store.commit(message)?;
+                Ok(format!("{commit_id}"))
+            }
+            PersistenceBackend::ThreadSafe(persistence) => persistence.checkpoint(message).await,
         }
     }
 }
 
 impl PersistenceBackend {
     /// Create a new branch (git-specific operation)
-    pub async fn create_branch(&mut self, _name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn create_branch(&mut self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(_) => {
                 Err("Branch operations not supported with Simple persistence backend".into())
-            } // PersistenceBackend::Prolly(persistence) => persistence.create_branch(name).await,
+            }
+            PersistenceBackend::ThreadSafeGit(store) => {
+                store.create_branch(name)?;
+                Ok(())
+            }
+            PersistenceBackend::ThreadSafeInMemory(_) => {
+                Err("Branch operations not supported with InMemory persistence backend".into())
+            }
+            PersistenceBackend::ThreadSafeFile(_) => {
+                Err("Branch operations not supported with File persistence backend".into())
+            }
+            PersistenceBackend::ThreadSafe(persistence) => persistence.create_branch(name).await,
         }
     }
 
     /// Switch to a different branch (git-specific operation)
     pub async fn checkout(
         &mut self,
-        _branch_or_commit: &str,
+        branch_or_commit: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(_) => {
                 Err("Branch operations not supported with Simple persistence backend".into())
-            } // PersistenceBackend::Prolly(persistence) => persistence.checkout_branch(branch_or_commit).await,
+            }
+            PersistenceBackend::ThreadSafeGit(store) => {
+                store.checkout(branch_or_commit)?;
+                Ok(())
+            }
+            PersistenceBackend::ThreadSafeInMemory(_) => {
+                Err("Branch operations not supported with InMemory persistence backend".into())
+            }
+            PersistenceBackend::ThreadSafeFile(_) => {
+                Err("Branch operations not supported with File persistence backend".into())
+            }
+            PersistenceBackend::ThreadSafe(persistence) => {
+                persistence.checkout_branch(branch_or_commit).await
+            }
         }
     }
 }
@@ -101,7 +216,7 @@ impl BaseMemoryStore {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let persistence = SimpleMemoryPersistence::init(path, &format!("agent_memory_{agent_id}"))?;
+        let persistence = InMemoryPersistence::init(path, &format!("agent_memory_{agent_id}"))?;
         Ok(Self {
             persistence: Arc::new(RwLock::new(PersistenceBackend::Simple(persistence))),
             embedding_generator: embedding_generator
@@ -111,22 +226,76 @@ impl BaseMemoryStore {
         })
     }
 
-    // /// Initialize a new memory store with Prolly persistence backend (git-backed)
-    // /// Complete implementation available but disabled due to thread safety limitations.
-    // pub fn init_with_prolly<P: AsRef<Path>>(
-    //     path: P,
-    //     agent_id: String,
-    //     embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
-    // ) -> Result<Self, Box<dyn std::error::Error>> {
-    //     let persistence = ProllyMemoryPersistence::init(path, &format!("agent_memory_{agent_id}"))?;
-    //     Ok(Self {
-    //         persistence: Arc::new(RwLock::new(PersistenceBackend::Prolly(persistence))),
-    //         embedding_generator: embedding_generator
-    //             .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
-    //         agent_id,
-    //         current_branch: "main".to_string(),
-    //     })
-    // }
+    /// Initialize a new memory store with thread-safe Git persistence backend
+    pub fn init_with_thread_safe_git<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let store = ThreadSafeGitVersionedKvStore::init(path)?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafeGit(Arc::new(
+                store,
+            )))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
+
+    /// Initialize a new memory store with thread-safe InMemory persistence backend
+    pub fn init_with_thread_safe_inmemory<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let store = ThreadSafeInMemoryVersionedKvStore::init(path)?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafeInMemory(
+                Arc::new(store),
+            ))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
+
+    /// Initialize a new memory store with thread-safe File persistence backend
+    pub fn init_with_thread_safe_file<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let store = ThreadSafeFileVersionedKvStore::<32>::init(path)?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafeFile(Arc::new(
+                store,
+            )))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
+
+    /// Initialize a new memory store with thread-safe Prolly persistence backend (git-backed)
+    pub fn init_with_thread_safe_prolly<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let persistence =
+            ThreadSafeVersionedPersistence::init(path, &format!("agent_memory_{agent_id}"))?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafe(persistence))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
 
     /// Open an existing memory store with Simple persistence backend
     pub fn open<P: AsRef<Path>>(
@@ -134,9 +303,80 @@ impl BaseMemoryStore {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let persistence = SimpleMemoryPersistence::open(path, &format!("agent_memory_{agent_id}"))?;
+        let persistence = InMemoryPersistence::open(path, &format!("agent_memory_{agent_id}"))?;
         Ok(Self {
             persistence: Arc::new(RwLock::new(PersistenceBackend::Simple(persistence))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
+
+    /// Open an existing memory store with thread-safe Git persistence backend
+    pub fn open_with_thread_safe_git<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let store = ThreadSafeGitVersionedKvStore::open(path)?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafeGit(Arc::new(
+                store,
+            )))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
+
+    /// Open an existing memory store with thread-safe InMemory persistence backend
+    pub fn open_with_thread_safe_inmemory<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let store = ThreadSafeInMemoryVersionedKvStore::open(path)?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafeInMemory(
+                Arc::new(store),
+            ))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
+
+    /// Open an existing memory store with thread-safe File persistence backend
+    pub fn open_with_thread_safe_file<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let store = ThreadSafeFileVersionedKvStore::open(path)?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafeFile(Arc::new(
+                store,
+            )))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
+
+    /// Open an existing memory store with thread-safe Prolly persistence backend
+    pub fn open_with_thread_safe_prolly<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let persistence =
+            ThreadSafeVersionedPersistence::open(path, &format!("agent_memory_{agent_id}"))?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafe(persistence))),
             embedding_generator: embedding_generator
                 .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
             agent_id,

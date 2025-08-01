@@ -1,0 +1,30 @@
+{
+  "thread1_messages": [
+    "Please remember: Financial analysis project on cryptocurrency market trends and risk assessment. Focus on: Bitcoin price volatility, regulatory impacts, institutional adoption, market sentiment analysis, and risk management strategies.",
+    "Search for Bitcoin price analysis from the last quarter",
+    "Fact: Bitcoin reached an all-time high of $73,000 in March 2024 category: cryptocurrency",
+    "Fact: Institutional Bitcoin holdings increased by 40% in 2024 category: adoption",
+    "Rule: risk_management: IF volatility > 20% daily THEN reduce position size by 50%",
+    "Search for regulatory changes affecting crypto markets",
+    "Fact: The SEC approved 11 Bitcoin ETFs in January 2024 category: regulation",
+    "Fact: El Salvador holds over 2,700 Bitcoin as legal tender category: adoption",
+    "Rule: compliance_check: IF new_regulation THEN review portfolio within 24 hours"
+  ],
+  "thread2_messages": [
+    "What did I ask you to track in this financial analysis?",
+    "What facts do we have about cryptocurrency adoption?",
+    "Search for correlation between Bitcoin and traditional markets",
+    "Fact: Bitcoin correlation with S&P 500 increased to 0.8 during market stress category: correlation",
+    "What risk management rules have we established?",
+    "Rule: diversification: IF crypto_allocation > 10% of portfolio THEN rebalance",
+    "Fact: MicroStrategy owns approximately 190,000 Bitcoin worth $13.5 billion category: adoption"
+  ],
+  "thread3_messages": [
+    "Can you summarize the key cryptocurrency trends we've identified?",
+    "What regulatory facts do we have?",
+    "Fact: EU's MiCA regulation took effect in 2024, requiring crypto asset registration category: regulation",
+    "What are all our risk management and compliance rules?",
+    "Fact: Global crypto market cap exceeded $2.8 trillion in 2024 category: market_size",
+    "Rule: market_monitoring: IF major_news OR price_move > 15% THEN reassess positions immediately"
+  ]
+}

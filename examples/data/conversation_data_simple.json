@@ -1,0 +1,17 @@
+{
+  "thread1_messages": [
+    "Hello, I'm testing a simple conversation scenario.",
+    "Search for information about machine learning",
+    "Fact: Machine learning is a subset of artificial intelligence category: technology",
+    "Rule: ai_safety: IF system_complexity > high THEN require human oversight"
+  ],
+  "thread2_messages": [
+    "What did we learn about machine learning?",
+    "Fact: Deep learning uses neural networks with multiple layers category: technology",
+    "What rules do we have?"
+  ],
+  "thread3_messages": [
+    "Can you summarize our technology facts?",
+    "Fact: AI systems require careful testing before deployment category: technology"
+  ]
+}
