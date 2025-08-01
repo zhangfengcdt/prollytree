@@ -862,7 +862,7 @@ Investment Goals: {}
 
 Explain this recommendation in a warm, personal tone that:
 1. Acknowledges their specific situation and goals
-2. Connects to their risk tolerance and time horizon  
+2. Connects to their risk tolerance and time horizon
 3. Provides clear reasoning and next steps
 4. Shows confidence while being realistic
 

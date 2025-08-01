@@ -42,6 +42,8 @@ tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync"], opt
 rig-core = { version = "0.2.1", optional = true }
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 rocksdb = { version = "0.22", optional = true }
+ratatui = { version = "0.26", optional = true }
+crossterm = { version = "0.27", optional = true }
 
 [dev-dependencies]
 bytes = "1.10.1"
@@ -62,6 +64,7 @@ sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures", "dep:to
 rig = ["dep:rig-core", "dep:tokio", "dep:async-trait"]
 python = ["dep:pyo3"]
 rocksdb_storage = ["dep:rocksdb", "dep:lru"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:tokio"]
 
 [[bin]]
 name = "git-prolly"
@@ -111,9 +114,14 @@ path = "examples/storage.rs"
 required-features = ["rocksdb_storage"]
 
 [[example]]
-name = "agent_rig_demo"
-path = "examples/agent.rs"
+name = "agent_demo"
+path = "examples/agent_demo.rs"
 required-features = ["git", "sql", "rig"]
+
+[[example]]
+name = "agent_context"
+path = "examples/agent_context.rs"
+required-features = ["git", "sql", "rig", "tui"]
 
 [workspace]
 members = ["examples/financial_advisor"]

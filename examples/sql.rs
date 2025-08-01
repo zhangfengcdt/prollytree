@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
     println!("2. Inserting sample data...");
 
     let insert_users = r#"
-        INSERT INTO users (id, name, email, age) VALUES 
+        INSERT INTO users (id, name, email, age) VALUES
         (1, 'Alice Johnson', 'alice@example.com', 30),
         (2, 'Bob Smith', 'bob@example.com', 25),
         (3, 'Charlie Brown', 'charlie@example.com', 35),
@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
     "#;
 
     let insert_orders = r#"
-        INSERT INTO orders (id, user_id, product, amount, order_date) VALUES 
+        INSERT INTO orders (id, user_id, product, amount, order_date) VALUES
         (1, 1, 'Laptop', 1200, '2024-01-15'),
         (2, 1, 'Mouse', 25, '2024-01-16'),
         (3, 2, 'Keyboard', 75, '2024-01-17'),

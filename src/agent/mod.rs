@@ -90,23 +90,25 @@
 pub mod traits;
 pub mod types;
 // pub mod persistence; // Disabled due to Send/Sync issues with GitVersionedKvStore
-pub mod lifecycle;
-pub mod long_term;
-pub mod search;
-pub mod short_term;
-pub mod simple_persistence;
-pub mod store;
+pub mod embedding_search;
+pub mod mem_lifecycle;
+pub mod mem_long_term;
+pub mod mem_short_term;
+pub mod mem_store;
+pub mod persistence_simple;
+// pub mod persistence_prolly; // Complete implementation available but disabled due to thread safety
 
 // Re-export main types and traits for convenience
 pub use traits::*;
 pub use types::*;
 // pub use persistence::ProllyMemoryPersistence; // Disabled
-pub use lifecycle::MemoryLifecycleManager;
-pub use long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemoryStore};
-pub use search::{DistanceCalculator, MemorySearchEngine, MockEmbeddingGenerator};
-pub use short_term::ShortTermMemoryStore;
-pub use simple_persistence::SimpleMemoryPersistence;
-pub use store::BaseMemoryStore;
+pub use embedding_search::{DistanceCalculator, MemorySearchEngine, MockEmbeddingGenerator};
+pub use mem_lifecycle::MemoryLifecycleManager;
+pub use mem_long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemoryStore};
+pub use mem_short_term::ShortTermMemoryStore;
+pub use mem_store::BaseMemoryStore;
+pub use persistence_simple::SimpleMemoryPersistence;
+// pub use persistence_prolly::{ProllyMemoryPersistence, ProllyMemoryStats}; // Disabled
 
 /// High-level memory system that combines all memory types
 pub struct AgentMemorySystem {
@@ -118,7 +120,7 @@ pub struct AgentMemorySystem {
 }
 
 impl AgentMemorySystem {
-    /// Initialize a complete agent memory system
+    /// Initialize a complete agent memory system with Simple persistence backend
     pub fn init<P: AsRef<std::path::Path>>(
         path: P,
         agent_id: String,
@@ -142,6 +144,39 @@ impl AgentMemorySystem {
             lifecycle_manager,
         })
     }
+
+    // /// Initialize a complete agent memory system with Prolly persistence backend (git-backed)
+    // ///
+    // /// Complete implementation available but disabled due to thread safety limitations.
+    // /// The underlying Git library (gix) contains RefCell components that prevent Sync.
+    // ///
+    // /// To use this functionality:
+    // /// 1. Uncomment this method and related code in persistence_prolly.rs
+    // /// 2. Use only in guaranteed single-threaded contexts
+    // /// 3. Expect compilation failures in multi-threaded scenarios
+    // pub fn init_with_prolly<P: AsRef<std::path::Path>>(
+    //     path: P,
+    //     agent_id: String,
+    //     embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    // ) -> Result<Self, Box<dyn std::error::Error>> {
+    //     let base_store = BaseMemoryStore::init_with_prolly(path, agent_id.clone(), embedding_generator)?;
+    //
+    //     let short_term =
+    //         ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+    //
+    //     let semantic = SemanticMemoryStore::new(base_store.clone());
+    //     let episodic = EpisodicMemoryStore::new(base_store.clone());
+    //     let procedural = ProceduralMemoryStore::new(base_store.clone());
+    //     let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+    //
+    //     Ok(Self {
+    //         short_term,
+    //         semantic,
+    //         episodic,
+    //         procedural,
+    //         lifecycle_manager,
+    //     })
+    // }
 
     /// Open an existing agent memory system
     pub fn open<P: AsRef<std::path::Path>>(
@@ -217,13 +252,47 @@ impl AgentMemorySystem {
     pub async fn checkpoint(&mut self, message: &str) -> Result<String, MemoryError> {
         self.lifecycle_manager.commit(message).await
     }
+
+    /// Rollback to a specific checkpoint/commit
+    pub async fn rollback(&mut self, checkpoint_id: &str) -> Result<(), MemoryError> {
+        // Rollback all memory stores to the specified checkpoint
+        self.short_term.checkout(checkpoint_id).await?;
+        self.semantic.checkout(checkpoint_id).await?;
+        self.episodic.checkout(checkpoint_id).await?;
+        self.procedural.checkout(checkpoint_id).await?;
+
+        Ok(())
+    }
+
+    /// Get list of available checkpoints/commits
+    pub async fn list_checkpoints(&self) -> Result<Vec<CheckpointInfo>, MemoryError> {
+        // For now, return a simplified list - in a full implementation this would
+        // query the underlying git repository for commit history
+        Ok(vec![])
+    }
+
+    /// Compare memory state between two checkpoints
+    pub async fn compare_checkpoints(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<MemoryDiff, MemoryError> {
+        // Placeholder for checkpoint comparison - would be implemented with actual
+        // git diff functionality in a full system
+        Ok(MemoryDiff {
+            added_memories: 0,
+            modified_memories: 0,
+            deleted_memories: 0,
+            changes_summary: format!("Comparison between {from} and {to}"),
+        })
+    }
 }
 
 /// Combined statistics for the entire memory system
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentMemoryStats {
     pub overall: MemoryStats,
-    pub short_term: short_term::ShortTermStats,
+    pub short_term: mem_short_term::ShortTermStats,
 }
 
 /// Report from memory optimization operations
@@ -233,6 +302,24 @@ pub struct OptimizationReport {
     pub memories_consolidated: usize,
     pub memories_archived: usize,
     pub memories_pruned: usize,
+}
+
+/// Information about a memory checkpoint
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CheckpointInfo {
+    pub id: String,
+    pub message: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub memory_count: usize,
+}
+
+/// Comparison between two memory states
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryDiff {
+    pub added_memories: usize,
+    pub modified_memories: usize,
+    pub deleted_memories: usize,
+    pub changes_summary: String,
 }
 
 impl OptimizationReport {

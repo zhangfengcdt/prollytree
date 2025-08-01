@@ -3,7 +3,7 @@ use chrono::{Datelike, Utc};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::store::BaseMemoryStore;
+use super::mem_store::BaseMemoryStore;
 use super::traits::{MemoryError, MemoryStore, SearchableMemoryStore};
 use super::types::*;
 
