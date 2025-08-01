@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::cmp::min;
 use std::error::Error;
-use std::io;
+use std::io::{self, Write};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -27,6 +27,35 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
+
+/// Available memory backend options
+#[derive(Debug, Clone)]
+pub enum MemoryBackend {
+    InMemory,
+    ThreadSafeInMemory, 
+    ThreadSafeGit,
+    ThreadSafeFile,
+}
+
+impl MemoryBackend {
+    fn display_name(&self) -> &str {
+        match self {
+            MemoryBackend::InMemory => "In-Memory (Basic)",
+            MemoryBackend::ThreadSafeInMemory => "Thread-Safe In-Memory (Versioned)", 
+            MemoryBackend::ThreadSafeGit => "Thread-Safe Git (Versioned)",
+            MemoryBackend::ThreadSafeFile => "Thread-Safe File (Versioned)",
+        }
+    }
+
+    fn description(&self) -> &str {
+        match self {
+            MemoryBackend::InMemory => "Simple in-memory storage, no persistence",
+            MemoryBackend::ThreadSafeInMemory => "In-memory storage with git versioning",
+            MemoryBackend::ThreadSafeGit => "Git-backed versioned storage with commits", 
+            MemoryBackend::ThreadSafeFile => "File-based storage with git versioning",
+        }
+    }
+}
 
 /// Tools available to the agent, similar to LangGraph example
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,20 +157,67 @@ pub enum UiEvent {
 }
 
 impl ContextOffloadingAgent {
+    /// Get the real git author information from git config
+    fn get_git_author() -> String {
+        let name = std::process::Command::new("git")
+            .args(["config", "--get", "user.name"])
+            .output()
+            .ok()
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "Unknown User".to_string());
+        
+        let email = std::process::Command::new("git")
+            .args(["config", "--get", "user.email"])
+            .output()
+            .ok()
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "unknown@example.com".to_string());
+        
+        format!("{} <{}>", name, email)
+    }
+
     /// Initialize a new agent with persistent memory across threads
     pub async fn new(
         memory_path: &std::path::Path,
         agent_id: String,
         namespace: String,
+        backend: MemoryBackend,
         openai_api_key: Option<String>,
         ui_sender: Option<mpsc::UnboundedSender<UiEvent>>,
     ) -> Result<Self, Box<dyn Error>> {
-        // Initialize the memory system for cross-thread persistence
-        let memory_system = AgentMemorySystem::init(
-            memory_path,
-            agent_id.clone(),
-            Some(Box::new(MockEmbeddingGenerator)),
-        )?;
+        // Initialize the memory system based on selected backend
+        let memory_system = match backend {
+            MemoryBackend::InMemory => {
+                AgentMemorySystem::init(
+                    memory_path,
+                    agent_id.clone(),
+                    Some(Box::new(MockEmbeddingGenerator)),
+                )?
+            },
+            MemoryBackend::ThreadSafeInMemory => {
+                AgentMemorySystem::init_with_thread_safe_inmemory(
+                    memory_path,
+                    agent_id.clone(),
+                    Some(Box::new(MockEmbeddingGenerator)),
+                )?
+            },
+            MemoryBackend::ThreadSafeGit => {
+                AgentMemorySystem::init_with_thread_safe_git(
+                    memory_path,
+                    agent_id.clone(),
+                    Some(Box::new(MockEmbeddingGenerator)),
+                )?
+            },
+            MemoryBackend::ThreadSafeFile => {
+                AgentMemorySystem::init_with_thread_safe_file(
+                    memory_path,
+                    agent_id.clone(),
+                    Some(Box::new(MockEmbeddingGenerator)),
+                )?
+            },
+        };
 
         let rig_client = openai_api_key.map(|key| Client::new(&key));
         let current_thread_id = format!("thread_{}", chrono::Utc::now().timestamp());
@@ -159,7 +235,7 @@ impl ContextOffloadingAgent {
                 memory_count: 0,
                 timestamp: chrono::Utc::now(),
                 branch: "main".to_string(),
-                author: "system/init".to_string(),
+                author: Self::get_git_author(),
             }],
             current_branch: "main".to_string(),
         })
@@ -204,14 +280,13 @@ impl ContextOffloadingAgent {
                     .await?;
 
                 // Create git commit for scratchpad update
-                let author = format!("{}/Scratchpad", self.current_thread_id);
                 let _commit_id = self
                     .add_commit(
                         &format!(
                             "Update scratchpad: {}",
                             &notes[..std::cmp::min(150, notes.len())]
                         ),
-                        &author,
+                        &Self::get_git_author(),
                     )
                     .await?;
 
@@ -297,14 +372,13 @@ impl ContextOffloadingAgent {
                     .await?;
 
                 // Create git commit for search episode
-                let author = format!("{}/WebSearch", self.current_thread_id);
                 let _commit_id = self
                     .add_commit(
                         &format!(
                             "Web search query: {}",
                             &query[..std::cmp::min(120, query.len())]
                         ),
-                        &author,
+                        &Self::get_git_author(),
                     )
                     .await?;
 
@@ -336,7 +410,6 @@ impl ContextOffloadingAgent {
                     .await?;
 
                 // Create git commit for stored fact
-                let author = format!("{}/StoreFact", self.current_thread_id);
                 let _commit_id = self
                     .add_commit(
                         &format!(
@@ -344,7 +417,7 @@ impl ContextOffloadingAgent {
                             category,
                             &fact[..std::cmp::min(140, fact.len())]
                         ),
-                        &author,
+                        &Self::get_git_author(),
                     )
                     .await?;
 
@@ -377,14 +450,13 @@ impl ContextOffloadingAgent {
                     .await?;
 
                 // Create git commit for stored rule
-                let author = format!("{}/StoreRule", self.current_thread_id);
                 let _commit_id = self
                     .add_commit(
                         &format!(
                             "Add procedural rule: {}",
                             &rule_name[..std::cmp::min(100, rule_name.len())]
                         ),
-                        &author,
+                        &Self::get_git_author(),
                     )
                     .await?;
 
@@ -894,15 +966,12 @@ Based on the tool results, provide a helpful response to the user. Be concise an
         let stats = self.memory_system.get_system_stats().await?;
         let memory_count = stats.overall.total_memories;
 
-        // Generate a realistic commit ID
-        let commit_id = format!(
-            "{:x}",
-            (self.commit_history.len() as u32 * 0x1a2b3c + memory_count as u32 * 0x4d5e6f)
-                % 0xfffffff
-        );
+        // Create a real commit in the memory system
+        let real_commit_id = self.memory_system.checkpoint(message).await?;
 
+        // Also maintain our local git history for the UI display
         let commit = GitCommit {
-            id: commit_id.clone(),
+            id: real_commit_id.clone(),
             message: message.to_string(),
             memory_count,
             timestamp: chrono::Utc::now(),
@@ -911,7 +980,7 @@ Based on the tool results, provide a helpful response to the user. Be concise an
         };
 
         self.commit_history.push(commit);
-        Ok(commit_id)
+        Ok(real_commit_id)
     }
 
     /// Simulate creating a time travel branch
@@ -943,7 +1012,7 @@ Based on the tool results, provide a helpful response to the user. Be concise an
                 memory_count: rollback_commit.memory_count,
                 timestamp: chrono::Utc::now(),
                 branch: branch_name.to_string(),
-                author: "system/rollback".to_string(),
+                author: Self::get_git_author(),
             };
             self.commit_history.push(rollback_commit_new);
         } else {
@@ -957,7 +1026,7 @@ Based on the tool results, provide a helpful response to the user. Be concise an
                 memory_count: 0, // Reset to minimal state
                 timestamp: chrono::Utc::now(),
                 branch: branch_name.to_string(),
-                author: "system/rollback".to_string(),
+                author: Self::get_git_author(),
             };
             self.commit_history.push(rollback_commit_new);
         }
@@ -970,22 +1039,21 @@ Based on the tool results, provide a helpful response to the user. Be concise an
         let stats = self.memory_system.get_system_stats().await?;
         let memory_count = stats.overall.total_memories;
 
-        let commit_id = format!(
-            "{:x}",
-            (self.commit_history.len() as u32 * 0x5555 + memory_count as u32 * 0xaaaa) % 0xfffffff
-        );
+        // Create a real commit in the memory system for recovery
+        let recovery_message = format!("RECOVERY: {}", message);
+        let real_commit_id = self.memory_system.checkpoint(&recovery_message).await?;
 
         let commit = GitCommit {
-            id: commit_id.clone(),
-            message: format!("RECOVERY: {}", message),
+            id: real_commit_id.clone(),
+            message: recovery_message,
             memory_count,
             timestamp: chrono::Utc::now(),
             branch: self.current_branch.clone(),
-            author: "system/recovery".to_string(),
+            author: Self::get_git_author(),
         };
 
         self.commit_history.push(commit);
-        Ok(commit_id)
+        Ok(real_commit_id)
     }
 }
 
@@ -1221,7 +1289,7 @@ fn render_kv_keys(f: &mut Frame, area: Rect, ui_state: &UiState) {
     let kv_keys = List::new(items)
         .block(
             Block::default()
-                .title("Versioned Persistence (Prollytree)")
+                .title("Memory Storage Backend")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::White)),
         )
@@ -1243,24 +1311,119 @@ async fn pausable_sleep(duration: Duration, pause_state: &Arc<AtomicBool>) {
     tokio::time::sleep(duration).await;
 }
 
+/// Display backend selection menu and get user choice
+fn select_memory_backend() -> io::Result<MemoryBackend> {
+    println!();
+    println!("╔══════════════════════════════════════════════════════════╗");
+    println!("║                  MEMORY BACKEND SELECTION                ║");
+    println!("╚══════════════════════════════════════════════════════════╝");
+    println!();
+    println!("Select the memory backend for the agent demonstration:");
+    println!();
+    
+    let backends = vec![
+        MemoryBackend::InMemory,
+        MemoryBackend::ThreadSafeInMemory,
+        MemoryBackend::ThreadSafeGit,
+        MemoryBackend::ThreadSafeFile,
+    ];
+    
+    for (i, backend) in backends.iter().enumerate() {
+        println!("  {}. {} - {}", 
+                 i + 1, 
+                 backend.display_name(), 
+                 backend.description());
+    }
+    
+    println!();
+    print!("Enter your choice (1-4): ");
+    io::stdout().flush()?;
+    
+    loop {
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        
+        match input.trim().parse::<usize>() {
+            Ok(choice) if choice >= 1 && choice <= 4 => {
+                let selected_backend = backends[choice - 1].clone();
+                println!();
+                println!("✓ Selected: {}", selected_backend.display_name());
+                println!("  {}", selected_backend.description());
+                return Ok(selected_backend);
+            },
+            _ => {
+                print!("Invalid choice. Please enter 1-4: ");
+                io::stdout().flush()?;
+            }
+        }
+    }
+}
+
 /// Run comprehensive demonstration with real agent and memory operations
 async fn run_comprehensive_demo(
     ui_sender: mpsc::UnboundedSender<UiEvent>,
     pause_state: Arc<AtomicBool>,
+    temp_dir: TempDir,
+    backend: MemoryBackend,
 ) -> Result<(), Box<dyn Error>> {
     let conversation_data = ConversationData::new();
 
-    // Initialize real agent with temporary directory
-    let temp_dir = TempDir::new()?;
+    // Use the provided temporary directory
     let memory_path = temp_dir.path();
+    
+    // Initialize storage based on backend type
+    let dataset_dir = match &backend {
+        MemoryBackend::InMemory => {
+            // In-memory doesn't need any directory setup
+            memory_path.to_path_buf()
+        },
+        MemoryBackend::ThreadSafeInMemory => {
+            // Thread-safe in-memory needs git initialization (uses git for versioning)
+            std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(&temp_dir)
+                .output()
+                .expect("Failed to initialize git repository");
+
+            // Thread-safe in-memory still uses a path for temp storage
+            memory_path.to_path_buf()
+        },
+        MemoryBackend::ThreadSafeGit => {
+            // Git-backed storage needs git initialization
+            std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(&temp_dir)
+                .output()
+                .expect("Failed to initialize git repository");
+
+            // Create a subdirectory for the dataset (git-backed stores require subdirectories)
+            let dataset_dir = memory_path.join("dataset");
+            std::fs::create_dir_all(&dataset_dir)?;
+            dataset_dir
+        },
+        MemoryBackend::ThreadSafeFile => {
+            // File-based storage needs git initialization (uses git for versioning)
+            std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(&temp_dir)
+                .output()
+                .expect("Failed to initialize git repository");
+
+            // Create a subdirectory for the dataset
+            let dataset_dir = memory_path.join("dataset");
+            std::fs::create_dir_all(&dataset_dir)?;
+            dataset_dir
+        },
+    };
 
     let openai_api_key = std::env::var("OPENAI_API_KEY").ok();
     let has_openai = openai_api_key.is_some();
 
     let mut agent = ContextOffloadingAgent::new(
-        memory_path,
+        &dataset_dir,
         "context_agent_001".to_string(),
         "research_project".to_string(),
+        backend.clone(),
         openai_api_key,
         Some(ui_sender.clone()),
     )
@@ -1273,12 +1436,13 @@ async fn run_comprehensive_demo(
     ui_sender.send(UiEvent::ConversationUpdate(
         "ProllyTree + Rig Integration".to_string(),
     ))?;
-    ui_sender.send(UiEvent::ConversationUpdate(
-        "⏺ Agent initialized with real AgentMemorySystem".to_string(),
-    ))?;
+    ui_sender.send(UiEvent::ConversationUpdate(format!(
+        "⏺ Memory Backend: {}",
+        backend.display_name()
+    )))?;
     ui_sender.send(UiEvent::ConversationUpdate(format!(
         "⏺ Memory path: {:?}",
-        memory_path
+        dataset_dir
     )))?;
     if has_openai {
         ui_sender.send(UiEvent::ConversationUpdate(
@@ -1299,7 +1463,7 @@ async fn run_comprehensive_demo(
     )))?;
 
     // Initial git and KV updates
-    let initial_keys = generate_kv_keys(0, 0, 1, false);
+    let initial_keys = generate_kv_keys(0, 0, 1, false, &backend);
     let _ = ui_sender.send(UiEvent::KvKeysUpdate(initial_keys));
 
     // Get real git logs
@@ -1370,7 +1534,7 @@ async fn run_comprehensive_demo(
             } else {
                 i / 6
             };
-            let keys = generate_kv_keys(approx_semantic, approx_procedural, 1, false);
+            let keys = generate_kv_keys(approx_semantic, approx_procedural, 1, false, &backend);
             let _ = ui_sender.send(UiEvent::KvKeysUpdate(keys));
         }
 
@@ -1379,7 +1543,7 @@ async fn run_comprehensive_demo(
     }
 
     // Create actual checkpoint and add to git history
-    let commit_1 = agent.add_commit("Thread 1 complete: Initial climate data collection with hurricane, heat wave, and flooding research", "thread_001/checkpoint").await?;
+    let commit_1 = agent.add_commit("Thread 1 complete: Initial climate data collection with hurricane, heat wave, and flooding research", &ContextOffloadingAgent::get_git_author()).await?;
 
     // Save current memory stats for later comparison
     let thread1_stats = agent.memory_system.get_system_stats().await?;
@@ -1442,7 +1606,7 @@ async fn run_comprehensive_demo(
 
             let approx_semantic = (i + 12) / 3; // Approximate progress
             let approx_procedural = (i + 5) / 4;
-            let keys = generate_kv_keys(approx_semantic, approx_procedural, 2, false);
+            let keys = generate_kv_keys(approx_semantic, approx_procedural, 2, false, &backend);
             let _ = ui_sender.send(UiEvent::KvKeysUpdate(keys));
         }
 
@@ -1454,7 +1618,7 @@ async fn run_comprehensive_demo(
     let _commit_2 = agent
         .add_commit(
             "Thread 2 complete: Cross-thread memory analysis and pattern recognition phase",
-            "thread_002/checkpoint",
+            &ContextOffloadingAgent::get_git_author(),
         )
         .await?;
 
@@ -1514,7 +1678,7 @@ async fn run_comprehensive_demo(
 
             let approx_semantic = (i + 20) / 3; // Approximate final progress
             let approx_procedural = (i + 10) / 4;
-            let keys = generate_kv_keys(approx_semantic, approx_procedural, 3, true);
+            let keys = generate_kv_keys(approx_semantic, approx_procedural, 3, true, &backend);
             let _ = ui_sender.send(UiEvent::KvKeysUpdate(keys));
         }
 
@@ -1552,7 +1716,7 @@ async fn run_comprehensive_demo(
     let _final_commit = agent
         .add_commit(
             "Thread 3 complete: Knowledge synthesis and policy recommendations finalized",
-            "thread_003/checkpoint",
+            &ContextOffloadingAgent::get_git_author(),
         )
         .await?;
 
@@ -1814,7 +1978,7 @@ async fn run_comprehensive_demo(
         let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
     }
 
-    let final_keys = generate_kv_keys(25, 8, 3, true);
+    let final_keys = generate_kv_keys(25, 8, 3, true, &backend);
     let _ = ui_sender.send(UiEvent::KvKeysUpdate(final_keys));
 
     // Completion messages
@@ -1907,8 +2071,15 @@ fn generate_kv_keys(
     procedural_count: usize,
     thread_count: usize,
     include_episodic: bool,
+    backend: &MemoryBackend,
 ) -> Vec<String> {
-    let mut keys = vec!["⏺ Agent Memory Structure:".to_string(), "".to_string()];
+    let mut keys = vec![
+        format!("⏺ Backend: {}", backend.display_name()),
+        format!("⏺ {}", backend.description()),
+        "".to_string(),
+        "⏺ Agent Memory Structure:".to_string(),
+        "".to_string()
+    ];
 
     // Semantic memory keys
     keys.push("⏺ Semantic Memory (Facts):".to_string());
@@ -2006,6 +2177,32 @@ fn generate_kv_keys(
         keys.push("".to_string());
     }
 
+    // Add backend-specific storage information
+    keys.push("".to_string());
+    match backend {
+        MemoryBackend::InMemory => {
+            keys.push("⏺ Storage: Volatile in-memory only".to_string());
+            keys.push("⏺ Persistence: None".to_string());
+            keys.push("⏺ Versioning: Not available".to_string());
+        },
+        MemoryBackend::ThreadSafeInMemory => {
+            keys.push("⏺ Storage: In-memory with git versioning".to_string());
+            keys.push("⏺ Persistence: Temporary + git history".to_string());
+            keys.push("⏺ Versioning: Git commits in memory".to_string());
+        },
+        MemoryBackend::ThreadSafeGit => {
+            keys.push("⏺ Storage: Git repository".to_string());
+            keys.push("⏺ Persistence: Full git history".to_string());
+            keys.push("⏺ Versioning: Git commits & branches".to_string());
+        },
+        MemoryBackend::ThreadSafeFile => {
+            keys.push("⏺ Storage: File-based with git versioning".to_string());
+            keys.push("⏺ Persistence: Durable file + git history".to_string());
+            keys.push("⏺ Versioning: Git commits & rollback".to_string());
+        },
+    }
+
+    keys.push("".to_string());
     keys.push(format!(
         "⏺ Total Active Keys: ~{}",
         (semantic_count * 2)
@@ -2193,11 +2390,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("• Git commit history");
     println!("• Climate research scenario");
     println!();
-    println!("Press Enter to start...");
-
-    // Wait for user to press Enter
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
+    // Create temporary directory for ProllyTree store
+    let temp_dir = TempDir::new()?;
+    let temp_path = temp_dir.path().to_path_buf();
+    println!();
+    println!("ProllyTree Store Location:");
+    println!("═══════════════════════════════════════════════════════════");
+    println!("📁 {}", temp_path.display());
+    println!("═══════════════════════════════════════════════════════════");
+    println!();
+    // Let user select the memory backend
+    let selected_backend = select_memory_backend()?;
 
     // Setup terminal
     enable_raw_mode()?;
@@ -2215,9 +2418,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Start comprehensive demo in background
     let ui_sender_clone = ui_sender.clone();
     let pause_state_clone = pause_state.clone();
+    let backend_clone = selected_backend.clone();
     let demo_handle = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if let Err(e) = run_comprehensive_demo(ui_sender_clone, pause_state_clone).await {
+        if let Err(e) = run_comprehensive_demo(ui_sender_clone, pause_state_clone, temp_dir, backend_clone).await {
             eprintln!("Demo error: {}", e);
         }
     });

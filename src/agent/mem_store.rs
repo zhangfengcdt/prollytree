@@ -268,7 +268,7 @@ impl BaseMemoryStore {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let store = ThreadSafeFileVersionedKvStore::init(path)?;
+        let store = ThreadSafeFileVersionedKvStore::<32>::init(path)?;
         Ok(Self {
             persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafeFile(Arc::new(
                 store,
