@@ -10,38 +10,6 @@ both efficient data access and verifiable integrity. It is specifically designed
 of distributed systems and large-scale databases, making indexes syncable and distributable over 
 peer-to-peer (P2P) networks.
 
-## Prolly Tree Structure Example
-
-Here is an example of a Prolly Tree structure with 3 levels:
-
-```
-root:
-└── *[0, 23, 63, 85]
-    ├── *[0, 2, 7, 13]
-    │   ├── [0, 1]
-    │   ├── [2, 3, 4, 5, 6]
-    │   ├── [7, 8, 9, 10, 11, 12]
-    │   └── [13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-    ├── *[23, 29, 36, 47, 58]
-    │   ├── [23, 24, 25, 26, 27, 28]
-    │   ├── [29, 30, 31, 32, 33, 34, 35]
-    │   ├── [36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
-    │   ├── [47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57]
-    │   └── [58, 59, 60, 61, 62]
-    ├── *[63, 77, 80]
-    │   ├── [63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76]
-    │   ├── [77, 78, 79]
-    │   └── [80, 81, 82, 83, 84]
-    └── *[85, 89, 92, 98]
-        ├── [85, 86, 87, 88]
-        ├── [89, 90, 91]
-        ├── [92, 93, 94, 95, 96, 97]
-        └── [98, 99, 100]
-
-Note: *[keys] indicates internal node, [keys] indicates leaf node
-```
-This can be generated using the `print_tree` method on the root node of the tree.
-
 ## Key Features
 
 - **Balanced B-tree Structure**: O(log n) operations with shallow tree depth for high performance
@@ -83,6 +51,27 @@ Build from source:
 ```sh
 cargo build
 ```
+
+## Performance
+
+Benchmarks run on Apple M3 Pro, 18GB RAM using in-memory storage:
+
+| Operation | 100 Keys | 1,000 Keys | 10,000 Keys |
+|-----------|----------|------------|-------------|
+| Insert (single) | 8.26 µs | 14.0 µs | 21.2 µs |
+| Insert (batch) | 6.17 µs | 10.3 µs | 17.5 µs |
+| Lookup | 1.15 µs | 2.11 µs | 2.47 µs |
+| Delete | 11.2 µs | 22.4 µs | 29.8 µs |
+| Mixed Ops* | 7.73 µs | 14.5 µs | 20.1 µs |
+
+*Mixed operations: 60% lookups, 30% inserts, 10% deletes
+
+### Key Performance Characteristics
+
+- **O(log n) complexity** for all operations
+- **Batch operations** are ~25% faster than individual operations
+- **Lookup performance** scales sub-linearly due to efficient caching
+- **Memory usage** is approximately 100 bytes per key-value pair
 
 ## Rust Examples
 
