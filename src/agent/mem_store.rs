@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use super::persistence::InMemoryPersistence;
+use super::thread_safe_persistence::ThreadSafeVersionedPersistence;
 // use super::persistence_prolly::ProllyMemoryPersistence; // Complete implementation available but disabled
 use super::traits::{EmbeddingGenerator, MemoryError, MemoryPersistence, MemoryStore};
 use super::types::*;
@@ -16,6 +17,7 @@ use super::types::*;
 /// Enum for different persistence backends
 pub enum PersistenceBackend {
     Simple(InMemoryPersistence),
+    ThreadSafeProlly(ThreadSafeVersionedPersistence),
     // Prolly(ProllyMemoryPersistence), // Complete implementation available but disabled due to thread safety
 }
 
@@ -24,6 +26,7 @@ impl MemoryPersistence for PersistenceBackend {
     async fn save(&mut self, key: &str, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.save(key, data).await,
+            PersistenceBackend::ThreadSafeProlly(persistence) => persistence.save(key, data).await,
             // PersistenceBackend::Prolly(persistence) => persistence.save(key, data).await,
         }
     }
@@ -31,6 +34,7 @@ impl MemoryPersistence for PersistenceBackend {
     async fn load(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.load(key).await,
+            PersistenceBackend::ThreadSafeProlly(persistence) => persistence.load(key).await,
             // PersistenceBackend::Prolly(persistence) => persistence.load(key).await,
         }
     }
@@ -38,6 +42,7 @@ impl MemoryPersistence for PersistenceBackend {
     async fn delete(&mut self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.delete(key).await,
+            PersistenceBackend::ThreadSafeProlly(persistence) => persistence.delete(key).await,
             // PersistenceBackend::Prolly(persistence) => persistence.delete(key).await,
         }
     }
@@ -45,6 +50,7 @@ impl MemoryPersistence for PersistenceBackend {
     async fn list_keys(&self, prefix: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.list_keys(prefix).await,
+            PersistenceBackend::ThreadSafeProlly(persistence) => persistence.list_keys(prefix).await,
             // PersistenceBackend::Prolly(persistence) => persistence.list_keys(prefix).await,
         }
     }
@@ -52,6 +58,7 @@ impl MemoryPersistence for PersistenceBackend {
     async fn checkpoint(&mut self, message: &str) -> Result<String, Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(persistence) => persistence.checkpoint(message).await,
+            PersistenceBackend::ThreadSafeProlly(persistence) => persistence.checkpoint(message).await,
             // PersistenceBackend::Prolly(persistence) => persistence.checkpoint(message).await,
         }
     }
@@ -59,23 +66,27 @@ impl MemoryPersistence for PersistenceBackend {
 
 impl PersistenceBackend {
     /// Create a new branch (git-specific operation)
-    pub async fn create_branch(&mut self, _name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn create_branch(&mut self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(_) => {
                 Err("Branch operations not supported with Simple persistence backend".into())
-            } // PersistenceBackend::Prolly(persistence) => persistence.create_branch(name).await,
+            }
+            PersistenceBackend::ThreadSafeProlly(persistence) => persistence.create_branch(name).await,
+            // PersistenceBackend::Prolly(persistence) => persistence.create_branch(name).await,
         }
     }
 
     /// Switch to a different branch (git-specific operation)
     pub async fn checkout(
         &mut self,
-        _branch_or_commit: &str,
+        branch_or_commit: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(_) => {
                 Err("Branch operations not supported with Simple persistence backend".into())
-            } // PersistenceBackend::Prolly(persistence) => persistence.checkout_branch(branch_or_commit).await,
+            }
+            PersistenceBackend::ThreadSafeProlly(persistence) => persistence.checkout_branch(branch_or_commit).await,
+            // PersistenceBackend::Prolly(persistence) => persistence.checkout_branch(branch_or_commit).await,
         }
     }
 }
@@ -104,6 +115,22 @@ impl BaseMemoryStore {
         let persistence = InMemoryPersistence::init(path, &format!("agent_memory_{agent_id}"))?;
         Ok(Self {
             persistence: Arc::new(RwLock::new(PersistenceBackend::Simple(persistence))),
+            embedding_generator: embedding_generator
+                .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+            agent_id,
+            current_branch: "main".to_string(),
+        })
+    }
+
+    /// Initialize a new memory store with thread-safe Prolly persistence backend (git-backed)
+    pub fn init_with_thread_safe_prolly<P: AsRef<Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let persistence = ThreadSafeVersionedPersistence::init(path, &format!("agent_memory_{agent_id}"))?;
+        Ok(Self {
+            persistence: Arc::new(RwLock::new(PersistenceBackend::ThreadSafeProlly(persistence))),
             embedding_generator: embedding_generator
                 .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
             agent_id,
