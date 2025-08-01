@@ -121,11 +121,6 @@ required-features = ["git", "sql", "rig"]
 [[example]]
 name = "agent_context"
 path = "examples/agent_context.rs"
-required-features = ["git", "sql", "rig"]
-
-[[example]]
-name = "agent_context_ui"
-path = "examples/agent_context_ui.rs"
 required-features = ["git", "sql", "rig", "tui"]
 
 [workspace]
