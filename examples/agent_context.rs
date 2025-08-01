@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::cmp::min;
 use std::error::Error;
+use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -1058,60 +1060,54 @@ Based on the tool results, provide a helpful response to the user. Be concise an
 }
 
 /// Comprehensive conversation data from the original demo
+#[derive(Debug, Serialize, Deserialize)]
 struct ConversationData {
-    thread1_messages: Vec<&'static str>,
-    thread2_messages: Vec<&'static str>,
-    thread3_messages: Vec<&'static str>,
+    thread1_messages: Vec<String>,
+    thread2_messages: Vec<String>,
+    thread3_messages: Vec<String>,
 }
 
 impl ConversationData {
-    fn new() -> Self {
-        Self {
-            thread1_messages: vec![
-                "Please remember: Research project on the impact of extreme weather on southeast US due to climate change. Key areas to track: hurricane intensity trends, flooding patterns, heat wave frequency, economic impacts on agriculture and infrastructure, and adaptation strategies being implemented.",
-                "Search for recent data on hurricane damage costs in Florida and Georgia",
-                "Fact: Hurricane Ian (2022) caused over $112 billion in damages, making it the costliest natural disaster in Florida's history category: hurricanes",
-                "Fact: Category 4 and 5 hurricanes have increased by 25% in the Southeast US since 1980 category: hurricanes",
-                "Rule: hurricane_evacuation: IF hurricane category >= 3 AND distance_from_coast < 10_miles THEN mandatory evacuation required",
-                "Search for heat wave data in major southeast cities",
-                "Fact: Atlanta experienced 35 days above 95°F in 2023, compared to an average of 15 days in the 1990s category: heat_waves",
-                "Fact: Heat-related hospitalizations in Southeast US cities have increased by 43% between 2010-2023 category: heat_waves",
-                "Rule: heat_advisory: IF temperature > 95F AND heat_index > 105F THEN issue heat advisory and open cooling centers",
-                "Search for flooding impact on agriculture in Mississippi Delta",
-                "Fact: 2019 Mississippi River flooding caused $6.2 billion in agricultural losses across Arkansas, Mississippi, and Louisiana category: flooding",
-                "Rule: flood_insurance: IF property in 100-year floodplain THEN require federal flood insurance for mortgages",
-            ],
+    /// Load default conversation data - tries multiple locations
+    fn load_default() -> (Self, String) {
+        // Try these files in order
+        let candidate_files = [
+            "examples/data/conversation_data.json",
+            "data/conversation_data.json", 
+            "examples/data/conversation_data_simple.json",
+            "conversation_data.json", // Legacy fallback
+        ];
+        
+        for file_path in &candidate_files {
+            if Path::new(file_path).exists() {
+                return Self::load_from_file(file_path);
+            }
+        }
+        
+        // If no files found, panic with helpful message
+        panic!("No conversation data files found. Please ensure one of these files exists:\n  - examples/data/conversation_data.json\n  - data/conversation_data.json\n  - examples/data/conversation_data_simple.json");
+    }
 
-            thread2_messages: vec![
-                "What did I ask you to remember about my research project?",
-                "What facts do we have about hurricanes?",
-                "Search for information about heat wave trends in Atlanta and Charlotte over the past decade",
-                "Fact: Charlotte's urban heat island effect amplifies temperatures by 5-8°F compared to surrounding areas category: heat_waves",
-                "What rules have we established so far?",
-                "Rule: agricultural_drought_response: IF rainfall < 50% of normal for 60 days AND crop_stage = critical THEN implement emergency irrigation protocols",
-                "Fact: Southeast US coastal property insurance premiums have increased 300% since 2010 due to climate risks category: economic",
-                "Search for successful climate adaptation strategies in Miami",
-                "Fact: Miami Beach's $400 million stormwater pump system has reduced flooding events by 85% since 2015 category: adaptation",
-                "Rule: building_codes: IF new_construction AND flood_zone THEN require elevation minimum 3 feet above base flood elevation",
-                "What facts do we have about economic impacts?",
-            ],
-
-            thread3_messages: vec![
-                "Can you recall what research topics I asked you to track?",
-                "What facts do we have about heat waves?",
-                "Fact: Federal disaster declarations for heat waves have increased 600% in Southeast US since 2000 category: heat_waves",
-                "What are all the rules we've established for climate response?",
-                "Fact: Georgia's agricultural sector lost $2.5 billion in 2022 due to extreme weather events category: economic",
-                "Rule: infrastructure_resilience: IF critical_infrastructure AND climate_risk_score > 7 THEN require climate resilience assessment and upgrade plan",
-                "Search for green infrastructure solutions for urban flooding",
-                "Fact: Green infrastructure projects in Atlanta reduced stormwater runoff by 40% and provided $85 million in ecosystem services category: adaptation",
-                "What facts have we collected about flooding?",
-                "Rule: emergency_response: IF rainfall > 6_inches_24hr OR wind_speed > 75mph THEN activate emergency operations center",
-                "Fact: Southeast US has experienced a 40% increase in extreme precipitation events (>3 inches in 24hr) since 1950 category: flooding",
-                "What economic impact facts do we have across all categories?",
-            ],
+    /// Load conversation data from a JSON file
+    fn load_from_file<P: AsRef<Path>>(file_path: P) -> (Self, String) {
+        match fs::read_to_string(&file_path) {
+            Ok(content) => {
+                match serde_json::from_str::<ConversationData>(&content) {
+                    Ok(data) => {
+                        let msg = format!("✓ Loaded from: {}", file_path.as_ref().display());
+                        (data, msg)
+                    },
+                    Err(e) => {
+                        panic!("Failed to parse JSON from {}: {}. Please check the file format.", file_path.as_ref().display(), e);
+                    }
+                }
+            },
+            Err(_) => {
+                panic!("File not found: {}. Please check the file path.", file_path.as_ref().display());
+            }
         }
     }
+
 }
 
 /// Render the four-panel UI
@@ -1366,7 +1362,8 @@ async fn run_comprehensive_demo(
     temp_dir: TempDir,
     backend: MemoryBackend,
 ) -> Result<(), Box<dyn Error>> {
-    let conversation_data = ConversationData::new();
+    // Try to load conversation data from file, fallback to default
+    let (conversation_data, load_status) = ConversationData::load_default();
 
     // Use the provided temporary directory
     let memory_path = temp_dir.path();
@@ -1443,6 +1440,10 @@ async fn run_comprehensive_demo(
     ui_sender.send(UiEvent::ConversationUpdate(format!(
         "⏺ Memory path: {:?}",
         dataset_dir
+    )))?;
+    ui_sender.send(UiEvent::ConversationUpdate(format!(
+        "⏺ Conversations: {}",
+        load_status
     )))?;
     if has_openai {
         ui_sender.send(UiEvent::ConversationUpdate(
