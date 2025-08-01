@@ -99,7 +99,7 @@ impl MemoryPersistence for ThreadSafeVersionedPersistence {
         // Create a git commit with the provided message
         let commit_id = self.store.commit(message)?;
 
-        Ok(format!("{}", commit_id))
+        Ok(format!("{commit_id}"))
     }
 }
 

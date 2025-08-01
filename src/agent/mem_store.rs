@@ -133,15 +133,15 @@ impl MemoryPersistence for PersistenceBackend {
             PersistenceBackend::Simple(persistence) => persistence.checkpoint(message).await,
             PersistenceBackend::ThreadSafeGit(store) => {
                 let commit_id = store.commit(message)?;
-                Ok(format!("{}", commit_id))
+                Ok(format!("{commit_id}"))
             }
             PersistenceBackend::ThreadSafeInMemory(store) => {
                 let commit_id = store.commit(message)?;
-                Ok(format!("{}", commit_id))
+                Ok(format!("{commit_id}"))
             }
             PersistenceBackend::ThreadSafeFile(store) => {
                 let commit_id = store.commit(message)?;
-                Ok(format!("{}", commit_id))
+                Ok(format!("{commit_id}"))
             }
             PersistenceBackend::ThreadSafe(persistence) => persistence.checkpoint(message).await,
         }
