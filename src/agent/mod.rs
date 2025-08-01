@@ -96,14 +96,11 @@ pub mod mem_long_term;
 pub mod mem_short_term;
 pub mod mem_store;
 pub mod persistence;
-// mod versioned_persistence; // Disabled due to thread safety issues
 pub mod versioned_persistence;
-// pub mod persistence_prolly; // Complete implementation available but disabled due to thread safety
 
 // Re-export main types and traits for convenience
 pub use traits::*;
 pub use types::*;
-// pub use persistence::ProllyMemoryPersistence; // Disabled
 pub use embedding_search::{DistanceCalculator, MemorySearchEngine, MockEmbeddingGenerator};
 pub use mem_lifecycle::MemoryLifecycleManager;
 pub use mem_long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemoryStore};
@@ -111,7 +108,6 @@ pub use mem_short_term::ShortTermMemoryStore;
 pub use mem_store::BaseMemoryStore;
 pub use persistence::InMemoryPersistence;
 pub use versioned_persistence::{ThreadSafeVersionedPersistence, ThreadSafeProllyMemoryStats};
-// pub use persistence_prolly::{ProllyMemoryPersistence, ProllyMemoryStats}; // Disabled
 
 /// High-level memory system that combines all memory types
 pub struct AgentMemorySystem {
@@ -130,6 +126,81 @@ impl AgentMemorySystem {
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let base_store = BaseMemoryStore::init(path, agent_id.clone(), embedding_generator)?;
+
+        let short_term =
+            ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+
+        let semantic = SemanticMemoryStore::new(base_store.clone());
+        let episodic = EpisodicMemoryStore::new(base_store.clone());
+        let procedural = ProceduralMemoryStore::new(base_store.clone());
+        let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+
+        Ok(Self {
+            short_term,
+            semantic,
+            episodic,
+            procedural,
+            lifecycle_manager,
+        })
+    }
+
+    /// Initialize a complete agent memory system with thread-safe Git persistence backend
+    pub fn init_with_thread_safe_git<P: AsRef<std::path::Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let base_store = BaseMemoryStore::init_with_thread_safe_git(path, agent_id.clone(), embedding_generator)?;
+
+        let short_term =
+            ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+
+        let semantic = SemanticMemoryStore::new(base_store.clone());
+        let episodic = EpisodicMemoryStore::new(base_store.clone());
+        let procedural = ProceduralMemoryStore::new(base_store.clone());
+        let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+
+        Ok(Self {
+            short_term,
+            semantic,
+            episodic,
+            procedural,
+            lifecycle_manager,
+        })
+    }
+
+    /// Initialize a complete agent memory system with thread-safe InMemory persistence backend
+    pub fn init_with_thread_safe_inmemory<P: AsRef<std::path::Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let base_store = BaseMemoryStore::init_with_thread_safe_inmemory(path, agent_id.clone(), embedding_generator)?;
+
+        let short_term =
+            ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+
+        let semantic = SemanticMemoryStore::new(base_store.clone());
+        let episodic = EpisodicMemoryStore::new(base_store.clone());
+        let procedural = ProceduralMemoryStore::new(base_store.clone());
+        let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+
+        Ok(Self {
+            short_term,
+            semantic,
+            episodic,
+            procedural,
+            lifecycle_manager,
+        })
+    }
+
+    /// Initialize a complete agent memory system with thread-safe File persistence backend
+    pub fn init_with_thread_safe_file<P: AsRef<std::path::Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let base_store = BaseMemoryStore::init_with_thread_safe_file(path, agent_id.clone(), embedding_generator)?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
@@ -177,13 +248,113 @@ impl AgentMemorySystem {
         })
     }
 
-    /// Open an existing agent memory system
+    /// Open an existing agent memory system with Simple persistence backend
     pub fn open<P: AsRef<std::path::Path>>(
         path: P,
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let base_store = BaseMemoryStore::open(path, agent_id.clone(), embedding_generator)?;
+
+        let short_term =
+            ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+
+        let semantic = SemanticMemoryStore::new(base_store.clone());
+        let episodic = EpisodicMemoryStore::new(base_store.clone());
+        let procedural = ProceduralMemoryStore::new(base_store.clone());
+        let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+
+        Ok(Self {
+            short_term,
+            semantic,
+            episodic,
+            procedural,
+            lifecycle_manager,
+        })
+    }
+
+    /// Open an existing agent memory system with thread-safe Git persistence backend
+    pub fn open_with_thread_safe_git<P: AsRef<std::path::Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let base_store = BaseMemoryStore::open_with_thread_safe_git(path, agent_id.clone(), embedding_generator)?;
+
+        let short_term =
+            ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+
+        let semantic = SemanticMemoryStore::new(base_store.clone());
+        let episodic = EpisodicMemoryStore::new(base_store.clone());
+        let procedural = ProceduralMemoryStore::new(base_store.clone());
+        let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+
+        Ok(Self {
+            short_term,
+            semantic,
+            episodic,
+            procedural,
+            lifecycle_manager,
+        })
+    }
+
+    /// Open an existing agent memory system with thread-safe InMemory persistence backend
+    pub fn open_with_thread_safe_inmemory<P: AsRef<std::path::Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let base_store = BaseMemoryStore::open_with_thread_safe_inmemory(path, agent_id.clone(), embedding_generator)?;
+
+        let short_term =
+            ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+
+        let semantic = SemanticMemoryStore::new(base_store.clone());
+        let episodic = EpisodicMemoryStore::new(base_store.clone());
+        let procedural = ProceduralMemoryStore::new(base_store.clone());
+        let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+
+        Ok(Self {
+            short_term,
+            semantic,
+            episodic,
+            procedural,
+            lifecycle_manager,
+        })
+    }
+
+    /// Open an existing agent memory system with thread-safe File persistence backend
+    pub fn open_with_thread_safe_file<P: AsRef<std::path::Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let base_store = BaseMemoryStore::open_with_thread_safe_file(path, agent_id.clone(), embedding_generator)?;
+
+        let short_term =
+            ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
+
+        let semantic = SemanticMemoryStore::new(base_store.clone());
+        let episodic = EpisodicMemoryStore::new(base_store.clone());
+        let procedural = ProceduralMemoryStore::new(base_store.clone());
+        let lifecycle_manager = MemoryLifecycleManager::new(base_store);
+
+        Ok(Self {
+            short_term,
+            semantic,
+            episodic,
+            procedural,
+            lifecycle_manager,
+        })
+    }
+
+    /// Open an existing agent memory system with thread-safe Prolly persistence backend
+    pub fn open_with_thread_safe_prolly<P: AsRef<std::path::Path>>(
+        path: P,
+        agent_id: String,
+        embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let base_store = BaseMemoryStore::open_with_thread_safe_prolly(path, agent_id.clone(), embedding_generator)?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);

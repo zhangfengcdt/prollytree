@@ -24,4 +24,4 @@ pub use types::{
     CommitDetails, CommitInfo, DiffOperation, GitKvError, KvConflict, KvDiff, KvStorageMetadata,
     MergeResult,
 };
-pub use versioned_store::{GitVersionedKvStore, VersionedKvStore, ThreadSafeVersionedKvStore, ThreadSafeGitVersionedKvStore};
+pub use versioned_store::{GitVersionedKvStore, VersionedKvStore, ThreadSafeVersionedKvStore, ThreadSafeGitVersionedKvStore, ThreadSafeInMemoryVersionedKvStore, ThreadSafeFileVersionedKvStore};

@@ -1866,6 +1866,42 @@ impl<const N: usize> ThreadSafeGitVersionedKvStore<N> {
     }
 }
 
+impl<const N: usize> ThreadSafeInMemoryVersionedKvStore<N> {
+    /// Initialize a new thread-safe in-memory versioned key-value store
+    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let inner = VersionedKvStore::<N, InMemoryNodeStorage<N>>::init(path)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
+    }
+
+    /// Open an existing thread-safe in-memory versioned key-value store
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let inner = VersionedKvStore::<N, InMemoryNodeStorage<N>>::open(path)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
+    }
+}
+
+impl<const N: usize> ThreadSafeFileVersionedKvStore<N> {
+    /// Initialize a new thread-safe file-based versioned key-value store
+    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let inner = VersionedKvStore::<N, FileNodeStorage<N>>::init(path)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
+    }
+
+    /// Open an existing thread-safe file-based versioned key-value store
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        let inner = VersionedKvStore::<N, FileNodeStorage<N>>::open(path)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
+    }
+}
+
 impl<const N: usize, S: NodeStorage<N>> Clone for ThreadSafeVersionedKvStore<N, S> {
     fn clone(&self) -> Self {
         Self {
