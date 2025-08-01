@@ -1,12 +1,12 @@
 use super::traits::MemoryPersistence;
-use crate::git::{ThreadSafeGitVersionedKvStore, GitKvError};
+use crate::git::{GitKvError, ThreadSafeGitVersionedKvStore};
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
 
 /// Thread-safe ProllyTree-based memory persistence using git-backed versioned storage
-/// 
+///
 /// This is a thread-safe wrapper around the ProllyMemoryPersistence that can be
 /// safely used in multi-threaded contexts. It uses Arc<Mutex<>> internally to
 /// ensure thread safety while maintaining the same interface.
@@ -49,32 +49,32 @@ impl ThreadSafeVersionedPersistence {
 impl MemoryPersistence for ThreadSafeVersionedPersistence {
     async fn save(&mut self, key: &str, data: &[u8]) -> Result<(), Box<dyn Error>> {
         let full_key = self.full_key(key);
-        
+
         // Save to git-backed prolly tree
         self.store.insert(full_key.into_bytes(), data.to_vec())?;
-        
+
         Ok(())
     }
 
     async fn load(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
         let full_key = self.full_key(key);
-        
+
         let data = self.store.get(full_key.as_bytes());
         Ok(data)
     }
 
     async fn delete(&mut self, key: &str) -> Result<(), Box<dyn Error>> {
         let full_key = self.full_key(key);
-        
+
         // Delete from git-backed prolly tree
         self.store.delete(full_key.as_bytes())?;
-        
+
         Ok(())
     }
 
     async fn list_keys(&self, prefix: &str) -> Result<Vec<String>, Box<dyn Error>> {
         let full_prefix = self.full_key(prefix);
-        
+
         // Get all keys from git-backed store and filter by prefix
         let all_keys = self.store.list_keys()?;
         let filtered_keys: Vec<String> = all_keys
@@ -83,21 +83,22 @@ impl MemoryPersistence for ThreadSafeVersionedPersistence {
                 let key_str = String::from_utf8(key_bytes).ok()?;
                 if key_str.starts_with(&full_prefix) {
                     // Remove the namespace prefix from returned keys
-                    key_str.strip_prefix(&format!("{}:", self.namespace_prefix))
+                    key_str
+                        .strip_prefix(&format!("{}:", self.namespace_prefix))
                         .map(|s| s.to_string())
                 } else {
                     None
                 }
             })
             .collect();
-        
+
         Ok(filtered_keys)
     }
 
     async fn checkpoint(&mut self, message: &str) -> Result<String, Box<dyn Error>> {
         // Create a git commit with the provided message
         let commit_id = self.store.commit(message)?;
-        
+
         Ok(format!("{}", commit_id))
     }
 }
@@ -125,17 +126,22 @@ impl ThreadSafeVersionedPersistence {
         // Get git log to count commits
         let commits = self.store.log().unwrap_or_default();
         let commit_count = commits.len();
-        
+
         // Get current branch info
-        let current_branch = self.store.current_branch().unwrap_or_else(|_| "main".to_string());
-        
+        let current_branch = self
+            .store
+            .current_branch()
+            .unwrap_or_else(|_| "main".to_string());
+
         // Count total keys with our namespace
         let all_keys = self.store.list_keys()?;
         let namespace_keys: Vec<_> = all_keys
             .into_iter()
-            .filter(|key| String::from_utf8_lossy(key).starts_with(&format!("{}:", self.namespace_prefix)))
+            .filter(|key| {
+                String::from_utf8_lossy(key).starts_with(&format!("{}:", self.namespace_prefix))
+            })
             .collect();
-        
+
         Ok(ThreadSafeProllyMemoryStats {
             total_keys: namespace_keys.len(),
             namespace_prefix: self.namespace_prefix.clone(),
@@ -159,26 +165,26 @@ pub struct ThreadSafeProllyMemoryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::sync::Arc;
     use std::thread;
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
     #[tokio::test]
     async fn test_thread_safe_prolly_memory_persistence_basic() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Initialize a git repository
         std::process::Command::new("git")
             .args(["init"])
             .current_dir(&temp_dir)
             .output()
             .expect("Failed to initialize git repository");
-        
+
         // Create a subdirectory for the dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
-            
+
         let mut persistence =
             ThreadSafeVersionedPersistence::init(&dataset_dir, "test_memories").unwrap();
 
@@ -199,18 +205,18 @@ mod tests {
     #[tokio::test]
     async fn test_thread_safe_prolly_memory_persistence_checkpoint() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Initialize a git repository
         std::process::Command::new("git")
             .args(["init"])
             .current_dir(&temp_dir)
             .output()
             .expect("Failed to initialize git repository");
-        
+
         // Create a subdirectory for the dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
-            
+
         let mut persistence =
             ThreadSafeVersionedPersistence::init(&dataset_dir, "test_memories").unwrap();
 
@@ -231,21 +237,20 @@ mod tests {
     #[test]
     fn test_thread_safe_prolly_memory_persistence_multithreaded() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Initialize a git repository
         std::process::Command::new("git")
             .args(["init"])
             .current_dir(&temp_dir)
             .output()
             .expect("Failed to initialize git repository");
-        
+
         // Create a subdirectory for the dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
-            
-        let persistence = Arc::new(
-            ThreadSafeVersionedPersistence::init(&dataset_dir, "test_memories").unwrap()
-        );
+
+        let persistence =
+            Arc::new(ThreadSafeVersionedPersistence::init(&dataset_dir, "test_memories").unwrap());
 
         // Test concurrent access
         let handles: Vec<_> = (0..5)
@@ -255,7 +260,7 @@ mod tests {
                     let rt = Runtime::new().unwrap();
                     rt.block_on(async {
                         let key = format!("key{}", i);
-                        
+
                         // Note: We can't call save because it requires &mut self
                         // This demonstrates that the read operations work in multithreaded contexts
                         let loaded = persistence_clone.load(&key).await.unwrap();

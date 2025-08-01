@@ -87,26 +87,26 @@
 //! }
 //! ```
 
-pub mod traits;
-pub mod types;
 pub mod embedding_search;
 pub mod mem_lifecycle;
 pub mod mem_long_term;
 pub mod mem_short_term;
 pub mod mem_store;
 pub mod persistence;
+pub mod traits;
+pub mod types;
 pub mod versioned_persistence;
 
 // Re-export main types and traits for convenience
-pub use traits::*;
-pub use types::*;
 pub use embedding_search::{DistanceCalculator, MemorySearchEngine, MockEmbeddingGenerator};
 pub use mem_lifecycle::MemoryLifecycleManager;
 pub use mem_long_term::{EpisodicMemoryStore, ProceduralMemoryStore, SemanticMemoryStore};
 pub use mem_short_term::ShortTermMemoryStore;
 pub use mem_store::BaseMemoryStore;
 pub use persistence::InMemoryPersistence;
-pub use versioned_persistence::{ThreadSafeVersionedPersistence, ThreadSafeProllyMemoryStats};
+pub use traits::*;
+pub use types::*;
+pub use versioned_persistence::{ThreadSafeProllyMemoryStats, ThreadSafeVersionedPersistence};
 
 /// High-level memory system that combines all memory types
 pub struct AgentMemorySystem {
@@ -149,7 +149,11 @@ impl AgentMemorySystem {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let base_store = BaseMemoryStore::init_with_thread_safe_git(path, agent_id.clone(), embedding_generator)?;
+        let base_store = BaseMemoryStore::init_with_thread_safe_git(
+            path,
+            agent_id.clone(),
+            embedding_generator,
+        )?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
@@ -174,7 +178,11 @@ impl AgentMemorySystem {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let base_store = BaseMemoryStore::init_with_thread_safe_inmemory(path, agent_id.clone(), embedding_generator)?;
+        let base_store = BaseMemoryStore::init_with_thread_safe_inmemory(
+            path,
+            agent_id.clone(),
+            embedding_generator,
+        )?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
@@ -199,7 +207,11 @@ impl AgentMemorySystem {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let base_store = BaseMemoryStore::init_with_thread_safe_file(path, agent_id.clone(), embedding_generator)?;
+        let base_store = BaseMemoryStore::init_with_thread_safe_file(
+            path,
+            agent_id.clone(),
+            embedding_generator,
+        )?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
@@ -228,7 +240,11 @@ impl AgentMemorySystem {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let base_store = BaseMemoryStore::init_with_thread_safe_prolly(path, agent_id.clone(), embedding_generator)?;
+        let base_store = BaseMemoryStore::init_with_thread_safe_prolly(
+            path,
+            agent_id.clone(),
+            embedding_generator,
+        )?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
@@ -278,7 +294,11 @@ impl AgentMemorySystem {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let base_store = BaseMemoryStore::open_with_thread_safe_git(path, agent_id.clone(), embedding_generator)?;
+        let base_store = BaseMemoryStore::open_with_thread_safe_git(
+            path,
+            agent_id.clone(),
+            embedding_generator,
+        )?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
@@ -303,7 +323,11 @@ impl AgentMemorySystem {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let base_store = BaseMemoryStore::open_with_thread_safe_inmemory(path, agent_id.clone(), embedding_generator)?;
+        let base_store = BaseMemoryStore::open_with_thread_safe_inmemory(
+            path,
+            agent_id.clone(),
+            embedding_generator,
+        )?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
@@ -328,7 +352,11 @@ impl AgentMemorySystem {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let base_store = BaseMemoryStore::open_with_thread_safe_file(path, agent_id.clone(), embedding_generator)?;
+        let base_store = BaseMemoryStore::open_with_thread_safe_file(
+            path,
+            agent_id.clone(),
+            embedding_generator,
+        )?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
@@ -353,7 +381,11 @@ impl AgentMemorySystem {
         agent_id: String,
         embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let base_store = BaseMemoryStore::open_with_thread_safe_prolly(path, agent_id.clone(), embedding_generator)?;
+        let base_store = BaseMemoryStore::open_with_thread_safe_prolly(
+            path,
+            agent_id.clone(),
+            embedding_generator,
+        )?;
 
         let short_term =
             ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);

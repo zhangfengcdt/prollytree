@@ -74,7 +74,7 @@ pub type FileVersionedKvStore<const N: usize> = VersionedKvStore<N, FileNodeStor
 pub type RocksDBVersionedKvStore<const N: usize> = VersionedKvStore<N, RocksDBNodeStorage<N>>;
 
 /// Thread-safe wrapper for VersionedKvStore
-/// 
+///
 /// This wrapper provides thread-safe access to the underlying VersionedKvStore by using
 /// Arc<Mutex<>> internally. All operations are synchronized, making it safe to use
 /// across multiple threads.
@@ -83,17 +83,21 @@ pub struct ThreadSafeVersionedKvStore<const N: usize, S: NodeStorage<N>> {
 }
 
 /// Type alias for thread-safe Git storage  
-pub type ThreadSafeGitVersionedKvStore<const N: usize> = ThreadSafeVersionedKvStore<N, GitNodeStorage<N>>;
+pub type ThreadSafeGitVersionedKvStore<const N: usize> =
+    ThreadSafeVersionedKvStore<N, GitNodeStorage<N>>;
 
 /// Type alias for thread-safe InMemory storage
-pub type ThreadSafeInMemoryVersionedKvStore<const N: usize> = ThreadSafeVersionedKvStore<N, InMemoryNodeStorage<N>>;
+pub type ThreadSafeInMemoryVersionedKvStore<const N: usize> =
+    ThreadSafeVersionedKvStore<N, InMemoryNodeStorage<N>>;
 
 /// Type alias for thread-safe File storage
-pub type ThreadSafeFileVersionedKvStore<const N: usize> = ThreadSafeVersionedKvStore<N, FileNodeStorage<N>>;
+pub type ThreadSafeFileVersionedKvStore<const N: usize> =
+    ThreadSafeVersionedKvStore<N, FileNodeStorage<N>>;
 
 /// Type alias for thread-safe RocksDB storage
 #[cfg(feature = "rocksdb_storage")]
-pub type ThreadSafeRocksDBVersionedKvStore<const N: usize> = ThreadSafeVersionedKvStore<N, RocksDBNodeStorage<N>>;
+pub type ThreadSafeRocksDBVersionedKvStore<const N: usize> =
+    ThreadSafeVersionedKvStore<N, RocksDBNodeStorage<N>>;
 
 impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
 where
@@ -1911,8 +1915,14 @@ impl<const N: usize, S: NodeStorage<N>> Clone for ThreadSafeVersionedKvStore<N, 
 }
 
 // Implement Send and Sync for the thread-safe wrapper
-unsafe impl<const N: usize, S: NodeStorage<N>> Send for ThreadSafeVersionedKvStore<N, S> where S: Send {}
-unsafe impl<const N: usize, S: NodeStorage<N>> Sync for ThreadSafeVersionedKvStore<N, S> where S: Send {}
+unsafe impl<const N: usize, S: NodeStorage<N>> Send for ThreadSafeVersionedKvStore<N, S> where
+    S: Send
+{
+}
+unsafe impl<const N: usize, S: NodeStorage<N>> Sync for ThreadSafeVersionedKvStore<N, S> where
+    S: Send
+{
+}
 
 #[cfg(test)]
 mod tests {
@@ -2958,18 +2968,18 @@ mod tests {
     #[test]
     fn test_thread_safe_basic_operations() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Initialize a git repository
         std::process::Command::new("git")
             .args(["init"])
             .current_dir(&temp_dir)
             .output()
             .expect("Failed to initialize git repository");
-        
+
         // Create a subdirectory for the dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
-        
+
         let store = ThreadSafeGitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
         // Test basic operations
@@ -2990,18 +3000,18 @@ mod tests {
         use std::thread;
 
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Initialize a git repository
         std::process::Command::new("git")
             .args(["init"])
             .current_dir(&temp_dir)
             .output()
             .expect("Failed to initialize git repository");
-        
+
         // Create a subdirectory for the dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
-        
+
         let store = Arc::new(ThreadSafeGitVersionedKvStore::<32>::init(&dataset_dir).unwrap());
 
         // Test concurrent reads and writes

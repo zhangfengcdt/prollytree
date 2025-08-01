@@ -254,8 +254,7 @@ mod tests {
     #[tokio::test]
     async fn test_prolly_persistence_basic_operations() {
         let temp_dir = TempDir::new().unwrap();
-        let mut persistence =
-            InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
+        let mut persistence = InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
 
         // Test save
         let key = "test_key";
@@ -281,8 +280,7 @@ mod tests {
     #[tokio::test]
     async fn test_prolly_persistence_checkpoint() {
         let temp_dir = TempDir::new().unwrap();
-        let mut persistence =
-            InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
+        let mut persistence = InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
 
         // Save some data
         persistence.save("key1", b"data1").await.unwrap();
@@ -296,8 +294,7 @@ mod tests {
     #[tokio::test]
     async fn test_prolly_persistence_list_keys() {
         let temp_dir = TempDir::new().unwrap();
-        let mut persistence =
-            InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
+        let mut persistence = InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
 
         // Save data with different prefixes
         persistence.save("user/1", b"user1").await.unwrap();
@@ -318,8 +315,7 @@ mod tests {
     #[tokio::test]
     async fn test_prolly_persistence_stats() {
         let temp_dir = TempDir::new().unwrap();
-        let mut persistence =
-            InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
+        let mut persistence = InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
 
         // Add some data
         persistence.save("key1", b"data1").await.unwrap();
@@ -338,8 +334,7 @@ mod tests {
     #[tokio::test]
     async fn test_prolly_persistence_range_query() {
         let temp_dir = TempDir::new().unwrap();
-        let mut persistence =
-            InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
+        let mut persistence = InMemoryPersistence::init(temp_dir.path(), "test_memories").unwrap();
 
         // Add some data with sortable keys
         persistence.save("key_a", b"data_a").await.unwrap();
