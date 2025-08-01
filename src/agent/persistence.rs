@@ -249,6 +249,10 @@ pub struct ProllyTreeStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::mem_store::BaseMemoryStore;
+    use crate::agent::traits::MemoryStore;
+    use crate::agent::types::*;
+    use chrono::Utc;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -350,5 +354,478 @@ mod tests {
         assert_eq!(results[0].0, "key_a");
         assert_eq!(results[1].0, "key_b");
         assert_eq!(results[2].0, "key_c");
+    }
+
+    // ========================================================================
+    // Tests for Thread-Safe Versioned Storage Backends
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_thread_safe_git_backend_basic_operations() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize a git repository
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        // Create a subdirectory for the dataset (git-backed stores require subdirectories)
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+
+        let mut store = BaseMemoryStore::init_with_thread_safe_git(
+            &dataset_dir,
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        // Create a test memory document
+        let memory = create_test_memory("test1", "Hello Git Backend!");
+
+        // Test store operation
+        let memory_id = store.store(memory.clone()).await.unwrap();
+        assert_eq!(memory_id, "test1");
+
+        // Test retrieve operation
+        let retrieved = store.get(&memory_id).await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved_memory = retrieved.unwrap();
+        assert_eq!(retrieved_memory.id, memory_id);
+        assert_eq!(retrieved_memory.content, memory.content);
+
+        // Test update operation
+        let mut updated_memory = memory.clone();
+        updated_memory.content = serde_json::json!({"message": "Updated Git Backend!"});
+        store
+            .update(&memory_id, updated_memory.clone())
+            .await
+            .unwrap();
+
+        let retrieved_updated = store.get(&memory_id).await.unwrap().unwrap();
+        assert_eq!(retrieved_updated.content, updated_memory.content);
+
+        // Test delete operation
+        store.delete(&memory_id).await.unwrap();
+        let deleted = store.get(&memory_id).await.unwrap();
+        assert!(deleted.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_thread_safe_inmemory_backend_basic_operations() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize a git repository for InMemory backend
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        let mut store = BaseMemoryStore::init_with_thread_safe_inmemory(
+            temp_dir.path(),
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        // Create a test memory document
+        let memory = create_test_memory("test2", "Hello InMemory Backend!");
+
+        // Test store operation
+        let memory_id = store.store(memory.clone()).await.unwrap();
+        assert_eq!(memory_id, "test2");
+
+        // Test retrieve operation
+        let retrieved = store.get(&memory_id).await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved_memory = retrieved.unwrap();
+        assert_eq!(retrieved_memory.id, memory_id);
+        assert_eq!(retrieved_memory.content, memory.content);
+
+        // Test multiple entries
+        let memory2 = create_test_memory("test2_second", "Second memory");
+        store.store(memory2).await.unwrap();
+
+        // Test query functionality
+        let query = MemoryQuery {
+            namespace: None,
+            memory_types: Some(vec![MemoryType::ShortTerm]),
+            tags: None,
+            time_range: None,
+            text_query: None,
+            semantic_query: None,
+            limit: None,
+            include_expired: false,
+        };
+
+        let results = store.query(query).await.unwrap();
+        assert!(results.len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn test_thread_safe_file_backend_basic_operations() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize a git repository for File backend
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        let mut store = BaseMemoryStore::init_with_thread_safe_file(
+            temp_dir.path(),
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        // Create a test memory document
+        let memory = create_test_memory("test3", "Hello File Backend!");
+
+        // Test store operation
+        let memory_id = store.store(memory.clone()).await.unwrap();
+        assert_eq!(memory_id, "test3");
+
+        // Test retrieve operation
+        let retrieved = store.get(&memory_id).await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved_memory = retrieved.unwrap();
+        assert_eq!(retrieved_memory.id, memory_id);
+        assert_eq!(retrieved_memory.content, memory.content);
+
+        // Test persistence across instances
+        drop(store);
+
+        // Reopen the store
+        let store_reopened = BaseMemoryStore::open_with_thread_safe_file(
+            temp_dir.path(),
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        let retrieved_after_reopen = store_reopened.get(&memory_id).await.unwrap();
+        assert!(retrieved_after_reopen.is_some());
+        assert_eq!(retrieved_after_reopen.unwrap().content, memory.content);
+    }
+
+    #[tokio::test]
+    async fn test_thread_safe_prolly_backend_basic_operations() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize a git repository for Prolly backend
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        // Create a subdirectory for the dataset (git-backed stores require subdirectories)
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+
+        let mut store = BaseMemoryStore::init_with_thread_safe_prolly(
+            &dataset_dir,
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        // Create a test memory document
+        let memory = create_test_memory("test4", "Hello Prolly Backend!");
+
+        // Test store operation
+        let memory_id = store.store(memory.clone()).await.unwrap();
+        assert_eq!(memory_id, "test4");
+
+        // Test retrieve operation
+        let retrieved = store.get(&memory_id).await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved_memory = retrieved.unwrap();
+        assert_eq!(retrieved_memory.id, memory_id);
+        assert_eq!(retrieved_memory.content, memory.content);
+    }
+
+    #[tokio::test]
+    async fn test_versioned_backend_checkpoint_operations() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize a git repository
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        // Create a subdirectory for the dataset (git-backed stores require subdirectories)
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+
+        let mut store = BaseMemoryStore::init_with_thread_safe_git(
+            &dataset_dir,
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        // Store some memories
+        let memory1 = create_test_memory("checkpoint_test1", "First memory for checkpoint");
+        let memory2 = create_test_memory("checkpoint_test2", "Second memory for checkpoint");
+
+        store.store(memory1).await.unwrap();
+        store.store(memory2).await.unwrap();
+
+        // Create a checkpoint
+        let commit_id = store
+            .commit("Test checkpoint with multiple memories")
+            .await
+            .unwrap();
+        assert!(!commit_id.is_empty());
+        println!("Created checkpoint: {}", commit_id);
+
+        // Verify memories are still accessible after checkpoint
+        let retrieved1 = store.get("checkpoint_test1").await.unwrap();
+        let retrieved2 = store.get("checkpoint_test2").await.unwrap();
+        assert!(retrieved1.is_some());
+        assert!(retrieved2.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_versioned_backend_branch_operations() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize a git repository
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        // Create a subdirectory for the dataset (git-backed stores require subdirectories)
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+
+        let mut store = BaseMemoryStore::init_with_thread_safe_git(
+            &dataset_dir,
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        // Store initial memory
+        let memory = create_test_memory("branch_test", "Initial memory");
+        store.store(memory).await.unwrap();
+
+        // Create initial commit
+        let initial_commit = store.commit("Initial commit").await.unwrap();
+        assert!(!initial_commit.is_empty());
+
+        // Create a new branch
+        store.create_branch("feature_branch").await.unwrap();
+
+        // Switch to the new branch
+        store.checkout("feature_branch").await.unwrap();
+
+        // Add memory on the feature branch
+        let feature_memory = create_test_memory("feature_test", "Feature branch memory");
+        store.store(feature_memory).await.unwrap();
+
+        let feature_commit = store.commit("Feature branch commit").await.unwrap();
+        assert!(!feature_commit.is_empty());
+        assert_ne!(initial_commit, feature_commit);
+
+        // Verify memory exists on feature branch
+        let retrieved = store.get("feature_test").await.unwrap();
+        assert!(retrieved.is_some());
+
+        // Switch back to main branch
+        store.checkout("main").await.unwrap();
+
+        // Verify feature memory doesn't exist on main branch
+        let not_found = store.get("feature_test").await.unwrap();
+        assert!(not_found.is_none());
+
+        // But original memory should still exist
+        let original = store.get("branch_test").await.unwrap();
+        assert!(original.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_backend_performance_comparison() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize git repository
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        // Test with different backends
+        let backends = vec![
+            ("Git", temp_dir.path().join("git")),
+            ("InMemory", temp_dir.path().join("inmemory")),
+            ("File", temp_dir.path().join("file")),
+        ];
+
+        for (backend_name, backend_path) in backends {
+            std::fs::create_dir_all(&backend_path).unwrap();
+
+            // Create subdirectory for git-backed stores
+            let actual_path = if backend_name == "Git" {
+                let dataset_dir = backend_path.join("dataset");
+                std::fs::create_dir_all(&dataset_dir).unwrap();
+                dataset_dir
+            } else {
+                backend_path
+            };
+
+            let start_time = std::time::Instant::now();
+
+            let mut store = match backend_name {
+                "Git" => BaseMemoryStore::init_with_thread_safe_git(
+                    &actual_path,
+                    "perf_test".to_string(),
+                    None,
+                )
+                .unwrap(),
+                "InMemory" => BaseMemoryStore::init_with_thread_safe_inmemory(
+                    &actual_path,
+                    "perf_test".to_string(),
+                    None,
+                )
+                .unwrap(),
+                "File" => BaseMemoryStore::init_with_thread_safe_file(
+                    &actual_path,
+                    "perf_test".to_string(),
+                    None,
+                )
+                .unwrap(),
+                _ => panic!("Unknown backend"),
+            };
+
+            // Store multiple memories (create them with matching agent_id)
+            for i in 0..10 {
+                let memory = create_test_memory_for_agent(
+                    &format!("perf_test_{}", i),
+                    &format!("Performance test memory {}", i),
+                    "perf_test",
+                );
+                store.store(memory).await.unwrap();
+            }
+
+            // Commit changes
+            store
+                .commit(&format!("Performance test for {} backend", backend_name))
+                .await
+                .unwrap();
+
+            let duration = start_time.elapsed();
+            println!("{} backend completed in {:?}", backend_name, duration);
+
+            // Verify all memories were stored
+            for i in 0..10 {
+                let retrieved = store.get(&format!("perf_test_{}", i)).await.unwrap();
+                assert!(retrieved.is_some());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_backend_error_handling() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Test Simple backend (no branch operations)
+        let mut simple_store =
+            BaseMemoryStore::init(temp_dir.path(), "test_agent".to_string(), None).unwrap();
+
+        // Branch operations should fail on Simple backend
+        let branch_result = simple_store.create_branch("test_branch").await;
+        assert!(branch_result.is_err());
+
+        let checkout_result = simple_store.checkout("main").await;
+        assert!(checkout_result.is_err());
+
+        // Initialize git repository for versioned backends
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        // Test InMemory backend (branch operations should also fail)
+        let inmemory_path = temp_dir.path().join("inmemory");
+        std::fs::create_dir_all(&inmemory_path).unwrap();
+        let mut inmemory_store = BaseMemoryStore::init_with_thread_safe_inmemory(
+            &inmemory_path,
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        let inmemory_branch_result = inmemory_store.create_branch("test_branch").await;
+        assert!(inmemory_branch_result.is_err());
+
+        // Test File backend (branch operations should also fail)
+        let file_path = temp_dir.path().join("file");
+        std::fs::create_dir_all(&file_path).unwrap();
+        let mut file_store =
+            BaseMemoryStore::init_with_thread_safe_file(&file_path, "test_agent".to_string(), None)
+                .unwrap();
+
+        let file_branch_result = file_store.create_branch("test_branch").await;
+        assert!(file_branch_result.is_err());
+
+        // Test Git backend (branch operations should succeed)
+        let git_path = temp_dir.path().join("git");
+        std::fs::create_dir_all(&git_path).unwrap();
+        // Create subdirectory for git-backed store
+        let git_dataset_dir = git_path.join("dataset");
+        std::fs::create_dir_all(&git_dataset_dir).unwrap();
+        let mut git_store = BaseMemoryStore::init_with_thread_safe_git(
+            &git_dataset_dir,
+            "test_agent".to_string(),
+            None,
+        )
+        .unwrap();
+
+        let git_branch_result = git_store.create_branch("test_branch").await;
+        assert!(git_branch_result.is_ok());
+
+        let git_checkout_result = git_store.checkout("test_branch").await;
+        assert!(git_checkout_result.is_ok());
+    }
+
+    // Helper function to create test memory documents
+    fn create_test_memory(id: &str, message: &str) -> MemoryDocument {
+        create_test_memory_for_agent(id, message, "test_agent")
+    }
+
+    // Helper function to create test memory documents with specific agent_id
+    fn create_test_memory_for_agent(id: &str, message: &str, agent_id: &str) -> MemoryDocument {
+        MemoryDocument {
+            id: id.to_string(),
+            namespace: MemoryNamespace::new(agent_id.to_string(), MemoryType::ShortTerm),
+            memory_type: MemoryType::ShortTerm,
+            content: serde_json::json!({"message": message}),
+            embeddings: None,
+            metadata: MemoryMetadata {
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                agent_id: agent_id.to_string(),
+                thread_id: Some("test_thread".to_string()),
+                tags: vec![],
+                ttl: None,
+                access_count: 0,
+                last_accessed: None,
+                source: "test".to_string(),
+                confidence: 1.0,
+                related_memories: vec![],
+            },
+        }
     }
 }
