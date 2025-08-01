@@ -63,18 +63,19 @@ impl PersistenceBackend {
         match self {
             PersistenceBackend::Simple(_) => {
                 Err("Branch operations not supported with Simple persistence backend".into())
-            }
-            // PersistenceBackend::Prolly(persistence) => persistence.create_branch(name).await,
+            } // PersistenceBackend::Prolly(persistence) => persistence.create_branch(name).await,
         }
     }
 
     /// Switch to a different branch (git-specific operation)
-    pub async fn checkout(&mut self, _branch_or_commit: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn checkout(
+        &mut self,
+        _branch_or_commit: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             PersistenceBackend::Simple(_) => {
                 Err("Branch operations not supported with Simple persistence backend".into())
-            }
-            // PersistenceBackend::Prolly(persistence) => persistence.checkout_branch(branch_or_commit).await,
+            } // PersistenceBackend::Prolly(persistence) => persistence.checkout_branch(branch_or_commit).await,
         }
     }
 }

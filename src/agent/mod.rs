@@ -146,10 +146,10 @@ impl AgentMemorySystem {
     }
 
     // /// Initialize a complete agent memory system with Prolly persistence backend (git-backed)
-    // /// 
+    // ///
     // /// Complete implementation available but disabled due to thread safety limitations.
     // /// The underlying Git library (gix) contains RefCell components that prevent Sync.
-    // /// 
+    // ///
     // /// To use this functionality:
     // /// 1. Uncomment this method and related code in persistence_prolly.rs
     // /// 2. Use only in guaranteed single-threaded contexts
@@ -160,15 +160,15 @@ impl AgentMemorySystem {
     //     embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
     // ) -> Result<Self, Box<dyn std::error::Error>> {
     //     let base_store = BaseMemoryStore::init_with_prolly(path, agent_id.clone(), embedding_generator)?;
-    //     
+    //
     //     let short_term =
     //         ShortTermMemoryStore::new(base_store.clone(), chrono::Duration::hours(24), 1000);
-    //     
+    //
     //     let semantic = SemanticMemoryStore::new(base_store.clone());
     //     let episodic = EpisodicMemoryStore::new(base_store.clone());
     //     let procedural = ProceduralMemoryStore::new(base_store.clone());
     //     let lifecycle_manager = MemoryLifecycleManager::new(base_store);
-    //     
+    //
     //     Ok(Self {
     //         short_term,
     //         semantic,
