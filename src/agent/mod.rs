@@ -89,7 +89,6 @@
 
 pub mod traits;
 pub mod types;
-// pub mod persistence; // Disabled due to Send/Sync issues with GitVersionedKvStore
 pub mod embedding_search;
 pub mod mem_lifecycle;
 pub mod mem_long_term;

@@ -371,6 +371,37 @@ impl BaseMemoryStore {
         })
     }
 
+    // /// Open an existing memory store with Prolly persistence backend (git-backed)
+    // /// Complete implementation available but disabled due to thread safety limitations.
+    // pub fn open_with_prolly<P: AsRef<Path>>(
+    //     path: P,
+    //     agent_id: String,
+    //     embedding_generator: Option<Box<dyn EmbeddingGenerator>>,
+    // ) -> Result<Self, Box<dyn std::error::Error>> {
+    //     let persistence = ProllyMemoryPersistence::open(path, &format!("agent_memory_{agent_id}"))?;
+    //     Ok(Self {
+    //         persistence: Arc::new(RwLock::new(PersistenceBackend::Prolly(persistence))),
+    //         embedding_generator: embedding_generator
+    //             .map(|gen| Arc::from(gen) as Arc<dyn EmbeddingGenerator>),
+    //         agent_id,
+    //         current_branch: "main".to_string(),
+    //     })
+    // }
+
+    // /// Get access to git logs (only available with Prolly backend)
+    // /// Complete implementation available but disabled due to thread safety limitations.
+    // pub async fn get_git_logs(&self) -> Result<Vec<crate::git::CommitInfo>, Box<dyn std::error::Error>> {
+    //     let persistence = self.persistence.read().await;
+    //     match &*persistence {
+    //         PersistenceBackend::Prolly(prolly) => {
+    //             prolly.get_git_log().await.map_err(|e| e.into())
+    //         }
+    //         PersistenceBackend::Simple(_) => {
+    //             Err("Git logs not available with Simple persistence backend".into())
+    //         }
+    //     }
+    // }
+
     /// Generate key for memory document
     fn memory_key(&self, namespace: &MemoryNamespace, id: &str) -> String {
         format!("{}/{}", namespace.to_path(), id)
