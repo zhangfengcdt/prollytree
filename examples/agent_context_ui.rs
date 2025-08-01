@@ -189,6 +189,9 @@ impl ContextOffloadingAgent {
                     )
                     .await?;
 
+                // Create git commit for scratchpad update
+                let _commit_id = self.add_commit(&format!("Scratchpad: {}", &notes[..std::cmp::min(50, notes.len())])).await?;
+                
                 self.send_ui_update(format!("📝 Wrote to scratchpad (memory_id: {})", memory_id));
 
                 Ok(ToolResult {
@@ -266,6 +269,9 @@ impl ContextOffloadingAgent {
                     )
                     .await?;
 
+                // Create git commit for search episode
+                let _commit_id = self.add_commit(&format!("Search: {}", &query[..std::cmp::min(30, query.len())])).await?;
+
                 Ok(ToolResult {
                     tool,
                     result: search_results,
@@ -293,6 +299,9 @@ impl ContextOffloadingAgent {
                     )
                     .await?;
 
+                // Create git commit for stored fact
+                let _commit_id = self.add_commit(&format!("Fact [{}]: {}", category, &fact[..std::cmp::min(40, fact.len())])).await?;
+                
                 self.send_ui_update(format!("📚 Stored fact in category '{}': {}", category, fact));
 
                 Ok(ToolResult {
@@ -317,6 +326,9 @@ impl ContextOffloadingAgent {
                         true,
                     )
                     .await?;
+
+                // Create git commit for stored rule
+                let _commit_id = self.add_commit(&format!("Rule: {}", &rule_name[..std::cmp::min(40, rule_name.len())])).await?;
 
                 self.send_ui_update(format!(
                     "📏 Stored rule '{}': IF {} THEN {}",
@@ -1069,8 +1081,8 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     ).await?;
 
     // Send initial state
-    ui_sender.send(UiEvent::ConversationUpdate("🧠 Context Offloading Agent Demo (Rig + ProllyTree)".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("==================================================".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("🧠 Context Offloading Agent Demo".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("ProllyTree + Rig Integration".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("✅ Agent initialized with real AgentMemorySystem".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate(format!("📁 Memory path: {:?}", memory_path)))?;
     if has_openai {
@@ -1113,22 +1125,15 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
             }
         }
         
-        // Update UI every few messages with real stats
+        // Update git logs after every message (frequent updates)
+        if let Ok(git_logs) = agent.get_git_logs().await {
+            let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
+        }
+        
+        // Update UI every few messages with real stats  
         if i % 3 == 0 || i == conversation_data.thread1_messages.len() - 1 {
             stats = agent.get_memory_stats().await?;
             ui_sender.send(UiEvent::MemoryStatsUpdate(format!("Agent: context_agent_001\nThread: thread_001\n\n{}", stats)))?;
-            
-            let _commit_msg = if message.contains("Fact:") {
-                "Stored climate research fact"
-            } else if message.contains("Rule:") {
-                "Added policy rule"
-            } else {
-                "Updated conversation memory"
-            };
-            // Get real git logs from the agent
-            if let Ok(git_logs) = agent.get_git_logs().await {
-                let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
-            }
             
             // Generate approximate KV keys (simulated based on message type)
             let approx_semantic = if message.contains("Fact:") { i / 3 + 1 } else { i / 4 };
@@ -1174,24 +1179,15 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
             }
         }
         
+        // Update git logs after every message (frequent updates)
+        if let Ok(git_logs) = agent.get_git_logs().await {
+            let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
+        }
+        
         // Update UI every few messages with real stats
         if i % 2 == 0 || i == conversation_data.thread2_messages.len() - 1 {
             stats = agent.get_memory_stats().await?;
             ui_sender.send(UiEvent::MemoryStatsUpdate(format!("Agent: context_agent_001\nThread: thread_002\n\n{}", stats)))?;
-            
-            let _commit_msg = if message.contains("What") {
-                "Cross-thread memory retrieval"
-            } else if message.contains("Fact:") {
-                "Added new research finding"
-            } else if message.contains("Rule:") {
-                "Established new policy rule"
-            } else {
-                "Thread 2 conversation update"
-            };
-            // Get real git logs from the agent
-            if let Ok(git_logs) = agent.get_git_logs().await {
-                let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
-            }
             
             let approx_semantic = (i + 12) / 3; // Approximate progress
             let approx_procedural = (i + 5) / 4;
@@ -1231,24 +1227,15 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
             }
         }
         
+        // Update git logs after every message (frequent updates)
+        if let Ok(git_logs) = agent.get_git_logs().await {
+            let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
+        }
+        
         // Update UI every few messages with real stats
         if i % 2 == 0 || i == conversation_data.thread3_messages.len() - 1 {
             stats = agent.get_memory_stats().await?;
             ui_sender.send(UiEvent::MemoryStatsUpdate(format!("Agent: context_agent_001\nThread: thread_003\n\n{}", stats)))?;
-            
-            let _commit_msg = if message.contains("What") {
-                "Knowledge synthesis query"
-            } else if message.contains("Fact:") {
-                "Final research data point"
-            } else if message.contains("Rule:") {
-                "Policy recommendation"
-            } else {
-                "Synthesis conversation"
-            };
-            // Get real git logs from the agent
-            if let Ok(git_logs) = agent.get_git_logs().await {
-                let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
-            }
             
             let approx_semantic = (i + 20) / 3; // Approximate final progress
             let approx_procedural = (i + 10) / 4;
@@ -1271,9 +1258,8 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
 
     // Versioned storage benefits
-    ui_sender.send(UiEvent::ConversationUpdate("🚀 PROLLY TREE VERSIONED STORAGE ADVANTAGES".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("████████████████████████████████████████████████████████████".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("Demonstrating benefits that set ProllyTree apart:".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("🚀 ProllyTree Versioned Storage".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("Demonstrating key benefits:".to_string()))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
 
     // Create final commit
@@ -1380,7 +1366,52 @@ async fn run_comprehensive_demo(ui_sender: mpsc::UnboundedSender<UiEvent>) -> Re
     }
     
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
-    time::sleep(Duration::from_millis(3000)).await;
+    time::sleep(Duration::from_millis(2000)).await;
+    
+    // Additional conversation turns while in rolled-back state
+    ui_sender.send(UiEvent::ConversationUpdate("🗣️ Working in rolled-back state...".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
+    
+    // Simulate some additional interactions in the rolled-back state
+    let rollback_messages = vec![
+        "What climate facts do we have about hurricanes?",
+        "Fact: New research shows hurricane intensification rate increased 25% since 2000 category: hurricanes",
+        "What are our current procedural rules?",
+        "Rule: rapid_response: IF hurricane_cat_4_or_5 THEN activate_emergency_shelters_within_12_hours",
+    ];
+    
+    for (i, message) in rollback_messages.iter().enumerate() {
+        ui_sender.send(UiEvent::ConversationUpdate(format!("💬 User: {}", message)))?;
+        
+        // Process with real agent (now in rolled-back state)
+        match agent.process_with_tools(message).await {
+            Ok(response) => {
+                ui_sender.send(UiEvent::ConversationUpdate(format!("🤖 Assistant: {}", response)))?;
+            }
+            Err(e) => {
+                ui_sender.send(UiEvent::ConversationUpdate(format!("❌ Error: {}", e)))?;
+            }
+        }
+        
+        // Update git logs after each message to show new commits in rolled-back state
+        if let Ok(git_logs) = agent.get_git_logs().await {
+            let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
+        }
+        
+        // Update memory stats to show changes in rolled-back state
+        if i % 2 == 1 { // Every other message
+            let stats = agent.get_memory_stats().await?;
+            ui_sender.send(UiEvent::MemoryStatsUpdate(format!("Agent: context_agent_001\nBranch: time-travel\n\n{}", stats)))?;
+        }
+        
+        time::sleep(Duration::from_millis(800)).await;
+    }
+    
+    ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("💾 Changes made in rolled-back state".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("📈 Memory now differs from original Thread 3 state".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
+    time::sleep(Duration::from_millis(2000)).await;
     
     // Step 2: Simulate recovery/roll-forward
     let _recovery_commit = agent.simulate_roll_forward("Recovery: selective restore").await?;
@@ -1435,19 +1466,10 @@ async fn clear_and_highlight_theme(
         let _ = ui_sender.send(UiEvent::ConversationUpdate("".to_string()));
     }
     
-    // Send highlight message with prominent styling
+    // Send simple section header
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("██████████████████████████████████████████████████████████████".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("█                                                            █".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate(format!("█  🎯 NOW STARTING: {}                    █", thread_name)))?;
-    ui_sender.send(UiEvent::ConversationUpdate("█                                                            █".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate(format!("█  📋 THEME: {}           █", theme_title)))?;
-    ui_sender.send(UiEvent::ConversationUpdate("█                                                            █".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate(format!("█  {} █", theme_description)))?;
-    ui_sender.send(UiEvent::ConversationUpdate("█                                                            █".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("██████████████████████████████████████████████████████████████".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
-    ui_sender.send(UiEvent::ConversationUpdate("⏳ Preparing real agent memory operations...".to_string()))?;
+    ui_sender.send(UiEvent::ConversationUpdate(format!("🎯 {} - {}", thread_name, theme_title)))?;
+    ui_sender.send(UiEvent::ConversationUpdate(format!("{}", theme_description)))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
     
     // Brief pause to let user read the theme
@@ -1716,17 +1738,17 @@ async fn run_app(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    println!("🧠 Enhanced Context Offloading Agent UI Demo");
-    println!("============================================");
-    println!("This demo includes:");
-    println!("• 35+ comprehensive conversations across 3 threads");
-    println!("• Real-time updates to all 4 UI windows");
-    println!("• Progressive memory statistics (65+ memories)");
-    println!("• Dynamic git commit history");
-    println!("• Detailed KV store key evolution");
-    println!("• Climate change research scenario");
+    println!("🧠 Context Offloading Agent Demo");
+    println!("ProllyTree + Rig Integration");
     println!();
-    println!("Press Enter to start the enhanced UI demo...");
+    println!("Features:");
+    println!("• 3-thread conversation system");
+    println!("• Real-time 4-window UI");
+    println!("• Memory statistics tracking");
+    println!("• Git commit history");
+    println!("• Climate research scenario");
+    println!();
+    println!("Press Enter to start...");
     
     // Wait for user to press Enter
     let mut input = String::new();
