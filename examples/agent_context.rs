@@ -34,7 +34,7 @@ use ratatui::{
 #[derive(Debug, Clone)]
 pub enum MemoryBackend {
     InMemory,
-    ThreadSafeInMemory, 
+    ThreadSafeInMemory,
     ThreadSafeGit,
     ThreadSafeFile,
 }
@@ -43,7 +43,7 @@ impl MemoryBackend {
     fn display_name(&self) -> &str {
         match self {
             MemoryBackend::InMemory => "In-Memory (Basic)",
-            MemoryBackend::ThreadSafeInMemory => "Thread-Safe In-Memory (Versioned)", 
+            MemoryBackend::ThreadSafeInMemory => "Thread-Safe In-Memory (Versioned)",
             MemoryBackend::ThreadSafeGit => "Thread-Safe Git (Versioned)",
             MemoryBackend::ThreadSafeFile => "Thread-Safe File (Versioned)",
         }
@@ -53,7 +53,7 @@ impl MemoryBackend {
         match self {
             MemoryBackend::InMemory => "Simple in-memory storage, no persistence",
             MemoryBackend::ThreadSafeInMemory => "In-memory storage with git versioning",
-            MemoryBackend::ThreadSafeGit => "Git-backed versioned storage with commits", 
+            MemoryBackend::ThreadSafeGit => "Git-backed versioned storage with commits",
             MemoryBackend::ThreadSafeFile => "File-based storage with git versioning",
         }
     }
@@ -168,7 +168,7 @@ impl ContextOffloadingAgent {
             .and_then(|output| String::from_utf8(output.stdout).ok())
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|| "Unknown User".to_string());
-        
+
         let email = std::process::Command::new("git")
             .args(["config", "--get", "user.email"])
             .output()
@@ -176,7 +176,7 @@ impl ContextOffloadingAgent {
             .and_then(|output| String::from_utf8(output.stdout).ok())
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|| "unknown@example.com".to_string());
-        
+
         format!("{} <{}>", name, email)
     }
 
@@ -191,34 +191,26 @@ impl ContextOffloadingAgent {
     ) -> Result<Self, Box<dyn Error>> {
         // Initialize the memory system based on selected backend
         let memory_system = match backend {
-            MemoryBackend::InMemory => {
-                AgentMemorySystem::init(
-                    memory_path,
-                    agent_id.clone(),
-                    Some(Box::new(MockEmbeddingGenerator)),
-                )?
-            },
-            MemoryBackend::ThreadSafeInMemory => {
-                AgentMemorySystem::init_with_thread_safe_inmemory(
-                    memory_path,
-                    agent_id.clone(),
-                    Some(Box::new(MockEmbeddingGenerator)),
-                )?
-            },
-            MemoryBackend::ThreadSafeGit => {
-                AgentMemorySystem::init_with_thread_safe_git(
-                    memory_path,
-                    agent_id.clone(),
-                    Some(Box::new(MockEmbeddingGenerator)),
-                )?
-            },
-            MemoryBackend::ThreadSafeFile => {
-                AgentMemorySystem::init_with_thread_safe_file(
-                    memory_path,
-                    agent_id.clone(),
-                    Some(Box::new(MockEmbeddingGenerator)),
-                )?
-            },
+            MemoryBackend::InMemory => AgentMemorySystem::init(
+                memory_path,
+                agent_id.clone(),
+                Some(Box::new(MockEmbeddingGenerator)),
+            )?,
+            MemoryBackend::ThreadSafeInMemory => AgentMemorySystem::init_with_thread_safe_inmemory(
+                memory_path,
+                agent_id.clone(),
+                Some(Box::new(MockEmbeddingGenerator)),
+            )?,
+            MemoryBackend::ThreadSafeGit => AgentMemorySystem::init_with_thread_safe_git(
+                memory_path,
+                agent_id.clone(),
+                Some(Box::new(MockEmbeddingGenerator)),
+            )?,
+            MemoryBackend::ThreadSafeFile => AgentMemorySystem::init_with_thread_safe_file(
+                memory_path,
+                agent_id.clone(),
+                Some(Box::new(MockEmbeddingGenerator)),
+            )?,
         };
 
         let rig_client = openai_api_key.map(|key| Client::new(&key));
@@ -1073,17 +1065,17 @@ impl ConversationData {
         // Try these files in order
         let candidate_files = [
             "examples/data/conversation_data.json",
-            "data/conversation_data.json", 
+            "data/conversation_data.json",
             "examples/data/conversation_data_simple.json",
             "conversation_data.json", // Legacy fallback
         ];
-        
+
         for file_path in &candidate_files {
             if Path::new(file_path).exists() {
                 return Self::load_from_file(file_path);
             }
         }
-        
+
         // If no files found, panic with helpful message
         panic!("No conversation data files found. Please ensure one of these files exists:\n  - examples/data/conversation_data.json\n  - data/conversation_data.json\n  - examples/data/conversation_data_simple.json");
     }
@@ -1091,23 +1083,27 @@ impl ConversationData {
     /// Load conversation data from a JSON file
     fn load_from_file<P: AsRef<Path>>(file_path: P) -> (Self, String) {
         match fs::read_to_string(&file_path) {
-            Ok(content) => {
-                match serde_json::from_str::<ConversationData>(&content) {
-                    Ok(data) => {
-                        let msg = format!("✓ Loaded from: {}", file_path.as_ref().display());
-                        (data, msg)
-                    },
-                    Err(e) => {
-                        panic!("Failed to parse JSON from {}: {}. Please check the file format.", file_path.as_ref().display(), e);
-                    }
+            Ok(content) => match serde_json::from_str::<ConversationData>(&content) {
+                Ok(data) => {
+                    let msg = format!("✓ Loaded from: {}", file_path.as_ref().display());
+                    (data, msg)
+                }
+                Err(e) => {
+                    panic!(
+                        "Failed to parse JSON from {}: {}. Please check the file format.",
+                        file_path.as_ref().display(),
+                        e
+                    );
                 }
             },
             Err(_) => {
-                panic!("File not found: {}. Please check the file path.", file_path.as_ref().display());
+                panic!(
+                    "File not found: {}. Please check the file path.",
+                    file_path.as_ref().display()
+                );
             }
         }
     }
-
 }
 
 /// Render the four-panel UI
@@ -1316,29 +1312,31 @@ fn select_memory_backend() -> io::Result<MemoryBackend> {
     println!();
     println!("Select the memory backend for the agent demonstration:");
     println!();
-    
+
     let backends = vec![
         MemoryBackend::InMemory,
         MemoryBackend::ThreadSafeInMemory,
         MemoryBackend::ThreadSafeGit,
         MemoryBackend::ThreadSafeFile,
     ];
-    
+
     for (i, backend) in backends.iter().enumerate() {
-        println!("  {}. {} - {}", 
-                 i + 1, 
-                 backend.display_name(), 
-                 backend.description());
+        println!(
+            "  {}. {} - {}",
+            i + 1,
+            backend.display_name(),
+            backend.description()
+        );
     }
-    
+
     println!();
     print!("Enter your choice (1-4): ");
     io::stdout().flush()?;
-    
+
     loop {
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
-        
+
         match input.trim().parse::<usize>() {
             Ok(choice) if choice >= 1 && choice <= 4 => {
                 let selected_backend = backends[choice - 1].clone();
@@ -1346,7 +1344,7 @@ fn select_memory_backend() -> io::Result<MemoryBackend> {
                 println!("✓ Selected: {}", selected_backend.display_name());
                 println!("  {}", selected_backend.description());
                 return Ok(selected_backend);
-            },
+            }
             _ => {
                 print!("Invalid choice. Please enter 1-4: ");
                 io::stdout().flush()?;
@@ -1367,13 +1365,13 @@ async fn run_comprehensive_demo(
 
     // Use the provided temporary directory
     let memory_path = temp_dir.path();
-    
+
     // Initialize storage based on backend type
     let dataset_dir = match &backend {
         MemoryBackend::InMemory => {
             // In-memory doesn't need any directory setup
             memory_path.to_path_buf()
-        },
+        }
         MemoryBackend::ThreadSafeInMemory => {
             // Thread-safe in-memory needs git initialization (uses git for versioning)
             std::process::Command::new("git")
@@ -1384,7 +1382,7 @@ async fn run_comprehensive_demo(
 
             // Thread-safe in-memory still uses a path for temp storage
             memory_path.to_path_buf()
-        },
+        }
         MemoryBackend::ThreadSafeGit => {
             // Git-backed storage needs git initialization
             std::process::Command::new("git")
@@ -1397,7 +1395,7 @@ async fn run_comprehensive_demo(
             let dataset_dir = memory_path.join("dataset");
             std::fs::create_dir_all(&dataset_dir)?;
             dataset_dir
-        },
+        }
         MemoryBackend::ThreadSafeFile => {
             // File-based storage needs git initialization (uses git for versioning)
             std::process::Command::new("git")
@@ -1410,7 +1408,7 @@ async fn run_comprehensive_demo(
             let dataset_dir = memory_path.join("dataset");
             std::fs::create_dir_all(&dataset_dir)?;
             dataset_dir
-        },
+        }
     };
 
     let openai_api_key = std::env::var("OPENAI_API_KEY").ok();
@@ -2079,7 +2077,7 @@ fn generate_kv_keys(
         format!("⏺ {}", backend.description()),
         "".to_string(),
         "⏺ Agent Memory Structure:".to_string(),
-        "".to_string()
+        "".to_string(),
     ];
 
     // Semantic memory keys
@@ -2185,22 +2183,22 @@ fn generate_kv_keys(
             keys.push("⏺ Storage: Volatile in-memory only".to_string());
             keys.push("⏺ Persistence: None".to_string());
             keys.push("⏺ Versioning: Not available".to_string());
-        },
+        }
         MemoryBackend::ThreadSafeInMemory => {
             keys.push("⏺ Storage: In-memory with git versioning".to_string());
             keys.push("⏺ Persistence: Temporary + git history".to_string());
             keys.push("⏺ Versioning: Git commits in memory".to_string());
-        },
+        }
         MemoryBackend::ThreadSafeGit => {
             keys.push("⏺ Storage: Git repository".to_string());
             keys.push("⏺ Persistence: Full git history".to_string());
             keys.push("⏺ Versioning: Git commits & branches".to_string());
-        },
+        }
         MemoryBackend::ThreadSafeFile => {
             keys.push("⏺ Storage: File-based with git versioning".to_string());
             keys.push("⏺ Persistence: Durable file + git history".to_string());
             keys.push("⏺ Versioning: Git commits & rollback".to_string());
-        },
+        }
     }
 
     keys.push("".to_string());
@@ -2422,7 +2420,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let backend_clone = selected_backend.clone();
     let demo_handle = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if let Err(e) = run_comprehensive_demo(ui_sender_clone, pause_state_clone, temp_dir, backend_clone).await {
+        if let Err(e) =
+            run_comprehensive_demo(ui_sender_clone, pause_state_clone, temp_dir, backend_clone)
+                .await
+        {
             eprintln!("Demo error: {}", e);
         }
     });
