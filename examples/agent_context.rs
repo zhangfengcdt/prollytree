@@ -1188,7 +1188,7 @@ fn render_git_logs(f: &mut Frame, area: Rect, ui_state: &UiState) {
     let git_logs = List::new(items)
         .block(
             Block::default()
-                .title("Prollytree Git History")
+                .title("Agent Memory History and Branching")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::White)),
         )
@@ -1221,7 +1221,7 @@ fn render_kv_keys(f: &mut Frame, area: Rect, ui_state: &UiState) {
     let kv_keys = List::new(items)
         .block(
             Block::default()
-                .title("Prollytree KV Store Overview")
+                .title("Versioned Persistence (Prollytree)")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::White)),
         )
