@@ -65,14 +65,14 @@ impl FinancialAnalysisAgent {
             .agent("gpt-3.5-turbo")
             .preamble(
                 r#"You are a professional financial advisor providing investment recommendations.
-               
+
 You will receive detailed stock analysis data and client profile information.
 Your task is to provide a professional, concise investment analysis (2-3 sentences)
 explaining why the given recommendation makes sense for the specific client profile.
 
 Focus on:
 1. Key financial metrics and their implications
-2. Alignment with client's risk tolerance and goals 
+2. Alignment with client's risk tolerance and goals
 3. Sector trends or company-specific factors
 
 Keep the response professional, factual, and tailored to the client's profile.

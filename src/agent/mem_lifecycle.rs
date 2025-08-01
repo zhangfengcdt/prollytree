@@ -3,7 +3,7 @@ use chrono::{Duration, Utc};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
 
-use super::search::DistanceCalculator;
+use super::embedding_search::DistanceCalculator;
 use super::traits::{MemoryError, MemoryLifecycle, MemoryStore};
 use super::types::*;
 

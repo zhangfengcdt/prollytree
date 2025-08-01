@@ -358,7 +358,7 @@ let advisor = FinancialAdvisor::new("./memory", api_key).await?;
 advisor.set_validation_policy(ValidationPolicy::Strict);
 
 let recommendation = advisor.get_recommendation(
-    "AAPL", 
+    "AAPL",
     client_profile
 ).await?;
 "#
@@ -375,7 +375,7 @@ let validator = MemoryValidator::new()
     .add_source("bloomberg", 0.9)
     .add_source("yahoo_finance", 0.7)
     .min_sources(2);
-    
+
 advisor.set_validator(validator);
 "#
         .dimmed()
