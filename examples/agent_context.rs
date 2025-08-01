@@ -6,7 +6,7 @@ use std::cmp::min;
 use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -1060,26 +1060,6 @@ struct ConversationData {
 }
 
 impl ConversationData {
-    /// Load default conversation data - tries multiple locations
-    fn load_default() -> (Self, String) {
-        // Try these files in order
-        let candidate_files = [
-            "examples/data/conversation_data.json",
-            "data/conversation_data.json",
-            "examples/data/conversation_data_simple.json",
-            "conversation_data.json", // Legacy fallback
-        ];
-
-        for file_path in &candidate_files {
-            if Path::new(file_path).exists() {
-                return Self::load_from_file(file_path);
-            }
-        }
-
-        // If no files found, panic with helpful message
-        panic!("No conversation data files found. Please ensure one of these files exists:\n  - examples/data/conversation_data.json\n  - data/conversation_data.json\n  - examples/data/conversation_data_simple.json");
-    }
-
     /// Load conversation data from a JSON file
     fn load_from_file<P: AsRef<Path>>(file_path: P) -> (Self, String) {
         match fs::read_to_string(&file_path) {
@@ -1303,6 +1283,132 @@ async fn pausable_sleep(duration: Duration, pause_state: &Arc<AtomicBool>) {
     tokio::time::sleep(duration).await;
 }
 
+/// Discover available conversation data files
+fn discover_conversation_files() -> Vec<(PathBuf, String)> {
+    let mut files = Vec::new();
+
+    // Search locations and their display names
+    let search_locations = [
+        ("examples/data", "examples/data/"),
+        ("data", "data/"),
+        (".", "./"),
+    ];
+
+    for (dir, display_prefix) in &search_locations {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(filename) = path.file_name() {
+                    if let Some(filename_str) = filename.to_str() {
+                        if filename_str.starts_with("conversation_")
+                            && filename_str.ends_with(".json")
+                        {
+                            // Try to parse the file to get a description
+                            let description = if let Ok(content) = fs::read_to_string(&path) {
+                                if let Ok(data) = serde_json::from_str::<ConversationData>(&content)
+                                {
+                                    let total_messages = data.thread1_messages.len()
+                                        + data.thread2_messages.len()
+                                        + data.thread3_messages.len();
+
+                                    // Try to extract scenario name from first message
+                                    let scenario =
+                                        if let Some(first_msg) = data.thread1_messages.first() {
+                                            if first_msg.contains("climate change") {
+                                                "Climate Research Scenario"
+                                            } else if first_msg.contains("machine learning") {
+                                                "Technology Scenario"
+                                            } else if first_msg.contains("testing") {
+                                                "Simple Test Scenario"
+                                            } else if first_msg.contains("cryptocurrency")
+                                                || first_msg.contains("financial")
+                                            {
+                                                "Financial Analysis Scenario"
+                                            } else {
+                                                "Custom Scenario"
+                                            }
+                                        } else {
+                                            "Unknown Scenario"
+                                        };
+
+                                    format!("{} ({} messages)", scenario, total_messages)
+                                } else {
+                                    "Invalid JSON format".to_string()
+                                }
+                            } else {
+                                "Could not read file".to_string()
+                            };
+
+                            files.push((
+                                path.clone(),
+                                format!("{}{} - {}", display_prefix, filename_str, description),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by filename for consistent ordering
+    files.sort_by(|a, b| a.0.file_name().cmp(&b.0.file_name()));
+    files
+}
+
+/// Display conversation data selection menu and get user choice
+fn select_conversation_data() -> io::Result<PathBuf> {
+    println!();
+    println!("╔══════════════════════════════════════════════════════════╗");
+    println!("║                CONVERSATION DATA SELECTION               ║");
+    println!("╚══════════════════════════════════════════════════════════╝");
+    println!();
+
+    let available_files = discover_conversation_files();
+
+    if available_files.is_empty() {
+        println!("❌ No conversation data files found!");
+        println!();
+        println!(
+            "Please create a JSON file starting with 'conversation_' in one of these locations:"
+        );
+        println!("  • examples/data/conversation_data.json");
+        println!("  • data/conversation_data.json");
+        println!("  • ./conversation_data.json");
+        println!();
+        println!("See examples/data/README.md for the expected format.");
+        std::process::exit(1);
+    }
+
+    println!("Available conversation scenarios:");
+    println!();
+
+    for (i, (_, description)) in available_files.iter().enumerate() {
+        println!("  {}. {}", i + 1, description);
+    }
+
+    println!();
+    print!("Enter your choice (1-{}): ", available_files.len());
+    io::stdout().flush()?;
+
+    loop {
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        match input.trim().parse::<usize>() {
+            Ok(choice) if choice >= 1 && choice <= available_files.len() => {
+                let selected_file = &available_files[choice - 1];
+                println!();
+                println!("✓ Selected: {}", selected_file.1);
+                return Ok(selected_file.0.clone());
+            }
+            _ => {
+                print!("Invalid choice. Please enter 1-{}: ", available_files.len());
+                io::stdout().flush()?;
+            }
+        }
+    }
+}
+
 /// Display backend selection menu and get user choice
 fn select_memory_backend() -> io::Result<MemoryBackend> {
     println!();
@@ -1359,9 +1465,10 @@ async fn run_comprehensive_demo(
     pause_state: Arc<AtomicBool>,
     temp_dir: TempDir,
     backend: MemoryBackend,
+    conversation_file: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    // Try to load conversation data from file, fallback to default
-    let (conversation_data, load_status) = ConversationData::load_default();
+    // Load conversation data from selected file
+    let (conversation_data, load_status) = ConversationData::load_from_file(&conversation_file);
 
     // Use the provided temporary directory
     let memory_path = temp_dir.path();
@@ -1462,7 +1569,7 @@ async fn run_comprehensive_demo(
     )))?;
 
     // Initial git and KV updates
-    let initial_keys = generate_kv_keys(0, 0, 1, false, &backend);
+    let initial_keys = generate_kv_keys(0, 0, 1, false, &backend, &conversation_data);
     let _ = ui_sender.send(UiEvent::KvKeysUpdate(initial_keys));
 
     // Get real git logs
@@ -1479,7 +1586,7 @@ async fn run_comprehensive_demo(
         &ui_sender,
         "THREAD 1",
         "Initial Data Collection",
-        "⏺ Hurricane Research & Climate Facts",
+        "⏺ Research Facts",
         &pause_state,
     )
     .await;
@@ -1533,7 +1640,14 @@ async fn run_comprehensive_demo(
             } else {
                 i / 6
             };
-            let keys = generate_kv_keys(approx_semantic, approx_procedural, 1, false, &backend);
+            let keys = generate_kv_keys(
+                approx_semantic,
+                approx_procedural,
+                1,
+                false,
+                &backend,
+                &conversation_data,
+            );
             let _ = ui_sender.send(UiEvent::KvKeysUpdate(keys));
         }
 
@@ -1605,7 +1719,14 @@ async fn run_comprehensive_demo(
 
             let approx_semantic = (i + 12) / 3; // Approximate progress
             let approx_procedural = (i + 5) / 4;
-            let keys = generate_kv_keys(approx_semantic, approx_procedural, 2, false, &backend);
+            let keys = generate_kv_keys(
+                approx_semantic,
+                approx_procedural,
+                2,
+                false,
+                &backend,
+                &conversation_data,
+            );
             let _ = ui_sender.send(UiEvent::KvKeysUpdate(keys));
         }
 
@@ -1677,7 +1798,14 @@ async fn run_comprehensive_demo(
 
             let approx_semantic = (i + 20) / 3; // Approximate final progress
             let approx_procedural = (i + 10) / 4;
-            let keys = generate_kv_keys(approx_semantic, approx_procedural, 3, true, &backend);
+            let keys = generate_kv_keys(
+                approx_semantic,
+                approx_procedural,
+                3,
+                true,
+                &backend,
+                &conversation_data,
+            );
             let _ = ui_sender.send(UiEvent::KvKeysUpdate(keys));
         }
 
@@ -1884,13 +2012,8 @@ async fn run_comprehensive_demo(
     ))?;
     ui_sender.send(UiEvent::ConversationUpdate("".to_string()))?;
 
-    // Simulate some additional interactions in the rolled-back state
-    let rollback_messages = vec![
-        "What climate facts do we have about hurricanes?",
-        "Fact: New research shows hurricane intensification rate increased 25% since 2000 category: hurricanes",
-        "What are our current procedural rules?",
-        "Rule: rapid_response: IF hurricane_cat_4_or_5 THEN activate_emergency_shelters_within_12_hours",
-    ];
+    // Generate dynamic rollback messages based on conversation content
+    let rollback_messages = generate_rollback_messages(&conversation_data);
 
     for (i, message) in rollback_messages.iter().enumerate() {
         ui_sender.send(UiEvent::ConversationUpdate(format!("⏺ User: {}", message)))?;
@@ -1977,7 +2100,7 @@ async fn run_comprehensive_demo(
         let _ = ui_sender.send(UiEvent::GitLogUpdate(git_logs));
     }
 
-    let final_keys = generate_kv_keys(25, 8, 3, true, &backend);
+    let final_keys = generate_kv_keys(25, 8, 3, true, &backend, &conversation_data);
     let _ = ui_sender.send(UiEvent::KvKeysUpdate(final_keys));
 
     // Completion messages
@@ -2064,6 +2187,175 @@ async fn clear_and_highlight_theme(
     Ok(())
 }
 
+// Helper function to extract categories and content from conversation data
+fn analyze_conversation_content(
+    conversation_data: &ConversationData,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut categories = std::collections::HashSet::new();
+    let mut fact_topics = Vec::new();
+    let mut rule_names = Vec::new();
+
+    // Combine all messages from all threads
+    let all_messages = conversation_data
+        .thread1_messages
+        .iter()
+        .chain(conversation_data.thread2_messages.iter())
+        .chain(conversation_data.thread3_messages.iter());
+
+    for message in all_messages {
+        // Extract facts and their categories
+        if message.starts_with("Fact: ") {
+            if let Some(category_start) = message.rfind(" category: ") {
+                let category = message[category_start + 11..].trim();
+                categories.insert(category.to_string());
+
+                // Extract topic from fact description
+                let fact_desc = &message[6..category_start];
+                if let Some(topic) = extract_topic_from_fact(fact_desc) {
+                    fact_topics.push(topic);
+                }
+            }
+        }
+
+        // Extract rules
+        if message.starts_with("Rule: ") {
+            if let Some(colon_pos) = message[6..].find(':') {
+                let rule_name = message[6..6 + colon_pos].trim();
+                rule_names.push(rule_name.to_string());
+            }
+        }
+    }
+
+    let mut category_list: Vec<String> = categories.into_iter().collect();
+    category_list.sort();
+
+    (category_list, fact_topics, rule_names)
+}
+
+// Helper function to extract topic from fact description
+fn extract_topic_from_fact(fact_desc: &str) -> Option<String> {
+    let fact_lower = fact_desc.to_lowercase();
+
+    // Topic extraction based on keywords
+    if fact_lower.contains("hurricane") || fact_lower.contains("storm") {
+        Some("hurricanes".to_string())
+    } else if fact_lower.contains("heat") || fact_lower.contains("temperature") {
+        Some("heat_waves".to_string())
+    } else if fact_lower.contains("flood") || fact_lower.contains("rainfall") {
+        Some("flooding".to_string())
+    } else if fact_lower.contains("bitcoin") || fact_lower.contains("crypto") {
+        Some("cryptocurrency".to_string())
+    } else if fact_lower.contains("regulation") || fact_lower.contains("sec") {
+        Some("regulation".to_string())
+    } else if fact_lower.contains("adoption") || fact_lower.contains("institutional") {
+        Some("adoption".to_string())
+    } else if fact_lower.contains("machine learning") || fact_lower.contains("ai") {
+        Some("technology".to_string())
+    } else if fact_lower.contains("economic")
+        || fact_lower.contains("cost")
+        || fact_lower.contains("billion")
+    {
+        Some("economic".to_string())
+    } else {
+        Some("general".to_string())
+    }
+}
+
+// Helper function to generate dynamic rollback messages based on conversation content
+fn generate_rollback_messages(conversation_data: &ConversationData) -> Vec<String> {
+    let mut messages = Vec::new();
+
+    // Combine all messages from all threads
+    let all_messages = conversation_data
+        .thread1_messages
+        .iter()
+        .chain(conversation_data.thread2_messages.iter())
+        .chain(conversation_data.thread3_messages.iter())
+        .collect::<Vec<_>>();
+
+    // Find some interesting messages to use in rollback demo
+    // Prioritize queries and new facts/rules not from thread1
+    let mut queries = Vec::new();
+    let mut facts = Vec::new();
+    let mut rules = Vec::new();
+
+    for message in &all_messages {
+        if message.starts_with("What") || message.starts_with("Can you") || message.ends_with("?") {
+            queries.push(message.as_str());
+        } else if message.starts_with("Fact: ") {
+            facts.push(message.as_str());
+        } else if message.starts_with("Rule: ") {
+            rules.push(message.as_str());
+        }
+    }
+
+    // Select 4 messages for the rollback demo
+    // Try to get a good mix: query -> fact -> query -> rule
+
+    // Add a query (preferably from thread2 or thread3)
+    if let Some(query) = queries
+        .iter()
+        .find(|q| {
+            conversation_data.thread2_messages.contains(&q.to_string())
+                || conversation_data.thread3_messages.contains(&q.to_string())
+        })
+        .or_else(|| queries.first())
+    {
+        messages.push(query.to_string());
+    }
+
+    // Add a fact (preferably from later in the conversation)
+    if let Some(fact) = facts
+        .iter()
+        .skip(facts.len().saturating_sub(3)) // Take from last 3 facts
+        .next()
+        .or_else(|| facts.get(1)) // Or second fact if available
+        .or_else(|| facts.first())
+    {
+        messages.push(fact.to_string());
+    }
+
+    // Add another query
+    if let Some(query) = queries
+        .iter()
+        .skip(1) // Skip the first one we might have used
+        .find(|q| conversation_data.thread3_messages.contains(&q.to_string()))
+        .or_else(|| queries.get(1))
+        .or_else(|| queries.last())
+    {
+        messages.push(query.to_string());
+    }
+
+    // Add a rule (preferably from later in the conversation)
+    if let Some(rule) = rules
+        .iter()
+        .skip(rules.len().saturating_sub(2)) // Take from last 2 rules
+        .next()
+        .or_else(|| rules.get(1)) // Or second rule if available
+        .or_else(|| rules.first())
+    {
+        messages.push(rule.to_string());
+    }
+
+    // If we don't have enough messages, add some generic ones based on what we found
+    if messages.len() < 2 {
+        if !facts.is_empty() || !rules.is_empty() {
+            messages.push("What facts and rules have we established so far?".to_string());
+        }
+        if !facts.is_empty() {
+            messages.push("Can you summarize our key findings?".to_string());
+        }
+    }
+
+    // Ensure we have at least 2 messages for the demo
+    if messages.is_empty() {
+        messages.push("What information do we have so far?".to_string());
+        messages.push("Can you provide a summary of our current state?".to_string());
+    }
+
+    messages
+}
+
 // Helper function to generate realistic KV store keys
 fn generate_kv_keys(
     semantic_count: usize,
@@ -2071,7 +2363,11 @@ fn generate_kv_keys(
     thread_count: usize,
     include_episodic: bool,
     backend: &MemoryBackend,
+    conversation_data: &ConversationData,
 ) -> Vec<String> {
+    // Analyze conversation content to extract dynamic data
+    let (categories, fact_topics, rule_names) = analyze_conversation_content(conversation_data);
+
     let mut keys = vec![
         format!("⏺ Backend: {}", backend.display_name()),
         format!("⏺ {}", backend.description()),
@@ -2080,98 +2376,102 @@ fn generate_kv_keys(
         "".to_string(),
     ];
 
-    // Semantic memory keys
+    // Semantic memory keys (dynamic based on conversation content)
     keys.push("⏺ Semantic Memory (Facts):".to_string());
     if semantic_count > 0 {
-        keys.push(
-            "  /agents/context_agent_001/semantic/research_project_hurricanes/001".to_string(),
-        );
-        keys.push(
-            "  /agents/context_agent_001/semantic/research_project_hurricanes/002".to_string(),
-        );
-    }
-    if semantic_count > 2 {
-        keys.push(
-            "  /agents/context_agent_001/semantic/research_project_heat_waves/001".to_string(),
-        );
-        keys.push(
-            "  /agents/context_agent_001/semantic/research_project_heat_waves/002".to_string(),
-        );
-    }
-    if semantic_count > 4 {
-        keys.push("  /agents/context_agent_001/semantic/research_project_flooding/001".to_string());
-        keys.push("  /agents/context_agent_001/semantic/research_project_economic/001".to_string());
-    }
-    if semantic_count > 6 {
-        keys.push(
-            "  /agents/context_agent_001/semantic/research_project_adaptation/001".to_string(),
-        );
-        keys.push(
-            "  /agents/context_agent_001/semantic/research_project_heat_waves/003".to_string(),
-        );
+        let mut fact_counter = 1;
+        for (i, topic) in fact_topics.iter().take(semantic_count).enumerate() {
+            keys.push(format!(
+                "  /agents/context_agent_001/semantic/{}/fact_{:03}",
+                topic, fact_counter
+            ));
+            fact_counter += 1;
+
+            // Add a second fact for the same topic occasionally
+            if i < semantic_count - 1 && fact_counter <= semantic_count {
+                keys.push(format!(
+                    "  /agents/context_agent_001/semantic/{}/fact_{:03}",
+                    topic, fact_counter
+                ));
+                fact_counter += 1;
+            }
+        }
     }
 
     keys.push("".to_string());
 
-    // Procedural memory keys
+    // Procedural memory keys (dynamic based on conversation content)
     keys.push("⏺ Procedural Memory (Rules):".to_string());
     if procedural_count > 0 {
-        keys.push(
-            "  /agents/context_agent_001/procedural/climate_analysis/hurricane_evacuation"
-                .to_string(),
-        );
-    }
-    if procedural_count > 1 {
-        keys.push(
-            "  /agents/context_agent_001/procedural/climate_analysis/heat_advisory".to_string(),
-        );
-        keys.push(
-            "  /agents/context_agent_001/procedural/climate_analysis/flood_insurance".to_string(),
-        );
-    }
-    if procedural_count > 3 {
-        keys.push(
-            "  /agents/context_agent_001/procedural/climate_analysis/drought_response".to_string(),
-        );
-        keys.push(
-            "  /agents/context_agent_001/procedural/climate_analysis/building_codes".to_string(),
-        );
-    }
-    if procedural_count > 5 {
-        keys.push(
-            "  /agents/context_agent_001/procedural/climate_analysis/infrastructure_resilience"
-                .to_string(),
-        );
-        keys.push(
-            "  /agents/context_agent_001/procedural/climate_analysis/emergency_response"
-                .to_string(),
-        );
+        let context_name = if categories.contains(&"hurricanes".to_string())
+            || categories.contains(&"flooding".to_string())
+        {
+            "climate_analysis"
+        } else if categories.contains(&"cryptocurrency".to_string())
+            || categories.contains(&"regulation".to_string())
+        {
+            "financial_analysis"
+        } else if categories.contains(&"technology".to_string()) {
+            "tech_analysis"
+        } else {
+            "general_analysis"
+        };
+
+        for (i, rule_name) in rule_names.iter().take(procedural_count).enumerate() {
+            keys.push(format!(
+                "  /agents/context_agent_001/procedural/{}/{}",
+                context_name, rule_name
+            ));
+            if i >= procedural_count - 1 {
+                break;
+            }
+        }
     }
 
     keys.push("".to_string());
 
     // Short-term memory keys
-    keys.push("⏺ Short-term Memory (Conversations):".to_string());
+    keys.push("⏺ Short-term Memory (24hr):".to_string());
     for i in 1..=thread_count {
         keys.push(format!(
-            "  /agents/context_agent_001/short_term/thread_{:03}/conversations",
+            "  /agents/context_agent_001/short_term/session/thread_{:03}",
             i
         ));
     }
 
     keys.push("".to_string());
 
-    // Episodic memory keys (if applicable)
+    // Episodic memory keys
     if include_episodic {
-        keys.push("⏺ Episodic Memory (Sessions):".to_string());
+        keys.push("⏺ Episodic Memory (Experience):".to_string());
+        let scenario_type = if categories.contains(&"hurricanes".to_string()) {
+            "climate_research"
+        } else if categories.contains(&"cryptocurrency".to_string()) {
+            "financial_research"
+        } else if categories.contains(&"technology".to_string()) {
+            "tech_research"
+        } else {
+            "research"
+        };
+
+        keys.push(format!(
+            "  /agents/context_agent_001/episodic/conversations/{}_session_001",
+            scenario_type
+        ));
+        keys.push(format!(
+            "  /agents/context_agent_001/episodic/conversations/{}_session_002",
+            scenario_type
+        ));
+        keys.push(format!(
+            "  /agents/context_agent_001/episodic/conversations/{}_session_003",
+            scenario_type
+        ));
         keys.push(
-            "  /agents/context_agent_001/episodic/2025-07-31/research_session_001".to_string(),
+            "  /agents/context_agent_001/episodic/patterns/cross_thread_synthesis".to_string(),
         );
+        keys.push("  /agents/context_agent_001/episodic/patterns/knowledge_evolution".to_string());
         keys.push(
-            "  /agents/context_agent_001/episodic/2025-07-31/analysis_session_002".to_string(),
-        );
-        keys.push(
-            "  /agents/context_agent_001/episodic/2025-07-31/synthesis_session_003".to_string(),
+            "  /agents/context_agent_001/episodic/patterns/memory_recall_optimization".to_string(),
         );
         keys.push("".to_string());
     }
@@ -2202,18 +2502,17 @@ fn generate_kv_keys(
     }
 
     keys.push("".to_string());
-    keys.push(format!(
-        "⏺ Total Active Keys: ~{}",
-        (semantic_count * 2)
-            + (procedural_count * 2)
-            + (thread_count * 3)
-            + if include_episodic { 6 } else { 0 }
-    ));
+
+    // Dynamic key count based on actual content
+    let actual_key_count = fact_topics.len()
+        + rule_names.len()
+        + (thread_count * 3)
+        + if include_episodic { 6 } else { 0 };
+    keys.push(format!("⏺ Total Active Keys: ~{}", actual_key_count));
     keys.push("⏺ Last Updated: just now".to_string());
 
     keys
 }
-
 /// Run the application with UI
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -2398,6 +2697,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("📁 {}", temp_path.display());
     println!("═══════════════════════════════════════════════════════════");
     println!();
+    // Let user select the conversation data
+    let selected_conversation_file = select_conversation_data()?;
+
     // Let user select the memory backend
     let selected_backend = select_memory_backend()?;
 
@@ -2418,11 +2720,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let ui_sender_clone = ui_sender.clone();
     let pause_state_clone = pause_state.clone();
     let backend_clone = selected_backend.clone();
+    let conversation_file_clone = selected_conversation_file.clone();
     let demo_handle = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if let Err(e) =
-            run_comprehensive_demo(ui_sender_clone, pause_state_clone, temp_dir, backend_clone)
-                .await
+        if let Err(e) = run_comprehensive_demo(
+            ui_sender_clone,
+            pause_state_clone,
+            temp_dir,
+            backend_clone,
+            conversation_file_clone,
+        )
+        .await
         {
             eprintln!("Demo error: {}", e);
         }
