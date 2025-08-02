@@ -43,7 +43,7 @@ async fn setup_database(record_count: usize) -> (Glue<ProllyStorage<32>>, TempDi
     // Insert test data
     for i in 0..record_count {
         let insert_sql = format!(
-            "INSERT INTO users (id, name, email, age, city, created_at) 
+            "INSERT INTO users (id, name, email, age, city, created_at)
              VALUES ({}, 'User{}', 'user{}@example.com', {}, 'City{}', TIMESTAMP '2024-01-{:02} 12:00:00')",
             i, i, i, 20 + (i % 50), i % 10, (i % 28) + 1
         );
@@ -147,7 +147,7 @@ fn bench_sql_join(c: &mut Criterion) {
                         // Insert orders
                         for i in 0..size * 2 {
                             let sql = format!(
-                                "INSERT INTO orders (id, user_id, amount, status) 
+                                "INSERT INTO orders (id, user_id, amount, status)
                                  VALUES ({}, {}, {}, '{}')",
                                 i,
                                 i % size,
@@ -198,7 +198,7 @@ fn bench_sql_aggregation(c: &mut Criterion) {
                     runtime.block_on(async {
                         let result = glue
                             .execute(
-                                "SELECT city, 
+                                "SELECT city,
                                     COUNT(*) as user_count,
                                     AVG(age) as avg_age,
                                     MIN(age) as min_age,
@@ -237,8 +237,8 @@ fn bench_sql_update(c: &mut Criterion) {
                         // Update multiple records
                         let result = glue
                             .execute(
-                                "UPDATE users 
-                             SET age = age + 1, 
+                                "UPDATE users
+                             SET age = age + 1,
                                  city = 'UpdatedCity'
                              WHERE age < 30",
                             )
@@ -368,16 +368,16 @@ fn bench_sql_complex_query(c: &mut Criterion) {
                         // Complex query with subqueries
                         let result = glue
                             .execute(
-                                "SELECT 
+                                "SELECT
                                 u.city,
                                 COUNT(DISTINCT u.id) as user_count,
-                                (SELECT COUNT(*) 
-                                 FROM users u2 
+                                (SELECT COUNT(*)
+                                 FROM users u2
                                  WHERE u2.city = u.city AND u2.age > 40) as senior_count,
                                 AVG(u.age) as avg_age
                              FROM users u
                              WHERE u.id IN (
-                                SELECT id FROM users 
+                                SELECT id FROM users
                                 WHERE age BETWEEN 25 AND 45
                              )
                              GROUP BY u.city

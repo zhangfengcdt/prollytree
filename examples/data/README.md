@@ -74,6 +74,6 @@ This structure demonstrates the agent's ability to maintain context across diffe
 ## Tips
 
 - Keep messages concise but meaningful
-- Mix different message types (facts, rules, searches, queries) 
+- Mix different message types (facts, rules, searches, queries)
 - Use consistent category names for better recall
 - Test your JSON syntax before running the demo

@@ -39,7 +39,7 @@ pub trait HistoricalCommitAccess<const N: usize> {
     /// Returns commits in reverse chronological order (newest first)
     fn get_commits_for_key(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError>;
 
-    /// Get the commit history for the repository  
+    /// Get the commit history for the repository
     /// Returns commits in reverse chronological order (newest first)
     fn get_commit_history(&self) -> Result<Vec<CommitInfo>, GitKvError>;
 }
@@ -82,7 +82,7 @@ pub struct ThreadSafeVersionedKvStore<const N: usize, S: NodeStorage<N>> {
     inner: Arc<Mutex<VersionedKvStore<N, S>>>,
 }
 
-/// Type alias for thread-safe Git storage  
+/// Type alias for thread-safe Git storage
 pub type ThreadSafeGitVersionedKvStore<const N: usize> =
     ThreadSafeVersionedKvStore<N, GitNodeStorage<N>>;
 

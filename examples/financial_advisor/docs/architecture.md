@@ -55,7 +55,7 @@ START: Client requests recommendation for AAPL
 │  │
 │  └─ Semantic ───► Retrieve: client_profile, risk_tolerance, goals
 │
-├─ STEP 2: Market Research Phase  
+├─ STEP 2: Market Research Phase
 │  │
 │  ├─ Semantic ───► Query: market_entity_facts(AAPL)
 │  │               └─ Returns: valuation_metrics, sector_info, analyst_ratings
@@ -70,7 +70,7 @@ START: Client requests recommendation for AAPL
 │
 ├─ STEP 3: Risk Assessment Phase
 │  │
-│  ├─ Episodic ───► Query: client_risk_history(client_id, 90_days)  
+│  ├─ Episodic ───► Query: client_risk_history(client_id, 90_days)
 │  │               └─ Returns: past_decisions, risk_outcomes, patterns
 │  │
 │  ├─ Procedural ─► Execute: risk_assessment_workflow
@@ -114,7 +114,7 @@ START: Client requests recommendation for AAPL
 END: Return DetailedRecommendation to client
 ```
 
-### 2. Learning from Outcomes Workflow  
+### 2. Learning from Outcomes Workflow
 
 ```
 START: Client reports recommendation outcome
@@ -160,7 +160,7 @@ START: Client reports recommendation outcome
    │
    ├─ Procedural ─► Update: workflow_efficiency_metrics
    │
-   ├─ Semantic ───► Refine: confidence_scoring_algorithms  
+   ├─ Semantic ───► Refine: confidence_scoring_algorithms
    │
    └─ Episodic ───► Archive: complete_learning_episode
 

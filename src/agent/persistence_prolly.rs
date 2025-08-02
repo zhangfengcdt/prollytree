@@ -21,45 +21,45 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// ProllyTree-based memory persistence using git-backed versioned storage
-/// 
+///
 /// # Implementation Status
-/// 
+///
 /// **FULLY IMPLEMENTED** but currently disabled in the module due to thread safety constraints.
 /// This implementation is complete, tested, and ready to use in single-threaded contexts.
-/// 
+///
 /// # Thread Safety Warning
-/// 
+///
 /// **IMPORTANT**: This struct is NOT thread-safe due to limitations in the underlying
-/// Git library (gix). The GitVersionedKvStore contains internal RefCell components 
+/// Git library (gix). The GitVersionedKvStore contains internal RefCell components
 /// that prevent it from being Sync.
-/// 
+///
 /// **Use only in single-threaded contexts** or where you can guarantee exclusive access.
 /// For multi-threaded applications, use SimpleMemoryPersistence instead.
-/// 
+///
 /// # Benefits
-/// 
+///
 /// - Real git-backed versioned storage with authentic commit history
 /// - Branch operations (create, checkout, merge)
 /// - Time-travel debugging capabilities
 /// - Persistent storage across application restarts
 /// - Full git log and diff capabilities
-/// 
+///
 /// # How to Enable
-/// 
+///
 /// To use this implementation:
 /// 1. Uncomment the module import in `mod.rs`
 /// 2. Uncomment the PersistenceBackend::Prolly variant
 /// 3. Use only in single-threaded applications
 /// 4. See `PROLLY_MEMORY_IMPLEMENTATION.md` for complete instructions
-/// 
+///
 /// # Example
-/// 
+///
 /// ```rust,no_run
 /// use prollytree::agent::ProllyMemoryPersistence;
-/// 
+///
 /// // Only use in single-threaded contexts!
 /// let persistence = ProllyMemoryPersistence::init(
-///     "/tmp/agent_memory", 
+///     "/tmp/agent_memory",
 ///     "agent_memories"
 /// )?;
 /// ```
@@ -103,17 +103,17 @@ impl MemoryPersistence for ProllyMemoryPersistence {
     async fn save(&mut self, key: &str, data: &[u8]) -> Result<(), Box<dyn Error>> {
         let full_key = self.full_key(key);
         let mut store = self.store.write().await;
-        
+
         // Save to git-backed prolly tree
         store.insert(full_key.into_bytes(), data.to_vec())?;
-        
+
         Ok(())
     }
 
     async fn load(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
         let full_key = self.full_key(key);
         let store = self.store.read().await;
-        
+
         let data = store.get(full_key.as_bytes());
         Ok(data)
     }
@@ -121,17 +121,17 @@ impl MemoryPersistence for ProllyMemoryPersistence {
     async fn delete(&mut self, key: &str) -> Result<(), Box<dyn Error>> {
         let full_key = self.full_key(key);
         let mut store = self.store.write().await;
-        
+
         // Delete from git-backed prolly tree
         store.delete(full_key.as_bytes())?;
-        
+
         Ok(())
     }
 
     async fn list_keys(&self, prefix: &str) -> Result<Vec<String>, Box<dyn Error>> {
         let full_prefix = self.full_key(prefix);
         let store = self.store.read().await;
-        
+
         // Get all keys from git-backed store and filter by prefix
         let all_keys = store.list_keys();
         let filtered_keys: Vec<String> = all_keys
@@ -147,16 +147,16 @@ impl MemoryPersistence for ProllyMemoryPersistence {
                 }
             })
             .collect();
-        
+
         Ok(filtered_keys)
     }
 
     async fn checkpoint(&mut self, message: &str) -> Result<String, Box<dyn Error>> {
         let mut store = self.store.write().await;
-        
+
         // Create a git commit with the provided message
         let commit_id = store.commit(message)?;
-        
+
         Ok(format!("{}", commit_id))
     }
 }
@@ -185,21 +185,21 @@ impl ProllyMemoryPersistence {
     /// Get memory statistics including git information
     pub async fn get_stats(&self) -> Result<ProllyMemoryStats, Box<dyn Error>> {
         let store = self.store.read().await;
-        
+
         // Get git log to count commits
         let commits = store.log().unwrap_or_default();
         let commit_count = commits.len();
-        
+
         // Get current branch info
         let current_branch = "main".to_string(); // GitKv doesn't expose current branch yet
-        
+
         // Count total keys with our namespace
         let all_keys = store.list_keys("")?;
         let namespace_keys: Vec<_> = all_keys
             .into_iter()
             .filter(|key| key.starts_with(&format!("{}:", self.namespace_prefix)))
             .collect();
-        
+
         Ok(ProllyMemoryStats {
             total_keys: namespace_keys.len(),
             namespace_prefix: self.namespace_prefix.clone(),

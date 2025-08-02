@@ -5,9 +5,9 @@
 [![License](https://img.shields.io/crates/l/prollytree.svg)](https://github.com/yourusername/prollytree/blob/main/LICENSE)
 [![Downloads](https://img.shields.io/crates/d/prollytree.svg)](https://crates.io/crates/prollytree)
 
-A Prolly Tree is a hybrid data structure that combines the features of B-trees and Merkle trees to provide 
-both efficient data access and verifiable integrity. It is specifically designed to handle the requirements 
-of distributed systems and large-scale databases, making indexes syncable and distributable over 
+A Prolly Tree is a hybrid data structure that combines the features of B-trees and Merkle trees to provide
+both efficient data access and verifiable integrity. It is specifically designed to handle the requirements
+of distributed systems and large-scale databases, making indexes syncable and distributable over
 peer-to-peer (P2P) networks.
 
 ## Key Features
@@ -111,23 +111,23 @@ use prollytree::git::GitVersionedKvStore;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize git-backed store
     let mut store = GitVersionedKvStore::init("./my-data")?;
-    
+
     // Set values (automatically stages changes)
     store.set(b"config/api_key", b"secret123")?;
     store.set(b"config/timeout", b"30")?;
-    
+
     // Commit changes
     store.commit("Update API configuration")?;
-    
+
     // Create a branch for experiments
     store.checkout_new_branch("feature/new-settings")?;
     store.set(b"config/timeout", b"60")?;
     store.commit("Increase timeout")?;
-    
+
     // Switch back and see the difference
     store.checkout("main")?;
     let timeout = store.get(b"config/timeout")?; // Returns b"30"
-    
+
     Ok(())
 }
 ```
@@ -143,23 +143,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize SQL-capable storage
     let storage = ProllyStorage::<32>::init("./data")?;
     let mut glue = Glue::new(storage);
-    
+
     // Create table and insert data
     glue.execute("CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)").await?;
     glue.execute("INSERT INTO users VALUES (1, 'Alice', 30)").await?;
     glue.execute("INSERT INTO users VALUES (2, 'Bob', 25)").await?;
-    
+
     // Query with SQL
     let result = glue.execute("SELECT * FROM users WHERE age > 26").await?;
     // Returns: [(1, 'Alice', 30)]
-    
+
     // Time travel query (requires commit)
     glue.storage.commit("Initial user data").await?;
     glue.execute("UPDATE users SET age = 31 WHERE id = 1").await?;
-    
+
     // Query previous version
     let old_data = glue.storage.query_at_commit("HEAD~1", "SELECT * FROM users").await?;
-    
+
     Ok(())
 }
 ```
@@ -176,19 +176,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut memory = AgentMemorySystem::init_with_thread_safe_git(
         "./agent_memory", "assistant_001".to_string(), None
     )?;
-    
+
     // Store conversation in short-term memory
     memory.short_term.store_conversation_turn(
         "session_123", "user", "What's the weather in Tokyo?", None
     ).await?;
-    
+
     // Store facts in semantic memory
     memory.semantic.store_fact(
         "location", "tokyo",
         json!({"timezone": "JST", "temp": "22°C"}),
         0.9, "weather_api"
     ).await?;
-    
+
     // Query memories
     let query = MemoryQuery {
         namespace: None,
@@ -201,11 +201,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         include_expired: false,
     };
     let results = memory.semantic.query(query).await?;
-    
+
     // Create checkpoint
     let commit_id = memory.checkpoint("Weather session").await?;
     println!("Stored {} memories, checkpoint: {}", results.len(), commit_id);
-    
+
     Ok(())
 }
 ```
@@ -219,19 +219,19 @@ use prollytree::storage::InMemoryNodeStorage;
 fn main() {
     let storage = InMemoryNodeStorage::<32>::new();
     let mut tree = ProllyTree::new(storage, Default::default());
-    
+
     // Insert sensitive data
     tree.insert(b"balance:alice".to_vec(), b"1000".to_vec());
     tree.insert(b"balance:bob".to_vec(), b"500".to_vec());
-    
+
     // Generate cryptographic proof
     let proof = tree.generate_proof(b"balance:alice").unwrap();
     let root_hash = tree.root_hash();
-    
+
     // Verify proof (can be done by third party)
     let is_valid = tree.verify_proof(&proof, b"balance:alice", b"1000");
     assert!(is_valid);
-    
+
     // Root hash changes if any data changes
     tree.update(b"balance:alice".to_vec(), b"1100".to_vec());
     let new_root = tree.root_hash();

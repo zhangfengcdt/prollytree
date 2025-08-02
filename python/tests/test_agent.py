@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Test script for ProllyTree Agent Memory System Python bindings."""
 
 import json
@@ -8,15 +21,15 @@ import os
 
 def test_agent_memory_system():
     """Test the agent memory system functionality."""
-    
+
     # Create a temporary directory for the memory store
     with tempfile.TemporaryDirectory() as tmpdir:
         print(f"📁 Creating memory system in: {tmpdir}")
-        
+
         # Initialize the agent memory system
         memory_system = AgentMemorySystem(tmpdir, "test_agent_001")
         print("✅ Agent memory system initialized")
-        
+
         # Test 1: Store conversation turns
         print("\n🧪 Test 1: Short-term memory (conversation)")
         conv_id1 = memory_system.store_conversation_turn(
@@ -26,20 +39,20 @@ def test_agent_memory_system():
             {"source": "chat", "session": "morning"}
         )
         print(f"   Stored user message: {conv_id1}")
-        
+
         conv_id2 = memory_system.store_conversation_turn(
             "thread_123",
             "assistant",
             "I'm doing well, thank you for asking! How can I help you today?"
         )
         print(f"   Stored assistant message: {conv_id2}")
-        
+
         # Retrieve conversation history
         history = memory_system.get_conversation_history("thread_123", limit=10)
         print(f"   Retrieved {len(history)} messages from conversation history")
         for msg in history:
             print(f"   - {msg['created_at']}: {json.loads(msg['content'])}")
-        
+
         # Test 2: Store semantic facts
         print("\n🧪 Test 2: Semantic memory (facts)")
         fact_id = memory_system.store_fact(
@@ -54,14 +67,14 @@ def test_agent_memory_system():
             "user_input"
         )
         print(f"   Stored fact about john_doe: {fact_id}")
-        
+
         # Retrieve facts
         facts = memory_system.get_entity_facts("person", "john_doe")
         print(f"   Retrieved {len(facts)} facts about john_doe")
         for fact in facts:
             print(f"   - Confidence: {fact['confidence']}, Source: {fact['source']}")
             print(f"     Facts: {fact['facts']}")
-        
+
         # Test 3: Store procedures
         print("\n🧪 Test 3: Procedural memory")
         proc_id = memory_system.store_procedure(
@@ -78,27 +91,27 @@ def test_agent_memory_system():
             priority=2
         )
         print(f"   Stored procedure: {proc_id}")
-        
+
         # Get procedures by category
         procedures = memory_system.get_procedures_by_category("task_management")
         print(f"   Retrieved {len(procedures)} procedures in task_management category")
         for proc in procedures:
             print(f"   - {proc['id']}: {proc['content']}")
-        
+
         # Test 4: Create checkpoint
         print("\n🧪 Test 4: Memory checkpoint")
         checkpoint_id = memory_system.checkpoint("Initial test data loaded")
         print(f"   Created checkpoint: {checkpoint_id}")
-        
+
         # Test 5: Optimize memory
         print("\n🧪 Test 5: Memory optimization")
         optimization_report = memory_system.optimize()
         print("   Optimization report:")
         for key, value in optimization_report.items():
             print(f"   - {key}: {value}")
-        
+
         print("\n✅ All tests completed successfully!")
-        
+
         # Test MemoryType enum
         print("\n🧪 Test 6: MemoryType enum")
         print(f"   MemoryType.ShortTerm: {MemoryType.ShortTerm}")

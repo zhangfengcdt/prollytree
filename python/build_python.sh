@@ -46,7 +46,7 @@ if [ "$1" = "--install" ]; then
     echo "📦 Installing wheel..."
     pip install "$WHEEL_PATH" --force-reinstall
     echo "✅ Installed ProllyTree Python bindings"
-    
+
     # Run quick test
     echo "🧪 Running quick test..."
     python3 -c "

@@ -16,7 +16,7 @@ The `recommend <SYMBOL>` command generates AI-powered investment advice through 
 ### 1. Data Collection (Simulated)
 The system simulates fetching real-time market data from three sources:
 - **Bloomberg**: Premium data with 95% trust weight (50ms latency)
-- **Yahoo Finance**: Free tier with 85% trust weight (120ms latency)  
+- **Yahoo Finance**: Free tier with 85% trust weight (120ms latency)
 - **Alpha Vantage**: Rate-limited with 80% trust weight (200ms latency)
 
 ```
@@ -46,7 +46,7 @@ The validator:
 ### 3. Security Checks
 Before processing, the security monitor scans for:
 - SQL injection patterns
-- Malicious payloads  
+- Malicious payloads
 - Data anomalies
 - Manipulation attempts
 
@@ -65,8 +65,8 @@ Action: BUY
 Confidence: 85.0%
 Reasoning: Strong fundamentals with P/E of 28.4...
 
-🤖 AI Analysis: Apple shows robust growth potential with 
-upcoming product launches and services expansion. The current 
+🤖 AI Analysis: Apple shows robust growth potential with
+upcoming product launches and services expansion. The current
 valuation offers an attractive entry point for long-term investors.
 ```
 
@@ -74,10 +74,10 @@ valuation offers an attractive entry point for long-term investors.
 
 ### Recommendations & Profiles
 - `recommend <SYMBOL>` - Get AI recommendation with market analysis
-- `profile` - View/edit client profile  
+- `profile` - View/edit client profile
 - `risk <conservative|moderate|aggressive>` - Set risk tolerance
 
-### Branch Management  
+### Branch Management
 - `branch <NAME>` - Create strategy branch
 - `switch <NAME>` - Change branches
 - `visualize` - Show branch tree with commits
@@ -114,7 +114,7 @@ cargo run -- --storage /tmp/advisor/data advise
 ## Data Simulation Notes
 The system uses realistic market data simulation:
 - Popular stocks (AAPL, MSFT, GOOGL, etc.) have accurate characteristics
-- Prices vary ±1% between sources to simulate real discrepancies  
+- Prices vary ±1% between sources to simulate real discrepancies
 - Network latency is simulated based on API tier
 - All data includes proper timestamps and source attribution
 

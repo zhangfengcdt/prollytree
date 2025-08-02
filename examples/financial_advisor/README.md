@@ -13,7 +13,7 @@ Secure, auditable AI financial advisor with git-like versioned memory and comple
 - Security monitoring with injection detection
 - Multi-source data validation
 
-### Enhanced Financial Advisor  
+### Enhanced Financial Advisor
 Advanced system with full agent memory integration, multi-step workflows, and behavioral learning.
 
 **Key Enhancements:**
@@ -54,7 +54,7 @@ OPENAI_API_KEY="your-key" cargo run -- enhanced --verbose
 
 ### Original Version
 - **Versioned Memory**: Git-like storage with temporal queries
-- **Security First**: Input validation, anomaly detection, audit trails  
+- **Security First**: Input validation, anomaly detection, audit trails
 - **AI Integration**: OpenAI-powered analysis with graceful fallbacks
 - **Real-world Simulation**: Multi-source market data with realistic delays
 
@@ -173,7 +173,7 @@ cargo run --example memory_demo        # Memory system showcase
 ### Educational Value
 This project demonstrates:
 1. **Versioned Memory Systems** - Git-like storage with temporal queries
-2. **Agent Memory Architecture** - Complete 4-type memory implementation  
+2. **Agent Memory Architecture** - Complete 4-type memory implementation
 3. **Complex Workflow Orchestration** - Multi-step analysis with context
 4. **Behavioral Learning** - Client adaptation and outcome-based improvement
 5. **Security Best Practices** - Input validation and comprehensive auditing

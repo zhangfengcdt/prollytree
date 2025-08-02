@@ -54,15 +54,15 @@ memory = AgentMemorySystem("/path/to/memory", "agent_001")
 
 # Short-term memory (conversations)
 memory.store_conversation_turn(
-    "thread_123", 
-    "user", 
+    "thread_123",
+    "user",
     "What's the weather like?",
     {"session": "morning", "platform": "chat"}
 )
 
 memory.store_conversation_turn(
     "thread_123",
-    "assistant", 
+    "assistant",
     "I'd be happy to help with weather information!"
 )
 
@@ -72,10 +72,10 @@ history = memory.get_conversation_history("thread_123", limit=10)
 # Semantic memory (facts about entities)
 memory.store_fact(
     "person",
-    "john_doe", 
+    "john_doe",
     json.dumps({
         "name": "John Doe",
-        "role": "Software Engineer", 
+        "role": "Software Engineer",
         "location": "San Francisco"
     }),
     confidence=0.95,
@@ -182,7 +182,7 @@ pip install prollytree
 #### TreeConfig
 Configuration for ProllyTree instances:
 - `base`: Rolling hash base (default: 4)
-- `modulus`: Rolling hash modulus (default: 64) 
+- `modulus`: Rolling hash modulus (default: 64)
 - `min_chunk_size`: Minimum chunk size (default: 1)
 - `max_chunk_size`: Maximum chunk size (default: 4096)
 - `pattern`: Chunk boundary pattern (default: 0)
@@ -234,7 +234,7 @@ Enum for memory classification: `ShortTerm`, `Semantic`, `Episodic`, `Procedural
 
 ### Versioned Key-Value Store
 
-#### VersionedKvStore  
+#### VersionedKvStore
 Git-backed versioned storage with full branching support:
 
 **Initialization:**
@@ -273,7 +273,7 @@ Run the comprehensive test suite:
 
 ```bash
 cd python/tests
-python test_prollytree.py      # Basic ProllyTree functionality  
+python test_prollytree.py      # Basic ProllyTree functionality
 python test_agent.py           # Agent memory system
 python test_versioned_kv.py    # Versioned key-value store
 ```

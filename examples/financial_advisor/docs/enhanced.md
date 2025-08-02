@@ -147,7 +147,7 @@ advisor.set_current_client("sarah_retired").await?;
 advisor.update_client_risk_profile("sarah_retired", RiskTolerance::Conservative).await?;
 let conservative_rec = advisor.get_enhanced_recommendation("JNJ").await?;
 
-// Client 2: Aggressive young investor  
+// Client 2: Aggressive young investor
 advisor.set_current_client("mike_young").await?;
 advisor.update_client_risk_profile("mike_young", RiskTolerance::Aggressive).await?;
 let aggressive_rec = advisor.get_enhanced_recommendation("NVDA").await?;
