@@ -1,3 +1,17 @@
+/*
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::Path;
@@ -113,13 +127,11 @@ impl MemoryPersistence for InMemoryPersistence {
         Ok(matching_keys)
     }
 
-    async fn checkpoint(&mut self, message: &str) -> Result<String, Box<dyn Error>> {
+    async fn checkpoint(&mut self, _message: &str) -> Result<String, Box<dyn Error>> {
         let commit_id = self.next_commit_id().await;
 
         // For in-memory storage, we just generate a commit ID
         // In a real git-based implementation, this would create an actual commit
-        println!("Prolly tree checkpoint: {} - {}", commit_id, message);
-
         Ok(commit_id)
     }
 }
@@ -127,14 +139,12 @@ impl MemoryPersistence for InMemoryPersistence {
 /// Additional methods specific to prolly tree persistence
 impl InMemoryPersistence {
     /// Create a new branch (for in-memory, this is a no-op)
-    pub async fn create_branch(&mut self, name: &str) -> Result<(), Box<dyn Error>> {
-        println!("Created prolly tree branch: {name}");
+    pub async fn create_branch(&mut self, _name: &str) -> Result<(), Box<dyn Error>> {
         Ok(())
     }
 
     /// Switch to a branch or commit (for in-memory, this is a no-op)
-    pub async fn checkout(&mut self, branch_or_commit: &str) -> Result<(), Box<dyn Error>> {
-        println!("Checked out prolly tree: {branch_or_commit}");
+    pub async fn checkout(&mut self, _branch_or_commit: &str) -> Result<(), Box<dyn Error>> {
         Ok(())
     }
 
@@ -154,8 +164,7 @@ impl InMemoryPersistence {
     }
 
     /// Merge another branch (for in-memory, this is a no-op)
-    pub async fn merge(&mut self, branch: &str) -> Result<String, Box<dyn Error>> {
-        println!("Merged prolly tree branch: {branch}");
+    pub async fn merge(&mut self, _branch: &str) -> Result<String, Box<dyn Error>> {
         // Use a simple timestamp instead of chrono for in-memory implementation
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
@@ -585,7 +594,6 @@ mod tests {
             .await
             .unwrap();
         assert!(!commit_id.is_empty());
-        println!("Created checkpoint: {}", commit_id);
 
         // Verify memories are still accessible after checkpoint
         let retrieved1 = store.get("checkpoint_test1").await.unwrap();
@@ -725,7 +733,6 @@ mod tests {
                 .unwrap();
 
             let duration = start_time.elapsed();
-            println!("{} backend completed in {:?}", backend_name, duration);
 
             // Verify all memories were stored
             for i in 0..10 {

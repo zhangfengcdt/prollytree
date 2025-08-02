@@ -267,11 +267,11 @@ git-prolly diff main feature/preferences
 git-prolly diff main feature/preferences --format=detailed
 # Output: Detailed Key-Value Changes (main -> feature/preferences):
 #         ═══════════════════════════════════════
-#         
+#
 #         Key: pref:123:notifications
 #           Status: Added
 #           Value: "enabled"
-#         
+#
 #         Key: user:123
 #           Status: Modified
 #           Old Value: "John Doe"
@@ -307,7 +307,7 @@ git-prolly show HEAD
 # Output: Commit: f1e2d3c4 - Add user preferences
 #         Author: Developer
 #         Date: 2024-01-15 10:30:00
-#         
+#
 #         Key-Value Changes:
 #           + pref:123:notifications = "enabled"
 #           ~ user:123 = "John Doe" -> "John A. Doe"
@@ -350,7 +350,7 @@ git-prolly history user:123 --format=detailed
 #         Date: 2024-01-15 10:30:00 UTC
 #         Author: Developer
 #         Message: Update user profile
-#         
+#
 #         Commit: a1b2c3d4e5f6789012345678901234567890abcd
 #         Date: 2024-01-15 09:15:00 UTC
 #         Author: Developer

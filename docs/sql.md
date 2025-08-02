@@ -88,7 +88,7 @@ CREATE TABLE products (
     category TEXT
 );
 
-INSERT INTO products VALUES 
+INSERT INTO products VALUES
     (1, 'Laptop', 1200, 'Electronics'),
     (2, 'Book', 25, 'Education');
 EOF
@@ -191,16 +191,16 @@ CREATE TABLE products (
 
 ```sql
 -- Single row insert
-INSERT INTO users (id, name, email) 
+INSERT INTO users (id, name, email)
 VALUES (1, 'Alice Johnson', 'alice@example.com');
 
 -- Multiple row insert
-INSERT INTO users (id, name, email) VALUES 
+INSERT INTO users (id, name, email) VALUES
     (2, 'Bob Smith', 'bob@example.com'),
     (3, 'Charlie Brown', 'charlie@example.com');
 
 -- Insert without specifying columns (must match table structure)
-INSERT INTO products VALUES 
+INSERT INTO products VALUES
     (1, 'Laptop', 1200, true, 'High-performance laptop');
 ```
 
@@ -443,7 +443,7 @@ ORDER BY revenue DESC
 LIMIT 10;
 
 -- Customer purchase history
-SELECT c.name, COUNT(DISTINCT s.id) as purchase_count, 
+SELECT c.name, COUNT(DISTINCT s.id) as purchase_count,
        SUM(s.quantity * s.price) as total_spent
 FROM customers c
 JOIN sales s ON c.id = s.customer_id
@@ -471,7 +471,7 @@ INSERT INTO users_new (id, name, email)
 SELECT id, name, email FROM users;
 
 -- Update new fields
-UPDATE users_new SET 
+UPDATE users_new SET
     created_at = '2024-01-01',
     updated_at = '2024-01-01',
     status = 'active';
@@ -489,7 +489,7 @@ git prolly sql -f migrate_v2.sql
 ```bash
 # Generate daily report
 git prolly sql -o json "
-SELECT 
+SELECT
     DATE(order_date) as date,
     COUNT(*) as orders,
     SUM(quantity * price) as revenue

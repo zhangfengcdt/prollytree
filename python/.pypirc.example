@@ -2,7 +2,7 @@
 # Copy to ~/.pypirc and add your API tokens
 
 [distutils]
-index-servers = 
+index-servers =
     pypi
     testpypi
 

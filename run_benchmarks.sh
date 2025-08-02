@@ -25,7 +25,7 @@ echo ""
 echo "📊 2. Running SQL Benchmarks..."
 cargo bench --bench sql_bench --features sql --quiet -- --quick
 
-echo ""  
+echo ""
 echo "📊 3. Running Git-Prolly Integration Benchmarks..."
 cargo bench --bench git_prolly_bench --features "git sql" --quiet -- --quick
 
