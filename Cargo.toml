@@ -81,7 +81,7 @@ harness = false
 required-features = ["sql"]
 
 [[bench]]
-name = "git_prolly"
+name = "git"
 harness = false
 required-features = ["git", "sql"]
 
@@ -99,14 +99,8 @@ path = "examples/sql.rs"
 required-features = ["sql"]
 
 [[example]]
-name = "diff"
-path = "examples/diff.rs"
-required-features = ["git"]
-
-[[example]]
-name = "merge"
-path = "examples/merge.rs"
-required-features = ["git"]
+name = "versioning"
+path = "examples/versioning.rs"
 
 [[example]]
 name = "storage"
@@ -114,14 +108,6 @@ path = "examples/storage.rs"
 required-features = ["rocksdb_storage"]
 
 [[example]]
-name = "agent_demo"
-path = "examples/agent_demo.rs"
-required-features = ["git", "sql", "rig"]
-
-[[example]]
-name = "agent_context"
-path = "examples/agent_context.rs"
+name = "agent"
+path = "examples/agent.rs"
 required-features = ["git", "sql", "rig", "tui"]
-
-[workspace]
-members = ["examples/financial_advisor"]

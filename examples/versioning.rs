@@ -12,11 +12,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-//! Git-like Tree Merging Example
+//! Git-like Operations Example
 //!
-//! This example demonstrates how to merge two Prolly Trees that have evolved
-//! separately from a common root, similar to git branch merging. It shows
-//! how to handle different types of conflicts and create a unified tree.
+//! This example demonstrates how to use Prolly Trees to implement git-like
+//! operations including diffing and merging. It shows how changes can be
+//! detected and merged between different versions of data structures.
 
 use prollytree::config::TreeConfig;
 use prollytree::diff::DiffResult;
@@ -34,7 +34,7 @@ enum MergeConflict {
 }
 
 fn main() {
-    println!("\x1b[1;36mGit-like Tree Merging Example\x1b[0m\n");
+    println!("\x1b[1;36mGit-like Operations with Prolly Trees\x1b[0m\n");
 
     // Create a shared configuration for consistency
     let config = TreeConfig {
@@ -50,53 +50,115 @@ fn main() {
     };
 
     // ============================================================================
-    // Scenario 1: Fast-forward merge (no conflicts)
+    // Part 1: Git-like Diffing
     // ============================================================================
+    println!("\x1b[1;34m═══ Part 1: Git-like Diffing ═══\x1b[0m\n");
+    demonstrate_diffing(config.clone());
+
+    // ============================================================================
+    // Part 2: Git-like Merging
+    // ============================================================================
+    println!("\n\x1b[1;34m═══ Part 2: Git-like Merging ═══\x1b[0m\n");
+    demonstrate_merging(config);
+
+    // ============================================================================
+    // Summary
+    // ============================================================================
+    println!("\n\x1b[1;36mSummary:\x1b[0m");
+    println!("   \x1b[32m• Prolly Trees enable efficient git-like operations\x1b[0m");
+    println!("   \x1b[32m• Diffing shows exact changes between branches\x1b[0m");
+    println!("   \x1b[32m• Merging supports fast-forward and three-way strategies\x1b[0m");
+    println!("   \x1b[32m• Conflicts can be detected and resolved automatically\x1b[0m");
+    println!("   \x1b[32m• Hash-based verification ensures data integrity\x1b[0m");
+}
+
+fn demonstrate_diffing(config: TreeConfig<32>) {
+    // Create main branch
+    println!("\x1b[1;32mCreating main branch with initial data...\x1b[0m");
+    let storage_main = InMemoryNodeStorage::<32>::default();
+    let mut main_tree = ProllyTree::new(storage_main, config.clone());
+
+    let initial_data = vec![
+        ("file1.txt", "Hello World"),
+        ("file2.txt", "Initial content"),
+        ("config.json", r#"{"version": "1.0", "debug": false}"#),
+        ("readme.md", "# Project\nThis is the main project"),
+        ("src/main.rs", "fn main() { println!(\"Hello\"); }"),
+    ];
+
+    for (key, value) in &initial_data {
+        main_tree.insert(key.as_bytes().to_vec(), value.as_bytes().to_vec());
+    }
+
+    println!(
+        "   \x1b[32mMain branch created with {} files\x1b[0m",
+        initial_data.len()
+    );
+
+    // Create feature branch
+    println!("\n\x1b[1;32mCreating feature branch from main...\x1b[0m");
+    let storage_feature = InMemoryNodeStorage::<32>::default();
+    let mut feature_tree = ProllyTree::new(storage_feature, config.clone());
+
+    // Copy all data from main
+    for (key, value) in &initial_data {
+        feature_tree.insert(key.as_bytes().to_vec(), value.as_bytes().to_vec());
+    }
+
+    // Make changes in feature branch
+    let feature_changes = vec![
+        ("file1.txt", "Hello World - Feature Edition!"),
+        (
+            "config.json",
+            r#"{"version": "1.1", "debug": true, "feature_flag": true}"#,
+        ),
+        (
+            "feature.rs",
+            "pub fn new_feature() { /* implementation */ }",
+        ),
+    ];
+
+    for (key, value) in &feature_changes {
+        feature_tree.insert(key.as_bytes().to_vec(), value.as_bytes().to_vec());
+    }
+
+    feature_tree.delete(b"readme.md");
+
+    println!("   \x1b[32mFeature branch created with modifications\x1b[0m");
+
+    // Perform diff
+    println!("\n\x1b[1;35mDiff: main -> feature\x1b[0m");
+    let diff = main_tree.diff(&feature_tree);
+    print_diff_summary(&diff);
+    analyze_diff(&diff, "Main → Feature");
+}
+
+fn demonstrate_merging(config: TreeConfig<32>) {
+    // Scenario 1: Fast-forward merge
     println!("\x1b[1;32mScenario 1: Fast-forward merge\x1b[0m");
     println!("\x1b[90m═══════════════════════════════════\x1b[0m");
 
     let (main_tree_ff, feature_tree_ff) = create_fast_forward_scenario(config.clone());
-
-    println!("   \x1b[33mBefore merge:\x1b[0m");
-    println!("      Main branch: {} files", main_tree_ff.size());
-    println!("      Feature branch: {} files", feature_tree_ff.size());
-
     let merged_ff = perform_fast_forward_merge(&main_tree_ff, &feature_tree_ff);
+
     println!("   \x1b[32mFast-forward merge completed!\x1b[0m");
     println!("      Merged tree: {} files", merged_ff.size());
-    println!("      \x1b[90mStrategy: Fast-forward (no conflicts)\x1b[0m\n");
 
-    // ============================================================================
-    // Scenario 2: Three-way merge with automatic resolution
-    // ============================================================================
-    println!("\x1b[1;34mScenario 2: Three-way merge (auto-resolvable)\x1b[0m");
-    println!("\x1b[90m═══════════════════════════════════════════════\x1b[0m");
+    // Scenario 2: Three-way merge
+    println!("\n\x1b[1;34mScenario 2: Three-way merge\x1b[0m");
+    println!("\x1b[90m═══════════════════════════════════\x1b[0m");
 
     let (base_tree, branch_a, branch_b) = create_three_way_scenario(config.clone());
-
-    println!("   \x1b[33mBefore merge:\x1b[0m");
-    println!("      Base (common ancestor): {} files", base_tree.size());
-    println!("      Branch A: {} files", branch_a.size());
-    println!("      Branch B: {} files", branch_b.size());
-
     let merged_3way = perform_three_way_merge(&base_tree, &branch_a, &branch_b);
+
     println!("   \x1b[32mThree-way merge completed!\x1b[0m");
     println!("      Merged tree: {} files", merged_3way.size());
-    println!("      \x1b[90mStrategy: Three-way merge (auto-resolved)\x1b[0m\n");
 
-    // ============================================================================
-    // Scenario 3: Merge with conflicts requiring resolution
-    // ============================================================================
-    println!("\x1b[1;31mScenario 3: Merge with conflicts\x1b[0m");
+    // Scenario 3: Merge with conflicts
+    println!("\n\x1b[1;31mScenario 3: Merge with conflicts\x1b[0m");
     println!("\x1b[90m══════════════════════════════════════\x1b[0m");
 
     let (base_conflict, branch_conflict_a, branch_conflict_b) = create_conflict_scenario(config);
-
-    println!("   \x1b[33mBefore merge:\x1b[0m");
-    println!("      Base: {} files", base_conflict.size());
-    println!("      Branch A: {} files", branch_conflict_a.size());
-    println!("      Branch B: {} files", branch_conflict_b.size());
-
     let (conflicts, merged_with_conflicts) =
         detect_and_resolve_conflicts(&base_conflict, &branch_conflict_a, &branch_conflict_b);
 
@@ -112,34 +174,63 @@ fn main() {
     }
 
     println!("      Merged tree: {} files", merged_with_conflicts.size());
-    println!("      \x1b[90mStrategy: Conflict resolution\x1b[0m\n");
+}
 
-    // ============================================================================
-    // Summary and Best Practices
-    // ============================================================================
-    println!("\x1b[1;36mSummary & Best Practices:\x1b[0m");
-    println!("\x1b[90m═══════════════════════════════\x1b[0m");
-    println!("   \x1b[32m1. Fast-forward: When target branch is ahead of source\x1b[0m");
-    println!("   \x1b[34m2. Three-way: When both branches have changes from common base\x1b[0m");
-    println!("   \x1b[31m3. Conflicts: When same data is modified differently\x1b[0m");
-    println!("   \x1b[33m4. Always verify merge results with diff analysis\x1b[0m");
-    println!("   \x1b[35m5. Prolly Trees provide cryptographic verification of merges\x1b[0m");
-    println!("   \x1b[36m6. Each merge creates a new tree with verifiable history\x1b[0m");
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
-    // Show the final verification
-    println!("\n\x1b[1;33mMerge Verification:\x1b[0m");
-    println!(
-        "   \x1b[32mFast-forward hash: {:?}\x1b[0m",
-        merged_ff.get_root_hash()
-    );
-    println!(
-        "   \x1b[34mThree-way hash: {:?}\x1b[0m",
-        merged_3way.get_root_hash()
-    );
-    println!(
-        "   \x1b[31mConflict-resolved hash: {:?}\x1b[0m",
-        merged_with_conflicts.get_root_hash()
-    );
+fn print_diff_summary(diffs: &[DiffResult]) {
+    let (added, removed, modified) = count_diff_types(diffs);
+
+    println!("   \x1b[33mChanges: \x1b[32m+{}\x1b[0m files, \x1b[31m-{}\x1b[0m files, \x1b[34m~{}\x1b[0m files modified", added, removed, modified);
+
+    if diffs.is_empty() {
+        println!("   \x1b[32mNo differences found - branches are identical\x1b[0m");
+    }
+}
+
+fn count_diff_types(diffs: &[DiffResult]) -> (usize, usize, usize) {
+    let mut added = 0;
+    let mut removed = 0;
+    let mut modified = 0;
+
+    for diff in diffs {
+        match diff {
+            DiffResult::Added(_, _) => added += 1,
+            DiffResult::Removed(_, _) => removed += 1,
+            DiffResult::Modified(_, _, _) => modified += 1,
+        }
+    }
+
+    (added, removed, modified)
+}
+
+fn analyze_diff(diffs: &[DiffResult], comparison: &str) {
+    println!("\n\x1b[1;34m{}\x1b[0m", comparison);
+    println!("\x1b[90m───────────────────────────────\x1b[0m");
+
+    if diffs.is_empty() {
+        println!("   No changes detected");
+        return;
+    }
+
+    for diff in diffs {
+        match diff {
+            DiffResult::Added(key, _value) => {
+                let filename = String::from_utf8_lossy(key);
+                println!("   \x1b[32m+ Added: {}\x1b[0m", filename);
+            }
+            DiffResult::Removed(key, _value) => {
+                let filename = String::from_utf8_lossy(key);
+                println!("   \x1b[31m- Removed: {}\x1b[0m", filename);
+            }
+            DiffResult::Modified(key, _old_value, _new_value) => {
+                let filename = String::from_utf8_lossy(key);
+                println!("   \x1b[34m~ Modified: {}\x1b[0m", filename);
+            }
+        }
+    }
 }
 
 fn create_fast_forward_scenario(
@@ -253,12 +344,10 @@ fn perform_fast_forward_merge(
     feature: &ProllyTree<32, InMemoryNodeStorage<32>>,
 ) -> ProllyTree<32, InMemoryNodeStorage<32>> {
     // In a fast-forward merge, we simply adopt the feature branch
-    // since it contains all of main's changes plus additional ones
-
     let storage = InMemoryNodeStorage::<32>::default();
     let mut merged = ProllyTree::new(storage, TreeConfig::default());
 
-    // Copy all data from feature branch (which includes main + new changes)
+    // Copy all data from feature branch
     collect_all_key_values(feature)
         .into_iter()
         .for_each(|(k, v)| {
@@ -375,11 +464,9 @@ fn detect_and_resolve_conflicts(
 fn collect_all_key_values(
     tree: &ProllyTree<32, InMemoryNodeStorage<32>>,
 ) -> Vec<(Vec<u8>, Vec<u8>)> {
-    // This is a simplified implementation
-    // In practice, you'd traverse the tree to collect all key-value pairs
     let mut result = Vec::new();
 
-    // For this example, we'll use the diff against an empty tree to get all entries
+    // Use diff against an empty tree to get all entries
     let empty_storage = InMemoryNodeStorage::<32>::default();
     let empty_tree = ProllyTree::new(empty_storage, TreeConfig::default());
 
