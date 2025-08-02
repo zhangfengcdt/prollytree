@@ -118,8 +118,6 @@ impl MemoryPersistence for SimpleMemoryPersistence {
 
         // For in-memory storage, we just generate a commit ID
         // In a real git-based implementation, this would create an actual commit
-        println!("Prolly tree checkpoint: {} - {}", commit_id, message);
-
         Ok(commit_id)
     }
 }
@@ -128,13 +126,11 @@ impl MemoryPersistence for SimpleMemoryPersistence {
 impl SimpleMemoryPersistence {
     /// Create a new branch (for in-memory, this is a no-op)
     pub async fn create_branch(&mut self, name: &str) -> Result<(), Box<dyn Error>> {
-        println!("Created prolly tree branch: {name}");
         Ok(())
     }
 
     /// Switch to a branch or commit (for in-memory, this is a no-op)
     pub async fn checkout(&mut self, branch_or_commit: &str) -> Result<(), Box<dyn Error>> {
-        println!("Checked out prolly tree: {branch_or_commit}");
         Ok(())
     }
 
@@ -155,7 +151,6 @@ impl SimpleMemoryPersistence {
 
     /// Merge another branch (for in-memory, this is a no-op)
     pub async fn merge(&mut self, branch: &str) -> Result<String, Box<dyn Error>> {
-        println!("Merged prolly tree branch: {branch}");
         // Use a simple timestamp instead of chrono for in-memory implementation
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()

@@ -78,7 +78,6 @@
 //!
 //!     // Retrieve conversation history
 //!     let history = short_term.get_conversation_history("thread_123", None).await?;
-//!     println!("Conversation history: {} messages", history.len());
 //!
 //!     // Commit changes
 //!     short_term.commit("Store initial conversation").await?;
