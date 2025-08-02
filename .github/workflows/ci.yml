@@ -8,17 +8,24 @@ on:
       - main
 
 jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - uses: pre-commit/action@v3.0.1
+
   test:
+    needs: pre-commit
     strategy:
       matrix:
         feature_flags: ["no-default-features", "all-features"]
     runs-on: ubuntu-latest
     steps:
 
-    - uses: actions/checkout@v2
-
-    - name: fmt
-      run: cargo fmt --all -- --check
+    - uses: actions/checkout@v4
 
     - name: build
       run: cargo build --all --verbose
