@@ -1,0 +1,12 @@
+# Requirements for LangGraph Memory Example
+
+# ProllyTree (install from local build)
+# pip install ../../target/wheels/prollytree-*.whl
+
+# LangGraph and LangChain dependencies
+langgraph>=0.2.0
+langchain-core>=0.2.0
+langchain-openai>=0.1.0
+
+# Additional dependencies
+typing-extensions>=4.0.0
