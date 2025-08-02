@@ -13,10 +13,13 @@
 # limitations under the License.
 
 """
-LangGraph + ProllyTree Integration
+LangGraph + ProllyTree Integration with Persistent Memory Workflow
 
-This example demonstrates using ProllyTree as a versioned memory backend
-for LangGraph applications, enabling Git-like versioning of AI agent memory.
+This example demonstrates a complete LangGraph agent workflow using ProllyTree
+as the versioned memory backend, featuring:
+- Cross-thread persistent memory using scratchpad tools
+- State graph workflow with LLM and tool nodes
+- Git-like versioning of all memory operations
 """
 
 import os
@@ -24,11 +27,106 @@ import tempfile
 import json
 import base64
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Annotated
 from prollytree import VersionedKvStore
 
+# LangGraph and LangChain imports
 from langgraph.checkpoint.base import BaseCheckpointSaver, Checkpoint
 from langgraph.store.base import BaseStore
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.tools import tool
+
+
+# State definition for the agent workflow
+class ScratchpadState(TypedDict):
+    """State definition for the scratchpad agent workflow."""
+    messages: Annotated[List, add_messages]
+
+
+# Mock LLM for demonstration (replace with real LLM in production)
+class MockLLM:
+    """Mock LLM that simulates tool calls for demonstration."""
+
+    def invoke(self, messages):
+        """Mock LLM that generates tool calls based on message content."""
+        last_message = messages[-1]
+
+        # If the last message is a ToolMessage, respond normally without tools
+        if isinstance(last_message, ToolMessage):
+            return AIMessage(content="Task completed successfully!")
+
+        # Only generate tool calls for HumanMessage
+        if isinstance(last_message, HumanMessage):
+            content = last_message.content.lower()
+
+            if "write" in content and "scratchpad" in content:
+                # Extract content to write
+                notes = content.split(":")[-1].strip() if ":" in content else content.replace("write to scratchpad", "").strip()
+                return AIMessage(
+                    content="I'll write that to the scratchpad for you.",
+                    tool_calls=[{
+                        "name": "WriteToScratchpad",
+                        "args": {"notes": notes},
+                        "id": f"call_{datetime.now().timestamp()}"
+                    }]
+                )
+            elif "read" in content and "scratchpad" in content:
+                return AIMessage(
+                    content="Let me read from the scratchpad.",
+                    tool_calls=[{
+                        "name": "ReadFromScratchpad",
+                        "args": {},
+                        "id": f"call_{datetime.now().timestamp()}"
+                    }]
+                )
+            elif "search" in content:
+                # Mock search query
+                query = content.replace("search", "").strip()
+                return AIMessage(
+                    content=f"I'll search for: {query}",
+                    tool_calls=[{
+                        "name": "tavily_search",
+                        "args": {"query": query},
+                        "id": f"call_{datetime.now().timestamp()}"
+                    }]
+                )
+
+        return AIMessage(content="I understand. How can I help you with writing to or reading from the scratchpad, or searching for information?")
+
+
+# Mock tools for demonstration
+@tool
+def WriteToScratchpad(notes: str) -> str:
+    """Write notes to the persistent scratchpad."""
+    class Result:
+        def __init__(self, notes):
+            self.notes = notes
+    return Result(notes)
+
+
+@tool
+def ReadFromScratchpad() -> str:
+    """Read notes from the persistent scratchpad."""
+    return "Reading from scratchpad..."
+
+
+@tool
+def tavily_search(query: str) -> str:
+    """Mock search tool that returns search results."""
+    return f"Mock search results for: {query}. Found relevant information about the topic."
+
+
+# Tools lookup dictionary
+tools_by_name = {
+    "WriteToScratchpad": WriteToScratchpad,
+    "ReadFromScratchpad": ReadFromScratchpad,
+    "tavily_search": tavily_search
+}
+
+# Global namespace for cross-thread memory
+namespace = ("global", "scratchpad")
 
 
 class ProllyVersionedMemoryStore(BaseStore):
@@ -181,7 +279,7 @@ class ProllyVersionedMemorySaver(BaseCheckpointSaver):
         super().__init__()
         self.store = store
 
-    def put(self, config: dict, checkpoint: Checkpoint, metadata: dict) -> dict:
+    def put(self, config: dict, checkpoint: Checkpoint, metadata: dict, new_versions: dict = None) -> dict:
         """Save a checkpoint."""
         thread_id = config.get("configurable", {}).get("thread_id", "default")
         checkpoint_ns = config.get("configurable", {}).get("checkpoint_ns", "")
@@ -215,7 +313,7 @@ class ProllyVersionedMemorySaver(BaseCheckpointSaver):
             }
         }
 
-    def get_tuple(self, config: dict) -> Optional[Tuple[Checkpoint, dict, dict]]:
+    def get_tuple(self, config: dict) -> Optional[Tuple[Checkpoint, dict]]:
         """Get a checkpoint tuple."""
         thread_id = config.get("configurable", {}).get("thread_id", "default")
         checkpoint_id = config.get("configurable", {}).get("checkpoint_id")
@@ -234,26 +332,31 @@ class ProllyVersionedMemorySaver(BaseCheckpointSaver):
 
         metadata = self.store.get(("metadata", thread_id), checkpoint_id) or {}
 
-        config = {
+        # Return config with proper structure that LangGraph expects
+        return_config = {
             "configurable": {
                 "thread_id": thread_id,
                 "checkpoint_id": checkpoint_id
             }
         }
 
-        # Create Checkpoint object from data
+        # Create a proper checkpoint dict (not Checkpoint object)
         if isinstance(checkpoint_data, dict):
-            # Extract fields from checkpoint data for Checkpoint constructor
-            checkpoint = Checkpoint(
-                id=checkpoint_data.get('id', checkpoint_id),
-                ts=checkpoint_data.get('ts', ''),
-                channel_values=checkpoint_data.get('channel_values', {}),
-                v=checkpoint_data.get('v', 1)
-            )
+            checkpoint = {
+                "id": checkpoint_data.get('id', checkpoint_id),
+                "ts": checkpoint_data.get('ts', ''),
+                "channel_values": checkpoint_data.get('channel_values', {}),
+                "v": checkpoint_data.get('v', 1)
+            }
         else:
-            checkpoint = Checkpoint() if not checkpoint_data else checkpoint_data
+            checkpoint = {
+                "id": checkpoint_id,
+                "ts": "",
+                "channel_values": {},
+                "v": 1
+            }
 
-        return checkpoint, metadata, config
+        return checkpoint, return_config
 
     def list(self, config: Optional[dict] = None, *, filter: Optional[dict] = None, before: Optional[dict] = None, limit: int = 10) -> List[Tuple[dict, Checkpoint, dict]]:
         """List checkpoints."""
@@ -300,94 +403,177 @@ class ProllyVersionedMemorySaver(BaseCheckpointSaver):
         self.store.commit(f"Pending writes for task {task_id[:8]}")
 
 
-def demonstrate_langgraph_integration():
-    """Demonstrate LangGraph + ProllyTree integration."""
-    print("\n=== LangGraph + ProllyTree Integration Demo ===\n")
+# Workflow node functions
+def llm_call(state: ScratchpadState) -> dict:
+    """LLM node that processes messages and potentially generates tool calls."""
+    messages = state["messages"]
+    llm = MockLLM()
+    response = llm.invoke(messages)
+    return {"messages": [response]}
+
+
+def tool_node_persistent(state: ScratchpadState, store: ProllyVersionedMemoryStore) -> dict:
+    """Execute tool calls with persistent memory storage across threads.
+
+    This version of the tool node uses ProllyTree's persistent store to
+    maintain scratchpad data across different conversation threads, enabling
+    true long-term memory functionality.
+
+    Args:
+        state: Current conversation state with tool calls
+        store: Persistent store for cross-thread memory
+
+    Returns:
+        Dictionary with tool results
+    """
+    result = []
+    last_message = state["messages"][-1]
+
+    if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
+        return {"messages": []}
+
+    for tool_call in last_message.tool_calls:
+        tool = tools_by_name[tool_call["name"]]
+        observation = tool.invoke(tool_call["args"])
+
+        if tool_call["name"] == "WriteToScratchpad":
+            # Save to persistent store for cross-thread access
+            notes = observation.notes
+            result.append(ToolMessage(content=f"✅ Wrote to scratchpad: {notes}", tool_call_id=tool_call["id"]))
+            store.put(namespace, "scratchpad", {"scratchpad": notes})
+            store.commit(f"Scratchpad updated: {notes[:50]}...")
+
+        elif tool_call["name"] == "ReadFromScratchpad":
+            # Retrieve from persistent store across threads
+            stored_data = store.get(namespace, "scratchpad")
+            notes = stored_data["scratchpad"] if stored_data else "No notes found"
+            result.append(ToolMessage(content=f"📖 Notes from scratchpad: {notes}", tool_call_id=tool_call["id"]))
+
+        elif tool_call["name"] == "tavily_search":
+            # Write search tool observation to messages
+            result.append(ToolMessage(content=f"🔍 {observation}", tool_call_id=tool_call["id"]))
+
+    return {"messages": result}
+
+
+def should_continue(state: ScratchpadState) -> str:
+    """Determine whether to continue to tool node or end."""
+    last_message = state["messages"][-1]
+    if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+        return "tool_node"
+    return END
+
+
+def create_persistent_memory_workflow(store: ProllyVersionedMemoryStore):
+    """Create a LangGraph workflow with persistent memory using ProllyTree."""
+
+    # Build persistent memory workflow
+    agent_builder = StateGraph(ScratchpadState)
+
+    # Add nodes
+    agent_builder.add_node("llm_call", llm_call)
+    agent_builder.add_node("tool_node", lambda state: tool_node_persistent(state, store))
+
+    # Define workflow edges
+    agent_builder.add_edge(START, "llm_call")
+    agent_builder.add_conditional_edges("llm_call", should_continue, {"tool_node": "tool_node", END: END})
+    agent_builder.add_edge("tool_node", "llm_call")
+
+    # Compile with just the store (no checkpointer to avoid complexity)
+    agent = agent_builder.compile(store=store)
+
+    return agent
+
+
+def demonstrate_persistent_memory_workflow():
+    """Demonstrate the complete persistent memory workflow."""
+    print("\n=== LangGraph + ProllyTree Persistent Memory Workflow ===\n")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         store_path = os.path.join(tmpdir, "langgraph_memory")
 
-        # Initialize store and saver
+        # Initialize store
         store = ProllyVersionedMemoryStore(store_path)
-        saver = ProllyVersionedMemorySaver(store)
 
-        # Simulate conversation threads
-        print("📝 Thread 1: Initial conversation")
-        checkpoint1 = Checkpoint(
-            id="ckpt_001",
-            ts="2025-01-15T10:00:00",
-            channel_values={
-                "messages": ["Hello", "How can I help you today?"],
-                "context": {"topic": "greeting", "user": "alice"}
-            }
-        )
-        config1 = {"configurable": {"thread_id": "conv_alice_001"}}
-        metadata1 = {"user": "alice", "session": "morning", "timestamp": datetime.now().isoformat()}
+        # Create the agent workflow
+        agent = create_persistent_memory_workflow(store)
 
-        saver.put(config1, checkpoint1, metadata1)
+        print("🎯 === Thread 1: Writing to scratchpad ===")
+        config1 = {"configurable": {"thread_id": "research_session_1"}}
 
-        print("\n💻 Thread 1: Continuing conversation")
-        checkpoint2 = Checkpoint(
-            id="ckpt_002",
-            ts="2025-01-15T10:05:00",
-            channel_values={
-                "messages": ["Hello", "How can I help you today?", "Tell me about AI", "AI is fascinating..."],
-                "context": {"topic": "ai_discussion", "user": "alice"}
-            }
-        )
-        metadata2 = {"user": "alice", "session": "morning", "timestamp": datetime.now().isoformat()}
+        # Thread 1: Write research findings to scratchpad
+        state1 = agent.invoke({
+            "messages": [HumanMessage(content="Write to scratchpad: Commonwealth Fusion Systems raised $84M Series A in 2024 for fusion energy research")]
+        }, config1)
 
-        saver.put(config1, checkpoint2, metadata2)
+        print("📝 Thread 1 Messages:")
+        for msg in state1['messages']:
+            if isinstance(msg, HumanMessage):
+                print(f"   👤 Human: {msg.content}")
+            elif isinstance(msg, AIMessage):
+                print(f"   🤖 AI: {msg.content}")
+            elif isinstance(msg, ToolMessage):
+                print(f"   🛠️  Tool: {msg.content}")
 
-        print("\n🔀 Thread 2: Different user session")
-        checkpoint3 = Checkpoint(
-            id="ckpt_003",
-            ts="2025-01-15T11:00:00",
-            channel_values={
-                "messages": ["Hi there", "Welcome! What would you like to know?"],
-                "context": {"topic": "greeting", "user": "bob"}
-            }
-        )
-        config2 = {"configurable": {"thread_id": "conv_bob_001"}}
-        metadata3 = {"user": "bob", "session": "afternoon", "timestamp": datetime.now().isoformat()}
+        print("\n🔄 === Thread 2: Reading from scratchpad ===")
+        config2 = {"configurable": {"thread_id": "analysis_session_2"}}
 
-        saver.put(config2, checkpoint3, metadata3)
+        # Thread 2: Read from scratchpad (different thread, same memory)
+        state2 = agent.invoke({
+            "messages": [HumanMessage(content="Read from scratchpad")]
+        }, config2)
 
-        # Demonstrate cross-thread memory
-        print("\n🔍 Cross-thread shared memory:")
-        store.put(("shared", "global"), "current_model", {"name": "gpt-4", "temperature": 0.7})
-        store.put(("shared", "global"), "system_prompt", {"content": "You are a helpful assistant"})
-        store.commit("Shared configuration updated")
+        print("📖 Thread 2 Messages:")
+        for msg in state2['messages']:
+            if isinstance(msg, HumanMessage):
+                print(f"   👤 Human: {msg.content}")
+            elif isinstance(msg, AIMessage):
+                print(f"   🤖 AI: {msg.content}")
+            elif isinstance(msg, ToolMessage):
+                print(f"   🛠️  Tool: {msg.content}")
 
-        # Thread 1 reads shared memory
-        print("\n📖 Thread 1 reading shared configuration:")
-        model_config = store.get(("shared", "global"), "current_model")
-        system_prompt = store.get(("shared", "global"), "system_prompt")
-        print(f"   Model: {model_config}")
-        print(f"   System: {system_prompt}")
+        print("\n🔄 === Thread 1: Continuing research ===")
+        # Thread 1: Add more information
+        state1_cont = agent.invoke({
+            "messages": [HumanMessage(content="Write to scratchpad: Founded by MIT scientists, targeting 2032 for first fusion power plant")]
+        }, config1)
 
-        # Retrieve checkpoints
-        print("\n🔄 Retrieving latest checkpoint for Thread 1:")
-        result = saver.get_tuple(config1)
-        if result:
-            checkpoint, metadata, config = result
-            print(f"   Checkpoint ID: {checkpoint['id']}")
-            print(f"   Messages: {len(checkpoint['channel_values'].get('messages', []))} messages")
-            print(f"   Context: {checkpoint['channel_values'].get('context', {})}")
+        print("📝 Thread 1 Continuation:")
+        for msg in state1_cont['messages'][-3:]:  # Show last 3 messages
+            if isinstance(msg, HumanMessage):
+                print(f"   👤 Human: {msg.content}")
+            elif isinstance(msg, AIMessage):
+                print(f"   🤖 AI: {msg.content}")
+            elif isinstance(msg, ToolMessage):
+                print(f"   🛠️  Tool: {msg.content}")
 
-        # List all checkpoints
-        print("\n📋 All checkpoints:")
-        all_checkpoints = saver.list(limit=10)
-        for config, checkpoint, metadata in all_checkpoints:
-            thread = config["configurable"]["thread_id"]
-            user = metadata.get("user", "unknown")
-            print(f"   - Thread {thread}: {checkpoint['id']} (user: {user})")
+        print("\n🔄 === Thread 3: New user reading latest research ===")
+        config3 = {"configurable": {"thread_id": "review_session_3"}}
 
-        # Show commit history
+        # Thread 3: Different user reading latest research
+        state3 = agent.invoke({
+            "messages": [HumanMessage(content="Read from scratchpad")]
+        }, config3)
+
+        print("📖 Thread 3 Messages:")
+        for msg in state3['messages']:
+            if isinstance(msg, HumanMessage):
+                print(f"   👤 Human: {msg.content}")
+            elif isinstance(msg, AIMessage):
+                print(f"   🤖 AI: {msg.content}")
+            elif isinstance(msg, ToolMessage):
+                print(f"   🛠️  Tool: {msg.content}")
+
         print("\n📚 Git-like commit history:")
         for commit in store.history(10):
             timestamp = datetime.fromtimestamp(commit['timestamp'])
             print(f"   {commit['id'][:8]} - {commit['message']} ({timestamp.strftime('%H:%M:%S')})")
+
+        print("\n📊 Thread summary:")
+        print(f"   • Thread 1: {len(state1['messages'])} initial messages + {len(state1_cont['messages'])} continuation messages")
+        print(f"   • Thread 2: {len(state2['messages'])} messages")
+        print(f"   • Thread 3: {len(state3['messages'])} messages")
+        print("   • All threads share the same persistent scratchpad memory")
 
 
 def main():
@@ -397,16 +583,17 @@ def main():
     print("=" * 70)
 
     try:
-        demonstrate_langgraph_integration()
+        demonstrate_persistent_memory_workflow()
 
-        print("\n" + "=" * 70)
-        print("✅ Demo Complete! Key Features:")
+        print("\n" + "=" * 80)
+        print("✅ Demo Complete! Key Features Demonstrated:")
+        print("   • Cross-thread persistent memory using scratchpad tools")
+        print("   • StateGraph workflow with LLM and tool nodes")
         print("   • Versioned checkpoint storage with Git-like commits")
-        print("   • Cross-thread shared memory for global state")
         print("   • Complete audit trail of all memory operations")
-        print("   • Content-addressed storage with deduplication")
-        print("   • Native LangGraph BaseStore and BaseCheckpointSaver integration")
-        print("=" * 70)
+        print("   • ProllyTree as BaseStore and BaseCheckpointSaver backend")
+        print("   • Real LangGraph agent workflow pattern")
+        print("=" * 80)
 
     except ImportError as e:
         print(f"\n❌ Error: {e}")
