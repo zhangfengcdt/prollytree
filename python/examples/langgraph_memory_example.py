@@ -48,18 +48,84 @@ class ScratchpadState(TypedDict):
     messages: Annotated[List, add_messages]
 
 
-# Create OpenAI LLM with tools
-def create_llm_with_tools():
-    """Create OpenAI LLM bound with tools."""
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",  # Use the more affordable mini model
-        temperature=0.1,
-        max_tokens=150
-    )
+# Mock LLM for fallback when OpenAI key is not available
+class MockLLM:
+    """Mock LLM that simulates tool calls for demonstration."""
 
-    # Bind tools to the LLM
-    tools = [WriteToScratchpad, ReadFromScratchpad, tavily_search]
-    return llm.bind_tools(tools)
+    def invoke(self, messages):
+        """Mock LLM that generates tool calls based on message content."""
+        last_message = messages[-1]
+
+        # If the last message is a ToolMessage, respond normally without tools
+        if isinstance(last_message, ToolMessage):
+            return AIMessage(content="Task completed successfully!")
+
+        # Only generate tool calls for HumanMessage
+        if isinstance(last_message, HumanMessage):
+            content = last_message.content.lower()
+
+            if "write" in content and "scratchpad" in content:
+                # Extract content to write
+                notes = content.split(":")[-1].strip() if ":" in content else content.replace("write to scratchpad", "").strip()
+                return AIMessage(
+                    content="I'll write that to the scratchpad for you.",
+                    tool_calls=[{
+                        "name": "WriteToScratchpad",
+                        "args": {"notes": notes},
+                        "id": f"call_{datetime.now().timestamp()}"
+                    }]
+                )
+            elif "read" in content and "scratchpad" in content:
+                return AIMessage(
+                    content="Let me read from the scratchpad.",
+                    tool_calls=[{
+                        "name": "ReadFromScratchpad",
+                        "args": {},
+                        "id": f"call_{datetime.now().timestamp()}"
+                    }]
+                )
+            elif "search" in content:
+                # Mock search query
+                query = content.replace("search", "").strip()
+                return AIMessage(
+                    content=f"I'll search for: {query}",
+                    tool_calls=[{
+                        "name": "tavily_search",
+                        "args": {"query": query},
+                        "id": f"call_{datetime.now().timestamp()}"
+                    }]
+                )
+
+        return AIMessage(content="I understand. How can I help you with writing to or reading from the scratchpad, or searching for information?")
+
+
+# Create LLM with tools (OpenAI or fallback to mock)
+def create_llm_with_tools():
+    """Create LLM bound with tools. Uses OpenAI if API key is available, otherwise falls back to mock."""
+    import os
+
+    # Check if OpenAI API key is available
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",  # Use the more affordable mini model
+                temperature=0.1,
+                max_tokens=150
+            )
+
+            # Bind tools to the LLM
+            tools = [WriteToScratchpad, ReadFromScratchpad, tavily_search]
+            print("🤖 Using OpenAI GPT-4o-mini")
+            return llm.bind_tools(tools)
+        except Exception as e:
+            print(f"⚠️  OpenAI initialization failed: {e}")
+            print("🔄 Falling back to mock LLM")
+    else:
+        print("⚠️  No OpenAI API key found (OPENAI_API_KEY environment variable)")
+        print("🔄 Using mock LLM for demonstration")
+
+    # Fallback to mock LLM
+    return MockLLM()
 
 
 # Mock tools for demonstration
