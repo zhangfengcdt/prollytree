@@ -253,7 +253,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn handle_init(path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let target_path =
-        path.unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        path.unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from("../..")));
 
     println!("Initializing ProllyTree KV store in {target_path:?}...");
 

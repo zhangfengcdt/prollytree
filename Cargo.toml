@@ -68,7 +68,7 @@ tui = ["dep:ratatui", "dep:crossterm", "dep:tokio"]
 
 [[bin]]
 name = "git-prolly"
-path = "src/bin/git-prolly.rs"
+path = "src/git/git-prolly.rs"
 required-features = ["git", "sql"]
 
 [[bench]]
