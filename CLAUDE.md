@@ -1,0 +1,204 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+ProllyTree is a probabilistic tree data structure that combines B-trees and Merkle trees, implemented in Rust with Python bindings. It provides efficient data access with cryptographic verification, designed for distributed systems, version control, and AI memory systems.
+
+## Core Architecture
+
+### Language & Framework
+- **Primary Language**: Rust (edition 2021)
+- **Python Bindings**: Available via PyO3 (Python 3.8+)
+- **Binary**: `git-prolly` CLI tool for Git-like versioned key-value storage
+
+### Key Components
+- **Core Tree**: `src/tree.rs` - Probabilistic B-tree implementation with Merkle hashing
+- **Storage Backends**: In-memory, RocksDB, and Git-backed storage options
+- **Git Integration**: `src/git/` - Git-like version control for key-value data
+- **SQL Support**: `src/sql.rs` - GlueSQL integration for SQL queries on tree data
+- **Agent Memory**: `src/agent/` - AI agent memory system with semantic, episodic, and working memory
+- **Python Module**: `src/python.rs` - PyO3 bindings for Python integration
+
+### Feature Flags
+- `git`: Git-backed versioned storage
+- `sql`: SQL query support via GlueSQL
+- `rig`: Rig framework integration for AI agents
+- `python`: Python bindings
+- `rocksdb_storage`: RocksDB persistent storage
+- `tui`: Terminal UI for interactive usage
+
+## Common Commands
+
+### Build & Development
+```bash
+# Build the project
+cargo build
+
+# Build with all features
+cargo build --all-features
+
+# Build release version with optimizations
+cargo build --release
+
+# Build specific features
+cargo build --features "git sql"
+
+# Build the git-prolly CLI tool
+cargo build --features "git sql" --bin git-prolly
+```
+
+### Testing
+```bash
+# Run all tests
+cargo test
+
+# Run specific test
+cargo test test_name
+
+# Run tests with output
+cargo test -- --nocapture
+
+# Run tests for specific module
+cargo test --lib tree::tests
+
+# Run with specific features
+cargo test --features "git sql"
+```
+
+### Code Quality
+```bash
+# Format code
+cargo fmt
+
+# Check formatting without changes
+cargo fmt -- --check
+
+# Run linter
+cargo clippy --all
+
+# Check code without building
+cargo check
+
+# Generate documentation
+cargo doc --document-private-items --no-deps
+```
+
+### Python Development
+```bash
+# Build Python bindings
+./python/build_python.sh
+
+# Build and install Python bindings
+./python/build_python.sh --install
+
+# Run Python tests (after building)
+python -m pytest python/tests/
+
+# Run Python examples
+cd python/examples && ./run_examples.sh
+```
+
+### Git-Prolly CLI Usage
+```bash
+# Initialize a new repository
+./target/debug/git-prolly init
+
+# Set key-value pairs
+./target/debug/git-prolly set key1 value1
+./target/debug/git-prolly set key2 value2
+
+# Commit changes
+./target/debug/git-prolly commit -m "Initial data"
+
+# List all keys
+./target/debug/git-prolly list
+./target/debug/git-prolly list --values  # Include values
+./target/debug/git-prolly list --graph   # Show tree structure
+
+# Get specific value
+./target/debug/git-prolly get key1
+
+# View commit history
+./target/debug/git-prolly log
+./target/debug/git-prolly log --limit 5
+
+# SQL queries
+./target/debug/git-prolly sql "CREATE TABLE users (id INTEGER, name TEXT)"
+./target/debug/git-prolly sql "INSERT INTO users VALUES (1, 'Alice')"
+./target/debug/git-prolly sql "SELECT * FROM users"
+```
+
+### Benchmarking
+```bash
+# Run tree benchmarks
+cargo bench --bench tree
+
+# Run SQL benchmarks
+cargo bench --bench sql
+
+# Run Git benchmarks
+cargo bench --bench git
+```
+
+## Testing Patterns
+
+### Rust Tests
+- Unit tests are in the same file as the code using `#[cfg(test)]` modules
+- Integration tests would go in `tests/` directory (currently not present)
+- Use `RUST_BACKTRACE=1` for debugging test failures
+
+### Python Tests
+- Test files in `python/tests/`
+- Use pytest framework
+- Ensure Python bindings are built before running tests
+
+## Important Implementation Details
+
+### Tree Operations
+- The tree uses probabilistic balancing based on content hashes
+- Node splitting is determined by hash thresholds, not fixed size
+- All operations maintain Merkle tree properties for verification
+
+### Storage Abstraction
+- `NodeStorage` trait allows pluggable storage backends
+- Each backend implements get/put operations for nodes
+- Git backend stores nodes as Git objects for version control
+
+### Memory Management
+- Tree uses reference counting for node sharing
+- LRU cache available for frequently accessed nodes
+- Python bindings handle memory safely through PyO3
+
+### Concurrency
+- Thread-safe variants available for multi-threaded access
+- Agent memory system uses Tokio for async operations
+- Git operations use file locking for concurrent access
+
+## Common Pitfalls & Solutions
+
+### Building Issues
+- Ensure Rust toolchain is installed: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- For Python bindings, install maturin: `pip install maturin`
+- RocksDB feature requires system libraries on some platforms
+
+### Testing
+- Some tests require Git to be configured: `git config user.name "Test"` and `git config user.email "test@example.com"`
+- SQL tests may create temporary databases in `/tmp`
+- Agent tests may require OPENAI_API_KEY environment variable (can be dummy value for tests)
+
+### Performance
+- Use batch operations when inserting multiple keys
+- Enable LRU cache for read-heavy workloads
+- Consider RocksDB backend for large datasets
+
+## Project Dependencies
+
+### Critical Dependencies
+- `sha2`: Cryptographic hashing for Merkle tree
+- `serde` & `bincode`: Serialization for node storage
+- `gix`: Git integration (optional feature)
+- `gluesql-core`: SQL query engine (optional feature)
+- `pyo3`: Python bindings (optional feature)
+- `rocksdb`: Persistent storage backend (optional feature)
