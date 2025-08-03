@@ -23,7 +23,11 @@ if ./python/build_python.sh --install; then
     fi
 
     echo ""
-    echo "🚀 Running ProllyTree memory demo..."
+    echo "🚀 Running basic memory usage example..."
+    python basic_usage.py
+
+    echo ""
+    echo "🚀 Running LangGraph memory example..."
     python langgraph_prolly.py
 else
     echo "❌ Build failed. Please check the error messages above."
