@@ -20,6 +20,99 @@ as the versioned memory backend, featuring:
 - Cross-thread persistent memory using scratchpad tools
 - State graph workflow with LLM and tool nodes
 - Git-like versioning of all memory operations
+
+Architecture Diagram:
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                    LangGraph + ProllyTree Persistent Memory Workflow                    │
+│                                  (langgraph_prolly.py)                                  │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  ProllyTree Backend                                     │
+│  ┌─────────────────────────────────┐    ┌─────────────────────────────────────────────┐ │
+│  │   ProllyVersionedMemoryStore    │    │      ProllyVersionedMemorySaver             │ │
+│  │                                 │    │                                             │ │
+│  │  • Cross-thread memory          │    │  • Conversation checkpoints                 │ │
+│  │  • Scratchpad persistence       │    │  • Git-like versioned commits               │ │
+│  │  • BaseStore interface          │    │  • BaseCheckpointSaver interface            │ │
+│  └─────────────────────────────────┘    └─────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+                                           │
+                                           ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   StateGraph Workflow                                  │
+│                                                                                        │
+│    ┌─────────┐                                                                         │
+│    │  START  │                                                                         │
+│    └────┬────┘                                                                         │
+│         │                                                                              │
+│         ▼                                                                              │
+│  ┌─────────────────┐                                                                   │
+│  │    llm_call     │ ◄─────────────────────────────────────────┐                       │
+│  │                 │                                           │                       │
+│  │ • OpenAI GPT-4o │                                           │                       │
+│  │   OR Mock LLM   │                                           │                       │
+│  │ • Process msgs  │                                           │                       │
+│  │ • Generate tool │                                           │                       │
+│  │   calls         │                                           │                       │
+│  └─────────┬───────┘                                           │                       │
+│            │                                                   │                       │
+│            ▼                                                   │                       │
+│   ┌─────────────────┐                                          │                       │
+│   │ should_continue │                                          │                       │
+│   │   (conditional) │                                          │                       │
+│   └─────────┬───────┘                                          │                       │
+│             │                                                  │                       │
+│     ┌───────┴───────┐                                          │                       │
+│     │               │                                          │                       │
+│     ▼               ▼                                          │                       │
+│ ┌───────┐    ┌─────────────────┐                               │                       │
+│ │  END  │    │   tool_node     │───────────────────────────────┘                       │
+│ └───────┘    │   (persistent)  │                                                       │
+│              │                 │                                                       │
+│              │ Tools:          │                                                       │
+│              │ • WriteToScratchpad ──────────┐                                         │
+│              │ • ReadFromScratchpad ─────────┼──────┐                                  │
+│              │ • tavily_search               │      │                                  │
+│              └───────────────────────────────┘      │                                  │
+│                                                     │                                  │
+└─────────────────────────────────────────────────────┼──────────────────────────────────┘
+                                                      │
+                                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                           Cross-Thread Memory Persistence                               │
+│                                                                                         │
+│  Thread 1 (research_session_1)     Thread 2 (analysis_session_2)    Thread 3 (review)   │
+│  ┌─────────────────────────┐       ┌─────────────────────────┐      ┌─────────────────┐ │
+│  │ "Write to scratchpad:   │       │ "Read from scratchpad"  │      │ "Read from      │ │
+│  │  Commonwealth Fusion    │       │                         │      │  scratchpad"    │ │
+│  │  Systems raised $84M"   │       │ ← Reads shared memory   │      │                 │ │
+│  │                         │       │   from Thread 1         │      │ ← Reads latest  │ │
+│  │ Writes to global store  │───────┼─────────────────────────┼──────┼─ shared memory  │ │
+│  └─────────────────────────┘       └─────────────────────────┘      └─────────────────┘ │
+│                                                                                         │
+│  Global Namespace: ("global", "scratchpad")                                             │
+│  Key: "scratchpad"                                                                      │
+│  Value: Latest research notes (persists across all threads)                             │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                Git-like Commit History                                  │
+│                                                                                         │
+│  commit_id[:8] - Scratchpad updated: commonwealth fusion systems...  (timestamp)        │
+│  commit_id[:8] - Scratchpad updated: founded by mit scientists...    (timestamp)        │
+│  commit_id[:8] - Checkpoint saved for thread research_session_1      (timestamp)        │
+│  commit_id[:8] - Checkpoint saved for thread analysis_session_2      (timestamp)        │
+│  commit_id[:8] - Initial commit                                      (timestamp)        │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+
+Key Features:
+• Cross-thread persistent memory using ProllyTree as BaseStore
+• Conversation checkpointing using ProllyTree as BaseCheckpointSaver
+• Git-like versioning with commit history for all operations
+• OpenAI integration with automatic fallback to mock LLM
+• StateGraph workflow: START → llm_call → (conditional) → tool_node → llm_call → END
+• Tools execute with persistent storage across conversation threads
 """
 
 import os
