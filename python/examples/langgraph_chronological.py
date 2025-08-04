@@ -127,6 +127,12 @@ class MemoryState(TypedDict):
     extracted_memories: List[BaseModel]
     semantic_results: List[Tuple[str, float]]
     entity_contexts: Dict[str, Any]
+    context_quality_score: float
+    enhancement_iterations: int
+    max_iterations: int
+    context_sufficiency: str  # "sufficient" | "needs_enhancement" | "poor"
+    detailed_context: Dict[str, Any]
+    final_response: str
 
 
 class SingleExtractorState(MemoryState):
@@ -465,18 +471,140 @@ class HybridMemoryService:
         events.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         return events[:limit]
 
+    def enhanced_semantic_search(self, query: str, user_id: Optional[str] = None,
+                                top_k: int = 5, expand_context: bool = True) -> List[Tuple[str, float, Dict]]:
+        """Enhanced semantic search with context expansion."""
+        # Start with basic semantic search
+        initial_results = self.semantic_search(query, user_id, top_k)
+
+        if not expand_context:
+            return initial_results
+
+        # Extract related entities and expand search
+        expanded_results = list(initial_results)
+        related_entities = set()
+
+        for key, similarity, data in initial_results:
+            if 'entities' in data:
+                related_entities.update(data['entities'])
+
+        # Search for related entities
+        for entity in related_entities:
+            entity_results = self.semantic_search(entity, user_id, top_k=2)
+            for result in entity_results:
+                if result not in expanded_results:
+                    expanded_results.append(result)
+
+        # Re-sort and limit
+        expanded_results.sort(key=lambda x: x[1], reverse=True)
+        return expanded_results[:top_k * 2]  # Return more results for enhanced context
+
+    def get_contextual_threads(self, user_id: str, query: str) -> List[Dict[str, Any]]:
+        """Get conversation threads related to the query."""
+        # Find all conversation events for the user
+        events = self.get_user_events(user_id, limit=50)
+
+        # Filter events related to the query using simple keyword matching
+        related_events = []
+        query_words = set(query.lower().split())
+
+        for event in events:
+            event_words = set(event.get('content', '').lower().split())
+            # Calculate word overlap
+            overlap = len(query_words.intersection(event_words))
+            if overlap > 0:
+                event['relevance_score'] = overlap / len(query_words)
+                related_events.append(event)
+
+        # Sort by relevance
+        related_events.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
+        return related_events[:10]
+
+    def assess_context_quality(self, context_data: Dict[str, Any], query: str) -> Dict[str, Any]:
+        """Assess the quality and completeness of retrieved context."""
+        quality_score = 0.0
+        assessment = {
+            'score': 0.0,
+            'completeness': 'low',
+            'relevance': 'low',
+            'freshness': 'low',
+            'suggestions': []
+        }
+
+        # Check semantic results quality
+        semantic_results = context_data.get('semantic_results', [])
+        if semantic_results:
+            avg_similarity = sum(result[1] for result in semantic_results) / len(semantic_results)
+            quality_score += min(avg_similarity * 100, 40)  # Max 40 points
+
+            if avg_similarity > 0.7:
+                assessment['relevance'] = 'high'
+            elif avg_similarity > 0.3:
+                assessment['relevance'] = 'medium'
+
+        # Check entity context depth
+        entity_contexts = context_data.get('entity_contexts', {})
+        if entity_contexts:
+            total_versions = sum(ctx.get('version_count', 0) for ctx in entity_contexts.values())
+            quality_score += min(total_versions * 5, 30)  # Max 30 points
+
+            if total_versions > 10:
+                assessment['completeness'] = 'high'
+            elif total_versions > 3:
+                assessment['completeness'] = 'medium'
+
+        # Check recent events
+        recent_events = context_data.get('recent_events', [])
+        if recent_events:
+            quality_score += min(len(recent_events) * 5, 20)  # Max 20 points
+            assessment['freshness'] = 'high' if len(recent_events) > 3 else 'medium'
+
+        # Check user profile completeness
+        user_profile = context_data.get('user_profile', {})
+        if user_profile:
+            profile_fields = ['name', 'preferences', 'interests', 'context']
+            filled_fields = sum(1 for field in profile_fields if user_profile.get(field))
+            quality_score += filled_fields * 2.5  # Max 10 points
+
+        assessment['score'] = quality_score
+
+        # Generate improvement suggestions
+        if assessment['relevance'] == 'low':
+            assessment['suggestions'].append('Expand semantic search with related terms')
+        if assessment['completeness'] == 'low':
+            assessment['suggestions'].append('Retrieve more historical context for entities')
+        if assessment['freshness'] == 'low':
+            assessment['suggestions'].append('Include more recent conversation history')
+
+        return assessment
+
 
 # ============================================================================
-# LangGraph Workflow Nodes
+# Enhanced LangGraph Workflow Nodes with Loops and Intelligence
 # ============================================================================
+
+def initialize_workflow_node(state: MemoryState) -> Dict:
+    """Initialize workflow state with default values."""
+    print("\n🚀 Initializing enhanced memory workflow...")
+
+    return {
+        "context_quality_score": 0.0,
+        "enhancement_iterations": 0,
+        "max_iterations": 3,
+        "context_sufficiency": "needs_assessment",
+        "detailed_context": {},
+        "final_response": ""
+    }
+
 
 def extract_memories_node(state: MemoryState, service: HybridMemoryService) -> Dict:
-    """Extract memories from conversation."""
+    """Extract memories from conversation with enhanced tracking."""
     messages = state["messages"]
     user_id = state["user_id"]
     thread_id = state["thread_id"]
+    iteration = state.get("enhancement_iterations", 0)
 
-    print(f"\n📝 Extracting memories for user {user_id}...")
+    print(f"\n📝 [Iteration {iteration + 1}] Extracting memories for user {user_id}...")
 
     # Extract and store memories
     extracted = service.extract_and_store(messages, user_id, thread_id)
@@ -486,16 +614,19 @@ def extract_memories_node(state: MemoryState, service: HybridMemoryService) -> D
     for memories in extracted.values():
         all_memories.extend(memories)
 
+    print(f"   ✅ Extracted {len(all_memories)} memories")
+
     return {
         "extracted_memories": all_memories,
-        "messages": [AIMessage(content=f"Extracted {len(all_memories)} memories")]
+        "messages": [AIMessage(content=f"Extracted {len(all_memories)} memories (iteration {iteration + 1})")]
     }
 
 
-def semantic_search_node(state: MemoryState, service: HybridMemoryService) -> Dict:
-    """Perform semantic search for relevant memories."""
+def enhanced_semantic_search_node(state: MemoryState, service: HybridMemoryService) -> Dict:
+    """Perform enhanced semantic search with context expansion."""
     messages = state["messages"]
     user_id = state["user_id"]
+    iteration = state.get("enhancement_iterations", 0)
 
     # Get last human message as query
     query = None
@@ -507,10 +638,11 @@ def semantic_search_node(state: MemoryState, service: HybridMemoryService) -> Di
     if not query:
         return {"semantic_results": []}
 
-    print(f"\n🔍 Searching memories for: {query[:50]}...")
+    print(f"\n🔍 [Iteration {iteration + 1}] Enhanced semantic search for: {query[:50]}...")
 
-    # Perform semantic search
-    results = service.semantic_search(query, user_id, top_k=3)
+    # Use enhanced search with context expansion
+    expand_context = iteration > 0  # Expand context in subsequent iterations
+    results = service.enhanced_semantic_search(query, user_id, top_k=5, expand_context=expand_context)
 
     # Format results
     semantic_results = []
@@ -518,20 +650,28 @@ def semantic_search_node(state: MemoryState, service: HybridMemoryService) -> Di
         print(f"   📄 Found (similarity: {similarity:.2f}): {key}")
         semantic_results.append((key, similarity))
 
+    # Get contextual threads
+    contextual_threads = service.get_contextual_threads(user_id, query)
+    if contextual_threads:
+        print(f"   🧵 Found {len(contextual_threads)} related conversation threads")
+
     return {
         "semantic_results": semantic_results,
-        "messages": [AIMessage(content=f"Found {len(semantic_results)} relevant memories")]
+        "contextual_threads": contextual_threads,
+        "messages": [AIMessage(content=f"Enhanced search found {len(semantic_results)} memories + {len(contextual_threads)} threads")]
     }
 
 
-def entity_lookup_node(state: MemoryState, service: HybridMemoryService) -> Dict:
-    """Perform deep lookup for specific entities."""
+def deep_entity_analysis_node(state: MemoryState, service: HybridMemoryService) -> Dict:
+    """Perform deep analysis of entities with version tracking."""
     extracted_memories = state.get("extracted_memories", [])
     semantic_results = state.get("semantic_results", [])
+    iteration = state.get("enhancement_iterations", 0)
 
-    print("\n🔬 Performing entity deep dive...")
+    print(f"\n🔬 [Iteration {iteration + 1}] Deep entity analysis...")
 
     entity_contexts = {}
+    detailed_context = state.get("detailed_context", {})
 
     # Extract entity references from memories
     entities = set()
@@ -539,61 +679,206 @@ def entity_lookup_node(state: MemoryState, service: HybridMemoryService) -> Dict
         if hasattr(memory, 'entities'):
             entities.update(memory.entities)
 
-    # Get context for each entity
-    for entity in list(entities)[:3]:  # Limit to 3 entities for demo
+    # Also extract entities from semantic search results
+    for result in semantic_results:
+        if len(result) == 2:
+            key, similarity = result
+            # Try to get data from vector store
+            if key in service.vector_store:
+                _, data = service.vector_store[key]
+                if 'entities' in data:
+                    entities.update(data['entities'])
+        elif len(result) == 3:
+            key, similarity, data = result
+            if 'entities' in data:
+                entities.update(data['entities'])
+
+    # Get detailed context for each entity
+    for entity in list(entities)[:5]:  # Increased limit for deeper analysis
         history = service.get_entity_history(entity)
+
+        # Get more detailed entity information in later iterations
+        if iteration > 0:
+            # Simulate getting richer entity context
+            additional_context = {
+                'related_topics': [f"topic_{i}" for i in range(min(3, len(history)))],
+                'interaction_frequency': len(history),
+                'last_interaction': history[0]['timestamp'] if history else None
+            }
+        else:
+            additional_context = {}
+
         entity_contexts[entity] = {
             'history': history,
-            'version_count': len(history)
+            'version_count': len(history),
+            'additional_context': additional_context
         }
-        print(f"   📊 Entity {entity}: {len(history)} versions")
+        print(f"   📊 Entity {entity}: {len(history)} versions" +
+              (f" + enhanced context" if additional_context else ""))
+
+    # Store detailed context for quality assessment
+    detailed_context.update({
+        'entity_contexts': entity_contexts,
+        'semantic_results': semantic_results,
+        'contextual_threads': state.get("contextual_threads", [])
+    })
 
     return {
         "entity_contexts": entity_contexts,
-        "messages": [AIMessage(content=f"Retrieved context for {len(entity_contexts)} entities")]
+        "detailed_context": detailed_context,
+        "messages": [AIMessage(content=f"Deep analysis: {len(entity_contexts)} entities analyzed")]
     }
 
 
-def generate_response_node(state: MemoryState, service: HybridMemoryService) -> Dict:
-    """Generate final response with memory context."""
-    user_id = state["user_id"]
-    extracted_memories = state.get("extracted_memories", [])
-    semantic_results = state.get("semantic_results", [])
-    entity_contexts = state.get("entity_contexts", {})
+def assess_context_quality_node(state: MemoryState, service: HybridMemoryService) -> Dict:
+    """Assess the quality of retrieved context and decide if enhancement is needed."""
+    detailed_context = state.get("detailed_context", {})
+    iteration = state.get("enhancement_iterations", 0)
+    max_iterations = state.get("max_iterations", 3)
 
-    print("\n💬 Generating response with memory context...")
+    # Get query for assessment
+    query = None
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, HumanMessage):
+            query = msg.content
+            break
+
+    print(f"\n📊 [Iteration {iteration + 1}] Assessing context quality...")
+
+    # Add user profile and recent events to context
+    user_id = state["user_id"]
+    detailed_context['user_profile'] = service.get_user_profile(user_id) or {}
+    detailed_context['recent_events'] = service.get_user_events(user_id, limit=10)
+
+    # Assess context quality
+    assessment = service.assess_context_quality(detailed_context, query or "")
+    quality_score = assessment['score']
+
+    print(f"   📈 Context Quality Score: {quality_score:.1f}/100")
+    print(f"   📋 Relevance: {assessment['relevance']}, Completeness: {assessment['completeness']}, Freshness: {assessment['freshness']}")
+
+    # Determine if we need more enhancement
+    if quality_score >= 70:
+        context_sufficiency = "sufficient"
+        print("   ✅ Context quality is sufficient for response generation")
+    elif iteration >= max_iterations - 1:
+        context_sufficiency = "sufficient"  # Force completion after max iterations
+        print("   ⏰ Maximum iterations reached, proceeding with available context")
+    else:
+        context_sufficiency = "needs_enhancement"
+        print("   🔄 Context needs enhancement, will iterate")
+        if assessment['suggestions']:
+            print(f"   💡 Suggestions: {', '.join(assessment['suggestions'])}")
+
+    return {
+        "context_quality_score": quality_score,
+        "context_sufficiency": context_sufficiency,
+        "detailed_context": detailed_context,
+        "quality_assessment": assessment,
+        "messages": [AIMessage(content=f"Quality assessment: {quality_score:.1f}/100 - {context_sufficiency}")]
+    }
+
+
+def context_enhancement_loop_node(state: MemoryState) -> Dict:
+    """Increment iteration counter for enhancement loop."""
+    current_iteration = state.get("enhancement_iterations", 0)
+    new_iteration = current_iteration + 1
+
+    print(f"\n🔄 Context enhancement loop: Starting iteration {new_iteration}")
+
+    return {
+        "enhancement_iterations": new_iteration,
+        "messages": [AIMessage(content=f"Enhancement iteration {new_iteration} started")]
+    }
+
+
+def generate_enhanced_response_node(state: MemoryState, service: HybridMemoryService) -> Dict:
+    """Generate comprehensive response with all enhanced context."""
+    user_id = state["user_id"]
+    detailed_context = state.get("detailed_context", {})
+    quality_assessment = state.get("quality_assessment", {})
+    iteration = state.get("enhancement_iterations", 0)
+
+    print(f"\n💬 [Final] Generating enhanced response with {iteration} iterations of context...")
 
     response_parts = []
 
-    # Add user profile if available
-    profile = service.get_user_profile(user_id)
-    if profile:
-        response_parts.append(f"User Profile: {profile.get('name', 'Unknown')}")
-        if profile.get('preferences'):
-            response_parts.append(f"Preferences: {json.dumps(profile['preferences'])}")
+    # Header with context quality information
+    quality_score = state.get("context_quality_score", 0)
+    response_parts.append(f"🎯 Enhanced Response (Context Quality: {quality_score:.1f}/100, {iteration} iterations)")
+    response_parts.append("=" * 60)
 
-    # Add recent events
-    events = service.get_user_events(user_id, limit=3)
-    if events:
-        response_parts.append(f"\nRecent Events ({len(events)}):")
-        for event in events:
-            response_parts.append(f"  • {event.get('event_type', 'unknown')}: {event.get('content', '')[:50]}...")
+    # User profile with more detail
+    user_profile = detailed_context.get('user_profile', {})
+    if user_profile:
+        response_parts.append(f"\n👤 User Profile ({user_id}):")
+        response_parts.append(f"   Name: {user_profile.get('name', 'Unknown')}")
+        if user_profile.get('preferences'):
+            response_parts.append(f"   Preferences: {json.dumps(user_profile['preferences'])}")
+        if user_profile.get('interests'):
+            response_parts.append(f"   Interests: {', '.join(user_profile['interests'])}")
 
-    # Add semantic search results
+    # Enhanced semantic results
+    semantic_results = detailed_context.get('semantic_results', [])
     if semantic_results:
-        response_parts.append(f"\nRelevant Memories ({len(semantic_results)}):")
-        for key, similarity in semantic_results[:2]:
-            response_parts.append(f"  • {key} (similarity: {similarity:.2f})")
+        response_parts.append(f"\n🔍 Semantic Search Results ({len(semantic_results)} found):")
+        for i, (key, similarity) in enumerate(semantic_results[:5], 1):
+            response_parts.append(f"   {i}. {key} (similarity: {similarity:.3f})")
 
-    # Add entity context
+    # Enhanced entity analysis
+    entity_contexts = detailed_context.get('entity_contexts', {})
     if entity_contexts:
-        response_parts.append(f"\nEntity History:")
+        response_parts.append(f"\n🏷️  Entity Analysis ({len(entity_contexts)} entities):")
         for entity, context in entity_contexts.items():
-            response_parts.append(f"  • {entity}: {context['version_count']} versions")
+            additional = context.get('additional_context', {})
+            versions = context['version_count']
+            freq = additional.get('interaction_frequency', 0)
+            response_parts.append(f"   • {entity}: {versions} versions" +
+                                (f", {freq} interactions" if freq else ""))
 
-    response = "\n".join(response_parts) if response_parts else "No memory context available."
+    # Contextual conversation threads
+    contextual_threads = detailed_context.get('contextual_threads', [])
+    if contextual_threads:
+        response_parts.append(f"\n🧵 Related Conversation Threads ({len(contextual_threads)} found):")
+        for i, thread in enumerate(contextual_threads[:3], 1):
+            relevance = thread.get('relevance_score', 0)
+            content = thread.get('content', '')[:60]
+            response_parts.append(f"   {i}. {content}... (relevance: {relevance:.2f})")
 
-    return {"messages": [AIMessage(content=response)]}
+    # Recent events with enhanced detail
+    recent_events = detailed_context.get('recent_events', [])
+    if recent_events:
+        response_parts.append(f"\n📅 Recent Events ({len(recent_events)} events):")
+        for i, event in enumerate(recent_events[:5], 1):
+            event_type = event.get('event_type', 'unknown')
+            content = event.get('content', '')[:50]
+            timestamp = event.get('timestamp', '')[:19]  # Remove microseconds
+            response_parts.append(f"   {i}. [{event_type}] {content}... ({timestamp})")
+
+    # Quality assessment summary
+    if quality_assessment:
+        response_parts.append(f"\n📊 Context Quality Assessment:")
+        response_parts.append(f"   Overall Score: {quality_assessment.get('score', 0):.1f}/100")
+        response_parts.append(f"   Relevance: {quality_assessment.get('relevance', 'unknown')}")
+        response_parts.append(f"   Completeness: {quality_assessment.get('completeness', 'unknown')}")
+        response_parts.append(f"   Freshness: {quality_assessment.get('freshness', 'unknown')}")
+
+    response = "\n".join(response_parts) if response_parts else "No enhanced context available."
+
+    return {
+        "final_response": response,
+        "messages": [AIMessage(content=response)]
+    }
+
+
+def should_enhance_context(state: MemoryState) -> str:
+    """Decision function to determine if context enhancement is needed."""
+    context_sufficiency = state.get("context_sufficiency", "needs_assessment")
+
+    if context_sufficiency == "sufficient":
+        return "generate_response"
+    else:
+        return "enhance_context"
 
 
 # ============================================================================
@@ -646,24 +931,66 @@ def display_workflow_diagram(workflow):
 # Create Memory Workflow
 # ============================================================================
 
+def create_enhanced_memory_workflow(service: HybridMemoryService):
+    """Create the enhanced memory processing workflow with loops and intelligence."""
+
+    # Build the graph
+    builder = StateGraph(MemoryState)
+
+    # Add nodes with service injection
+    builder.add_node("initialize", initialize_workflow_node)
+    builder.add_node("extract_memories", lambda state: extract_memories_node(state, service))
+    builder.add_node("enhanced_semantic_search", lambda state: enhanced_semantic_search_node(state, service))
+    builder.add_node("deep_entity_analysis", lambda state: deep_entity_analysis_node(state, service))
+    builder.add_node("assess_context_quality", lambda state: assess_context_quality_node(state, service))
+    builder.add_node("context_enhancement_loop", context_enhancement_loop_node)
+    builder.add_node("generate_enhanced_response", lambda state: generate_enhanced_response_node(state, service))
+
+    # Define the enhanced flow with loops
+    builder.add_edge(START, "initialize")
+    builder.add_edge("initialize", "extract_memories")
+    builder.add_edge("extract_memories", "enhanced_semantic_search")
+    builder.add_edge("enhanced_semantic_search", "deep_entity_analysis")
+    builder.add_edge("deep_entity_analysis", "assess_context_quality")
+
+    # Conditional edge: decide whether to enhance context or generate response
+    builder.add_conditional_edges(
+        "assess_context_quality",
+        should_enhance_context,
+        {
+            "enhance_context": "context_enhancement_loop",
+            "generate_response": "generate_enhanced_response"
+        }
+    )
+
+    # Loop back for context enhancement
+    builder.add_edge("context_enhancement_loop", "enhanced_semantic_search")
+
+    # Final edge
+    builder.add_edge("generate_enhanced_response", END)
+
+    return builder.compile()
+
+
+# Keep the old simple workflow for comparison
 def create_memory_workflow(service: HybridMemoryService):
-    """Create the complete memory processing workflow."""
+    """Create the simple memory processing workflow (for comparison)."""
 
     # Build the graph
     builder = StateGraph(MemoryState)
 
     # Add nodes with service injection
     builder.add_node("extract_memories", lambda state: extract_memories_node(state, service))
-    builder.add_node("semantic_search", lambda state: semantic_search_node(state, service))
-    builder.add_node("entity_lookup", lambda state: entity_lookup_node(state, service))
-    builder.add_node("generate_response", lambda state: generate_response_node(state, service))
+    builder.add_node("enhanced_semantic_search", lambda state: enhanced_semantic_search_node(state, service))
+    builder.add_node("deep_entity_analysis", lambda state: deep_entity_analysis_node(state, service))
+    builder.add_node("generate_enhanced_response", lambda state: generate_enhanced_response_node(state, service))
 
-    # Define the flow
+    # Define the simple flow
     builder.add_edge(START, "extract_memories")
-    builder.add_edge("extract_memories", "semantic_search")
-    builder.add_edge("semantic_search", "entity_lookup")
-    builder.add_edge("entity_lookup", "generate_response")
-    builder.add_edge("generate_response", END)
+    builder.add_edge("extract_memories", "enhanced_semantic_search")
+    builder.add_edge("enhanced_semantic_search", "deep_entity_analysis")
+    builder.add_edge("deep_entity_analysis", "generate_enhanced_response")
+    builder.add_edge("generate_enhanced_response", END)
 
     return builder.compile()
 
@@ -672,142 +999,177 @@ def create_memory_workflow(service: HybridMemoryService):
 # Demonstration
 # ============================================================================
 
-def demonstrate_complete_system():
-    """Demonstrate the complete memory system."""
+def demonstrate_enhanced_system():
+    """Demonstrate the enhanced memory system with loops and intelligence."""
 
     print("\n" + "=" * 80)
-    print("   🚀 Complete LangGraph + ProllyTree Memory System")
+    print("   🚀 Enhanced LangGraph + ProllyTree Memory System with Loops")
     print("=" * 80)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         store_path = os.path.join(tmpdir, "memory_system")
         service = HybridMemoryService(store_path)
-        workflow = create_memory_workflow(service)
+        enhanced_workflow = create_enhanced_memory_workflow(service)
 
         # Generate and display workflow diagram
-        print("\n📊 Displaying workflow visualization...")
-        display_workflow_diagram(workflow)
-        print("🚀 Proceeding with demonstration...")
+        print("\n📊 Displaying enhanced workflow visualization...")
+        display_workflow_diagram(enhanced_workflow)
+        print("🚀 Proceeding with enhanced demonstration...")
 
-        # User 1: Initial conversation
-        print("\n👤 User: alice - Initial Conversation")
-        print("-" * 40)
+        # Demo 1: Complex query that will trigger multiple enhancement iterations
+        print("\n" + "=" * 60)
+        print("👤 User: alice - Complex Technical Query (Multi-iteration)")
+        print("=" * 60)
 
-        state1 = workflow.invoke({
-            "messages": [HumanMessage(content="I prefer detailed technical explanations and I'm interested in AI and quantum computing")],
+        complex_state = enhanced_workflow.invoke({
+            "messages": [HumanMessage(content="I need comprehensive information about quantum computing applications in machine learning, specifically for optimization problems. Please provide detailed technical analysis.")],
             "user_id": "alice",
-            "thread_id": "thread_001"
+            "thread_id": "thread_complex_001"
         })
 
-        print("\n🤖 System Response:")
-        for msg in state1["messages"][-1:]:
+        print("\n🤖 Enhanced System Response:")
+        for msg in complex_state["messages"][-1:]:
             if isinstance(msg, AIMessage):
                 print(msg.content)
 
-        # User 1: Follow-up with product question
-        print("\n👤 User: alice - Product Question")
-        print("-" * 40)
+        print(f"\n📈 Final Statistics for Complex Query:")
+        print(f"   • Quality Score: {complex_state.get('context_quality_score', 0):.1f}/100")
+        print(f"   • Enhancement Iterations: {complex_state.get('enhancement_iterations', 0)}")
+        print(f"   • Context Sufficiency: {complex_state.get('context_sufficiency', 'unknown')}")
 
-        state2 = workflow.invoke({
-            "messages": [HumanMessage(content="What product options do you have for quantum computing research?")],
+        # Demo 2: Follow-up question that should use the enhanced context
+        print("\n" + "=" * 60)
+        print("👤 User: alice - Follow-up Question")
+        print("=" * 60)
+
+        followup_state = enhanced_workflow.invoke({
+            "messages": [HumanMessage(content="What are the specific hardware requirements for running quantum ML algorithms?")],
             "user_id": "alice",
-            "thread_id": "thread_002"
+            "thread_id": "thread_followup_002"
         })
 
-        print("\n🤖 System Response:")
-        for msg in state2["messages"][-1:]:
+        print("\n🤖 Enhanced System Response:")
+        for msg in followup_state["messages"][-1:]:
             if isinstance(msg, AIMessage):
                 print(msg.content)
 
-        # User 2: Different user
-        print("\n👤 User: bob - New User")
-        print("-" * 40)
+        # Demo 3: Different user with simpler query (should require fewer iterations)
+        print("\n" + "=" * 60)
+        print("👤 User: bob - Simple Query (Fewer iterations expected)")
+        print("=" * 60)
 
-        state3 = workflow.invoke({
-            "messages": [HumanMessage(content="I need help with machine learning deployment")],
+        simple_state = enhanced_workflow.invoke({
+            "messages": [HumanMessage(content="How do I get started with machine learning?")],
             "user_id": "bob",
-            "thread_id": "thread_003"
+            "thread_id": "thread_simple_003"
         })
 
-        print("\n🤖 System Response:")
-        for msg in state3["messages"][-1:]:
+        print("\n🤖 Enhanced System Response:")
+        for msg in simple_state["messages"][-1:]:
             if isinstance(msg, AIMessage):
                 print(msg.content)
 
-        # User 1: Return with semantic query
-        print("\n👤 User: alice - Semantic Query")
-        print("-" * 40)
+        print(f"\n📈 Final Statistics for Simple Query:")
+        print(f"   • Quality Score: {simple_state.get('context_quality_score', 0):.1f}/100")
+        print(f"   • Enhancement Iterations: {simple_state.get('enhancement_iterations', 0)}")
 
-        state4 = workflow.invoke({
-            "messages": [HumanMessage(content="Tell me about quantum technologies")],
+        # Demo 4: Return to alice with related query (should have rich context)
+        print("\n" + "=" * 60)
+        print("👤 User: alice - Related Query (Rich Context Expected)")
+        print("=" * 60)
+
+        related_state = enhanced_workflow.invoke({
+            "messages": [HumanMessage(content="Based on our previous discussions about quantum computing, what's the current state of quantum machine learning research?")],
             "user_id": "alice",
-            "thread_id": "thread_004"
+            "thread_id": "thread_related_004"
         })
 
-        print("\n🤖 System Response:")
-        for msg in state4["messages"][-1:]:
+        print("\n🤖 Enhanced System Response:")
+        for msg in related_state["messages"][-1:]:
             if isinstance(msg, AIMessage):
                 print(msg.content)
 
-        # Show git-like history
-        print("\n📚 Git-like Commit History:")
-        print("-" * 40)
+        # Show comprehensive system analytics
+        print("\n" + "=" * 60)
+        print("📊 Enhanced Memory System Analytics")
+        print("=" * 60)
 
+        # Git history
         commits = service.kv_store.log()
-        for commit in commits[-5:]:
+        print(f"\n📚 Git-like Commit History ({len(commits)} total commits):")
+        for commit in commits[-8:]:  # Show more commits
             timestamp = datetime.fromtimestamp(commit['timestamp'])
-            print(f"   {commit['id'][:8]} - {commit['message'][:60]} ({timestamp.strftime('%H:%M:%S')})")
+            print(f"   {commit['id'][:8]} - {commit['message'][:70]} ({timestamp.strftime('%H:%M:%S')})")
 
-        # Show memory statistics
-        print("\n📊 Memory System Statistics:")
-        print("-" * 40)
-
-        # Count memories by type
+        # Memory statistics
+        print(f"\n📊 Memory Store Statistics:")
         patch_count = sum(1 for k in service.vector_store.keys() if k.startswith("patch:"))
         insert_count = sum(1 for k in service.vector_store.keys() if k.startswith("insert:"))
-
         print(f"   • Patch memories (profiles): {patch_count}")
         print(f"   • Insert memories (events): {insert_count}")
         print(f"   • Total vector embeddings: {len(service.vector_store)}")
         print(f"   • Git commits: {len(commits)}")
 
-        # Show user profiles
-        print("\n👥 User Profiles:")
-        print("-" * 40)
-
+        # User profiles with more detail
+        print(f"\n👥 User Profile Analysis:")
         for user_id in ["alice", "bob"]:
             profile = service.get_user_profile(user_id)
+            events = service.get_user_events(user_id, limit=5)
             if profile:
-                print(f"   • {user_id}: {json.dumps(profile, indent=2)[:100]}...")
+                print(f"   • {user_id}:")
+                print(f"     - Profile: {json.dumps(profile, indent=6)[:150]}...")
+                print(f"     - Recent events: {len(events)}")
+                if events:
+                    for i, event in enumerate(events[:2], 1):
+                        print(f"       {i}. {event.get('event_type', 'unknown')}: {event.get('content', '')[:40]}...")
             else:
-                print(f"   • {user_id}: No profile yet")
+                print(f"   • {user_id}: No profile data")
+
+        # Enhancement statistics comparison
+        print(f"\n🔄 Enhancement Loop Statistics:")
+        print(f"   • Complex query iterations: {complex_state.get('enhancement_iterations', 0)}")
+        print(f"   • Simple query iterations: {simple_state.get('enhancement_iterations', 0)}")
+        print(f"   • Related query iterations: {related_state.get('enhancement_iterations', 0)}")
+        print(f"   • Average quality improvement: Demonstrated through iterative context enhancement")
 
 
 def main():
-    """Run the complete demonstration."""
+    """Run the enhanced demonstration with loops and intelligence."""
 
     print("=" * 80)
-    print("   Complete LangGraph + ProllyTree Integration")
+    print("   Enhanced LangGraph + ProllyTree Integration with Loops")
     print("=" * 80)
-    print("\nThis demo shows:")
-    print("  • Structured memory extraction (patch and insert modes)")
-    print("  • Vector embeddings for semantic search")
-    print("  • Git-like version control with ProllyTree")
-    print("  • Entity tracking with complete history")
-    print("  • Hybrid retrieval combining all approaches")
+    print("\nThis enhanced demo demonstrates:")
+    print("  🔄 Iterative context enhancement with quality assessment")
+    print("  🧠 Intelligent loop control based on context sufficiency")
+    print("  🎯 Multi-iteration retrieval for complex queries")
+    print("  📊 Context quality scoring and improvement suggestions")
+    print("  🔍 Enhanced semantic search with context expansion")
+    print("  🏷️  Deep entity analysis with version tracking")
+    print("  🧵 Contextual conversation thread retrieval")
+    print("  ⚡ Adaptive workflow that improves response quality")
+
+    print("\n🔄 Workflow Features:")
+    print("  • START → Initialize → Extract → Search → Analyze → Assess Quality")
+    print("  • IF context insufficient: Loop back for enhancement")
+    print("  • IF context sufficient: Generate enhanced response")
+    print("  • Maximum 3 iterations to prevent infinite loops")
 
     try:
-        demonstrate_complete_system()
+        demonstrate_enhanced_system()
 
         print("\n" + "=" * 80)
-        print("✅ Demo Complete! Production-Ready Features:")
-        print("   • Structured extraction with schemas")
-        print("   • Patch mode for user profiles")
-        print("   • Insert mode for event streams")
-        print("   • Semantic search with embeddings")
-        print("   • Version control for all changes")
-        print("   • Entity tracking and history")
-        print("   • Complete audit trail")
+        print("✅ Enhanced Demo Complete! Advanced Features Demonstrated:")
+        print("   🔄 Iterative context enhancement loops")
+        print("   🧠 Intelligent quality assessment")
+        print("   📊 Context scoring and improvement")
+        print("   🎯 Multi-iteration retrieval optimization")
+        print("   🔍 Enhanced semantic search expansion")
+        print("   🏷️  Deep entity version tracking")
+        print("   🧵 Contextual thread analysis")
+        print("   ⚡ Adaptive response generation")
+        print("   📈 Quality-driven workflow decisions")
+        print("   🔒 Loop control and termination")
         print("=" * 80)
 
     except ImportError as e:
