@@ -9,7 +9,7 @@ echo "This may take a few minutes on first build..."
 cd ../..
 
 # Build the Python bindings
-if ./python/build_python.sh --install; then
+if ./python/build_python.sh --all-features --install; then
     echo "✅ ProllyTree built successfully!"
 
     # Change back to examples directory
@@ -25,6 +25,10 @@ if ./python/build_python.sh --install; then
     echo ""
     echo "🚀 Running basic memory usage example..."
     python basic_usage.py
+
+    echo ""
+    echo "🚀 Running sql example..."
+    python sql_example.py
 
     echo ""
     echo "🚀 Running LangGraph memory example..."
