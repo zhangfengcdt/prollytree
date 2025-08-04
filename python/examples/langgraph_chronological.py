@@ -24,14 +24,14 @@ This example demonstrates a production-ready memory system that combines:
 
 Architecture:
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                     Production Memory System Architecture                │
+│                     Production Memory System Architecture               │
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          Memory Processing Pipeline                      │
+│                          Memory Processing Pipeline                     │
 │                                                                         │
 │  User Message → Extract Memories → Generate Embeddings → Store Both     │
-│                         ↓                    ↓              ↓          │
+│                         ↓                    ↓              ↓           │
 │                  (structured data)    (vector search)  (version control)│
 └─────────────────────────────────────────────────────────────────────────┘
 
@@ -42,28 +42,24 @@ Key Components:
 • Entity tracking with complete audit trail
 """
 
-import os
-import sys
-import json
-import uuid
-import tempfile
 import hashlib
+import json
+import os
 import subprocess
+import tempfile
+import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Annotated, Literal
-from dataclasses import dataclass, asdict
+from typing import Any, Dict, List, Optional, Tuple, Annotated, Literal
+
 import numpy as np
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from typing_extensions import TypedDict
 
 # ProllyTree imports
 from prollytree import VersionedKvStore
-
-# LangGraph and LangChain imports
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from langgraph.constants import Send
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.pydantic_v1 import BaseModel, Field
-from typing_extensions import TypedDict
 
 # For embeddings
 try:
@@ -133,13 +129,6 @@ class MemoryState(TypedDict):
     context_sufficiency: str  # "sufficient" | "needs_enhancement" | "poor"
     detailed_context: Dict[str, Any]
     final_response: str
-
-
-class SingleExtractorState(MemoryState):
-    """State for single memory extractor."""
-    function_name: str
-    responses: List[BaseModel]
-    user_state: Optional[Dict[str, Any]]
 
 
 # ============================================================================
@@ -993,29 +982,6 @@ def create_enhanced_memory_workflow(service: HybridMemoryService):
     builder.add_edge("context_enhancement_loop", "enhanced_semantic_search")
 
     # Final edge
-    builder.add_edge("generate_enhanced_response", END)
-
-    return builder.compile()
-
-
-# Keep the old simple workflow for comparison
-def create_memory_workflow(service: HybridMemoryService):
-    """Create the simple memory processing workflow (for comparison)."""
-
-    # Build the graph
-    builder = StateGraph(MemoryState)
-
-    # Add nodes with service injection
-    builder.add_node("extract_memories", lambda state: extract_memories_node(state, service))
-    builder.add_node("enhanced_semantic_search", lambda state: enhanced_semantic_search_node(state, service))
-    builder.add_node("deep_entity_analysis", lambda state: deep_entity_analysis_node(state, service))
-    builder.add_node("generate_enhanced_response", lambda state: generate_enhanced_response_node(state, service))
-
-    # Define the simple flow
-    builder.add_edge(START, "extract_memories")
-    builder.add_edge("extract_memories", "enhanced_semantic_search")
-    builder.add_edge("enhanced_semantic_search", "deep_entity_analysis")
-    builder.add_edge("deep_entity_analysis", "generate_enhanced_response")
     builder.add_edge("generate_enhanced_response", END)
 
     return builder.compile()
