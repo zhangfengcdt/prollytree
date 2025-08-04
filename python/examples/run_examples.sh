@@ -32,7 +32,7 @@ if ./python/build_python.sh --all-features --install; then
 
     echo ""
     echo "🚀 Running LangGraph memory example..."
-    python langgraph_prolly.py
+    python langgraph_example.py
 else
     echo "❌ Build failed. Please check the error messages above."
     echo ""

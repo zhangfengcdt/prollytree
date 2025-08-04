@@ -24,7 +24,7 @@ as the versioned memory backend, featuring:
 Architecture Diagram:
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
 │                    LangGraph + ProllyTree Persistent Memory Workflow                    │
-│                                  (langgraph_prolly.py)                                  │
+│                                  (langgraph_example.py)                                  │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
