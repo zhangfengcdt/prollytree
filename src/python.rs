@@ -14,7 +14,7 @@ limitations under the License.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyBytesMethods, PyDict};
+use pyo3::types::{PyBytes, PyBytesMethods, PyDict, PyList};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -27,6 +27,11 @@ use crate::{
     storage::{FileNodeStorage, InMemoryNodeStorage},
     tree::{ProllyTree, Tree},
 };
+
+#[cfg(feature = "sql")]
+use crate::sql::ProllyStorage;
+#[cfg(feature = "sql")]
+use gluesql_core::{data::Value as SqlValue, executor::Payload, prelude::Glue};
 
 #[pyclass(name = "TreeConfig")]
 struct PyTreeConfig {
@@ -908,6 +913,392 @@ impl PyVersionedKvStore {
     }
 }
 
+#[cfg(feature = "sql")]
+#[pyclass(name = "ProllySQLStore")]
+struct PyProllySQLStore {
+    inner: Arc<Mutex<Glue<ProllyStorage<32>>>>,
+}
+
+#[cfg(feature = "sql")]
+#[pymethods]
+impl PyProllySQLStore {
+    #[new]
+    fn new(path: String) -> PyResult<Self> {
+        let store = GitVersionedKvStore::<32>::init(path)
+            .map_err(|e| PyValueError::new_err(format!("Failed to initialize store: {}", e)))?;
+
+        let storage = ProllyStorage::<32>::new(store);
+        let glue = Glue::new(storage);
+
+        Ok(PyProllySQLStore {
+            inner: Arc::new(Mutex::new(glue)),
+        })
+    }
+
+    #[staticmethod]
+    fn open(path: String) -> PyResult<Self> {
+        let store = GitVersionedKvStore::<32>::open(path)
+            .map_err(|e| PyValueError::new_err(format!("Failed to open store: {}", e)))?;
+
+        let storage = ProllyStorage::<32>::new(store);
+        let glue = Glue::new(storage);
+
+        Ok(PyProllySQLStore {
+            inner: Arc::new(Mutex::new(glue)),
+        })
+    }
+
+    #[pyo3(signature = (query, format="dict"))]
+    fn execute(&self, py: Python, query: String, format: &str) -> PyResult<Py<PyAny>> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let mut glue = self.inner.lock().unwrap();
+
+            runtime.block_on(async {
+                let results = glue
+                    .execute(&query)
+                    .await
+                    .map_err(|e| PyValueError::new_err(format!("SQL execution failed: {}", e)))?;
+
+                // GlueSQL returns a Vec<Payload>, we'll handle the first result
+                let result = results
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| PyValueError::new_err("No result from SQL query"))?;
+
+                Python::with_gil(|py| {
+                    match result {
+                        Payload::Select { labels, rows } => {
+                            match format {
+                                "dict" | "dicts" => {
+                                    // Return list of dictionaries
+                                    let py_list = PyList::empty_bound(py);
+                                    for row in rows {
+                                        let dict = PyDict::new_bound(py);
+                                        for (i, value) in row.iter().enumerate() {
+                                            if i < labels.len() {
+                                                let py_value = sql_value_to_python(py, value)?;
+                                                dict.set_item(&labels[i], py_value)?;
+                                            }
+                                        }
+                                        py_list.append(dict)?;
+                                    }
+                                    Ok(py_list.into())
+                                }
+                                "tuples" => {
+                                    // Return (labels, rows) tuple
+                                    let py_labels = PyList::empty_bound(py);
+                                    for label in &labels {
+                                        py_labels.append(label)?;
+                                    }
+
+                                    let py_rows = PyList::empty_bound(py);
+                                    for row in rows {
+                                        let py_row = PyList::empty_bound(py);
+                                        for value in row {
+                                            let py_value = sql_value_to_python(py, &value)?;
+                                            py_row.append(py_value)?;
+                                        }
+                                        py_rows.append(py_row)?;
+                                    }
+
+                                    Ok((py_labels, py_rows).into_py(py))
+                                }
+                                "json" => {
+                                    // Return JSON string
+                                    let mut json_rows = Vec::new();
+                                    for row in rows {
+                                        let mut json_row = serde_json::Map::new();
+                                        for (i, value) in row.iter().enumerate() {
+                                            if i < labels.len() {
+                                                let json_value = sql_value_to_json(&value);
+                                                json_row.insert(labels[i].clone(), json_value);
+                                            }
+                                        }
+                                        json_rows.push(serde_json::Value::Object(json_row));
+                                    }
+                                    let json_str = serde_json::to_string_pretty(&json_rows)
+                                        .map_err(|e| {
+                                            PyValueError::new_err(format!(
+                                                "JSON serialization failed: {}",
+                                                e
+                                            ))
+                                        })?;
+                                    Ok(json_str.into_py(py))
+                                }
+                                "csv" => {
+                                    // Return CSV string
+                                    let mut csv_str = labels.join(",") + "\n";
+                                    for row in rows {
+                                        let row_strs: Vec<String> = row
+                                            .iter()
+                                            .map(|v| {
+                                                let s = format!("{:?}", v);
+                                                if s.contains(',') {
+                                                    format!("\"{}\"", s.replace('"', "\"\""))
+                                                } else {
+                                                    s
+                                                }
+                                            })
+                                            .collect();
+                                        csv_str.push_str(&row_strs.join(","));
+                                        csv_str.push('\n');
+                                    }
+                                    Ok(csv_str.into_py(py))
+                                }
+                                _ => Err(PyValueError::new_err(format!(
+                                    "Unknown format: {}. Use 'dict', 'tuples', 'json', or 'csv'",
+                                    format
+                                ))),
+                            }
+                        }
+                        Payload::Insert(count) => {
+                            let dict = PyDict::new_bound(py);
+                            dict.set_item("type", "insert")?;
+                            dict.set_item("count", count)?;
+                            Ok(dict.into())
+                        }
+                        Payload::Update(count) => {
+                            let dict = PyDict::new_bound(py);
+                            dict.set_item("type", "update")?;
+                            dict.set_item("count", count)?;
+                            Ok(dict.into())
+                        }
+                        Payload::Delete(count) => {
+                            let dict = PyDict::new_bound(py);
+                            dict.set_item("type", "delete")?;
+                            dict.set_item("count", count)?;
+                            Ok(dict.into())
+                        }
+                        Payload::Create => {
+                            let dict = PyDict::new_bound(py);
+                            dict.set_item("type", "create")?;
+                            dict.set_item("success", true)?;
+                            Ok(dict.into())
+                        }
+                        Payload::DropTable => {
+                            let dict = PyDict::new_bound(py);
+                            dict.set_item("type", "drop_table")?;
+                            dict.set_item("success", true)?;
+                            Ok(dict.into())
+                        }
+                        Payload::AlterTable => {
+                            let dict = PyDict::new_bound(py);
+                            dict.set_item("type", "alter_table")?;
+                            dict.set_item("success", true)?;
+                            Ok(dict.into())
+                        }
+                        _ => {
+                            let dict = PyDict::new_bound(py);
+                            dict.set_item("type", "success")?;
+                            dict.set_item("success", true)?;
+                            Ok(dict.into())
+                        }
+                    }
+                })
+            })
+        })
+    }
+
+    fn execute_many(&self, py: Python, queries: Vec<String>) -> PyResult<Vec<Py<PyAny>>> {
+        let mut results = Vec::new();
+        for query in queries {
+            let result = self.execute(py, query, "dict")?;
+            results.push(result);
+        }
+        Ok(results)
+    }
+
+    fn commit(&self, py: Python, _message: String) -> PyResult<String> {
+        py.allow_threads(|| {
+            let runtime = tokio::runtime::Runtime::new()
+                .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+            let mut glue = self.inner.lock().unwrap();
+
+            runtime.block_on(async {
+                // Execute the COMMIT command which will trigger the underlying storage commit
+                glue.execute("COMMIT")
+                    .await
+                    .map_err(|e| PyValueError::new_err(format!("Failed to commit: {}", e)))?;
+
+                // Return a placeholder commit ID for now
+                // In a real implementation, we'd need to expose a way to get the commit ID
+                // from the underlying storage through the SQL layer
+                Ok("committed".to_string())
+            })
+        })
+    }
+
+    fn create_table(
+        &self,
+        py: Python,
+        table_name: String,
+        columns: Vec<(String, String)>,
+    ) -> PyResult<Py<PyAny>> {
+        let mut column_defs = Vec::new();
+        for (name, dtype) in columns {
+            column_defs.push(format!("{} {}", name, dtype));
+        }
+        let query = format!("CREATE TABLE {} ({})", table_name, column_defs.join(", "));
+        self.execute(py, query, "dict")
+    }
+
+    fn insert(
+        &self,
+        py: Python,
+        table_name: String,
+        values: Vec<Vec<Py<PyAny>>>,
+    ) -> PyResult<Py<PyAny>> {
+        if values.is_empty() {
+            return Err(PyValueError::new_err("No values to insert"));
+        }
+
+        let mut value_strings = Vec::new();
+        for row in values {
+            let mut row_values = Vec::new();
+            for value in row {
+                let value_str = Python::with_gil(|py| -> PyResult<String> {
+                    if let Ok(s) = value.extract::<String>(py) {
+                        Ok(format!("'{}'", s.replace('\'', "''")))
+                    } else if let Ok(i) = value.extract::<i64>(py) {
+                        Ok(i.to_string())
+                    } else if let Ok(f) = value.extract::<f64>(py) {
+                        Ok(f.to_string())
+                    } else if let Ok(b) = value.extract::<bool>(py) {
+                        Ok(b.to_string())
+                    } else if value.is_none(py) {
+                        Ok("NULL".to_string())
+                    } else {
+                        Ok(format!("'{}'", value.to_string()))
+                    }
+                })?;
+                row_values.push(value_str);
+            }
+            value_strings.push(format!("({})", row_values.join(", ")));
+        }
+
+        let query = format!(
+            "INSERT INTO {} VALUES {}",
+            table_name,
+            value_strings.join(", ")
+        );
+        self.execute(py, query, "dict")
+    }
+
+    #[pyo3(signature = (table_name, columns=None, where_clause=None))]
+    fn select(
+        &self,
+        py: Python,
+        table_name: String,
+        columns: Option<Vec<String>>,
+        where_clause: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let columns_str = columns
+            .map(|c| c.join(", "))
+            .unwrap_or_else(|| "*".to_string());
+        let mut query = format!("SELECT {} FROM {}", columns_str, table_name);
+
+        if let Some(where_str) = where_clause {
+            query.push_str(&format!(" WHERE {}", where_str));
+        }
+
+        self.execute(py, query, "dict")
+    }
+}
+
+#[cfg(feature = "sql")]
+fn sql_value_to_python(py: Python, value: &SqlValue) -> PyResult<Py<PyAny>> {
+    match value {
+        SqlValue::Null => Ok(py.None()),
+        SqlValue::Bool(b) => Ok(b.into_py(py)),
+        SqlValue::I8(i) => Ok(i.into_py(py)),
+        SqlValue::I16(i) => Ok(i.into_py(py)),
+        SqlValue::I32(i) => Ok(i.into_py(py)),
+        SqlValue::I64(i) => Ok(i.into_py(py)),
+        SqlValue::I128(i) => Ok(i.into_py(py)),
+        SqlValue::U8(i) => Ok(i.into_py(py)),
+        SqlValue::U16(i) => Ok(i.into_py(py)),
+        SqlValue::U32(i) => Ok(i.into_py(py)),
+        SqlValue::U64(i) => Ok(i.into_py(py)),
+        SqlValue::U128(i) => Ok(i.to_string().into_py(py)),
+        SqlValue::F32(f) => Ok(f.into_py(py)),
+        SqlValue::F64(f) => Ok(f.into_py(py)),
+        SqlValue::Str(s) => Ok(s.into_py(py)),
+        SqlValue::Bytea(b) => Ok(PyBytes::new_bound(py, b).into()),
+        SqlValue::Date(d) => Ok(d.to_string().into_py(py)),
+        SqlValue::Time(t) => Ok(t.to_string().into_py(py)),
+        SqlValue::Timestamp(ts) => Ok(ts.to_string().into_py(py)),
+        SqlValue::Interval(i) => Ok(format!("{:?}", i).into_py(py)),
+        SqlValue::Uuid(u) => Ok(u.to_string().into_py(py)),
+        SqlValue::Map(m) => {
+            let dict = PyDict::new_bound(py);
+            for (k, v) in m.iter() {
+                let py_value = sql_value_to_python(py, v)?;
+                dict.set_item(k, py_value)?;
+            }
+            Ok(dict.into())
+        }
+        SqlValue::List(l) => {
+            let py_list = PyList::empty_bound(py);
+            for item in l.iter() {
+                let py_value = sql_value_to_python(py, item)?;
+                py_list.append(py_value)?;
+            }
+            Ok(py_list.into())
+        }
+        SqlValue::Decimal(d) => Ok(d.to_string().into_py(py)),
+        SqlValue::Point(p) => Ok(format!("POINT({} {})", p.x, p.y).into_py(py)),
+        SqlValue::Inet(ip) => Ok(ip.to_string().into_py(py)),
+    }
+}
+
+#[cfg(feature = "sql")]
+fn sql_value_to_json(value: &SqlValue) -> serde_json::Value {
+    match value {
+        SqlValue::Null => serde_json::Value::Null,
+        SqlValue::Bool(b) => serde_json::Value::Bool(*b),
+        SqlValue::I8(i) => serde_json::Value::Number((*i).into()),
+        SqlValue::I16(i) => serde_json::Value::Number((*i).into()),
+        SqlValue::I32(i) => serde_json::Value::Number((*i).into()),
+        SqlValue::I64(i) => serde_json::Value::Number((*i).into()),
+        SqlValue::I128(i) => serde_json::Value::String(i.to_string()),
+        SqlValue::U8(i) => serde_json::Value::Number((*i).into()),
+        SqlValue::U16(i) => serde_json::Value::Number((*i).into()),
+        SqlValue::U32(i) => serde_json::Value::Number((*i).into()),
+        SqlValue::U64(i) => serde_json::Value::Number((*i).into()),
+        SqlValue::U128(i) => serde_json::Value::String(i.to_string()),
+        SqlValue::F32(f) => serde_json::json!(f),
+        SqlValue::F64(f) => serde_json::json!(f),
+        SqlValue::Str(s) => serde_json::Value::String(s.clone()),
+        SqlValue::Bytea(b) => {
+            use base64::Engine;
+            serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(b))
+        }
+        SqlValue::Date(d) => serde_json::Value::String(d.to_string()),
+        SqlValue::Time(t) => serde_json::Value::String(t.to_string()),
+        SqlValue::Timestamp(ts) => serde_json::Value::String(ts.to_string()),
+        SqlValue::Interval(i) => serde_json::Value::String(format!("{:?}", i)),
+        SqlValue::Uuid(u) => serde_json::Value::String(u.to_string()),
+        SqlValue::Map(m) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in m.iter() {
+                map.insert(k.clone(), sql_value_to_json(v));
+            }
+            serde_json::Value::Object(map)
+        }
+        SqlValue::List(l) => {
+            let list: Vec<serde_json::Value> = l.iter().map(sql_value_to_json).collect();
+            serde_json::Value::Array(list)
+        }
+        SqlValue::Decimal(d) => serde_json::Value::String(d.to_string()),
+        SqlValue::Point(p) => serde_json::json!({"x": p.x, "y": p.y}),
+        SqlValue::Inet(ip) => serde_json::Value::String(ip.to_string()),
+    }
+}
+
 #[pymodule]
 fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTreeConfig>()?;
@@ -916,5 +1307,7 @@ fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAgentMemorySystem>()?;
     m.add_class::<PyStorageBackend>()?;
     m.add_class::<PyVersionedKvStore>()?;
+    #[cfg(feature = "sql")]
+    m.add_class::<PyProllySQLStore>()?;
     Ok(())
 }

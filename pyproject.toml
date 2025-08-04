@@ -39,6 +39,7 @@ Repository = "https://github.com/zhangfengcdt/prollytree.git"
 "Bug Tracker" = "https://github.com/zhangfengcdt/prollytree/issues"
 
 [tool.maturin]
-features = ["python"]
+# Default features - can be overridden with --features flag
+features = ["python", "sql"]
 module-name = "prollytree"
 python-source = "python"

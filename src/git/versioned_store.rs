@@ -666,6 +666,20 @@ where
     pub fn get_commits(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
         self.get_commits_for_key(key)
     }
+
+    /// Get the current HEAD commit ID
+    pub fn current_commit(&self) -> Result<gix::ObjectId, GitKvError> {
+        let head = self
+            .git_repo
+            .head()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
+
+        let head_commit_id = head.id().ok_or_else(|| {
+            GitKvError::GitObjectError("HEAD does not point to a commit".to_string())
+        })?;
+
+        Ok(head_commit_id.detach())
+    }
 }
 
 // Implement TreeConfigSaver for GitNodeStorage
