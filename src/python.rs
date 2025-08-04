@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use crate::{
     agent::{AgentMemorySystem, MemoryType},
     config::TreeConfig,
-    git::{types::StorageBackend, GitVersionedKvStore},
+    git::{types::StorageBackend, versioned_store::HistoricalCommitAccess, GitVersionedKvStore},
     proof::Proof,
     storage::{FileNodeStorage, InMemoryNodeStorage},
     tree::{ProllyTree, Tree},
@@ -889,6 +889,64 @@ impl PyVersionedKvStore {
 
         Python::with_gil(|py| {
             let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = history
+                .iter()
+                .map(|commit| {
+                    let mut map = HashMap::new();
+                    map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
+                    map.insert("author".to_string(), commit.author.clone().into_py(py));
+                    map.insert(
+                        "committer".to_string(),
+                        commit.committer.clone().into_py(py),
+                    );
+                    map.insert("message".to_string(), commit.message.clone().into_py(py));
+                    map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
+                    Ok(map)
+                })
+                .collect();
+            results
+        })
+    }
+
+    fn get_commits_for_key(
+        &self,
+        key: &Bound<'_, PyBytes>,
+    ) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+        let key_vec = key.as_bytes().to_vec();
+        let store = self.inner.lock().unwrap();
+
+        let commits = store
+            .get_commits_for_key(&key_vec)
+            .map_err(|e| PyValueError::new_err(format!("Failed to get commits for key: {}", e)))?;
+
+        Python::with_gil(|py| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits
+                .iter()
+                .map(|commit| {
+                    let mut map = HashMap::new();
+                    map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
+                    map.insert("author".to_string(), commit.author.clone().into_py(py));
+                    map.insert(
+                        "committer".to_string(),
+                        commit.committer.clone().into_py(py),
+                    );
+                    map.insert("message".to_string(), commit.message.clone().into_py(py));
+                    map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
+                    Ok(map)
+                })
+                .collect();
+            results
+        })
+    }
+
+    fn get_commit_history(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+        let store = self.inner.lock().unwrap();
+
+        let commits = store
+            .get_commit_history()
+            .map_err(|e| PyValueError::new_err(format!("Failed to get commit history: {}", e)))?;
+
+        Python::with_gil(|py| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits
                 .iter()
                 .map(|commit| {
                     let mut map = HashMap::new();

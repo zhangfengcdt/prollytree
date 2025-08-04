@@ -22,17 +22,21 @@ if ./python/build_python.sh --all-features --install; then
         echo "   To use real OpenAI, run: export OPENAI_API_KEY='your-key'"
     fi
 
-    echo ""
-    echo "🚀 Running basic memory usage example..."
-    python basic_usage.py
+#    echo ""
+#    echo "🚀 Running basic memory usage example..."
+#    python basic_usage.py
+#
+#    echo ""
+#    echo "🚀 Running sql example..."
+#    python sql_example.py
+#
+#    echo ""
+#    echo "🚀 Running LangGraph memory example..."
+#    python langgraph_example.py
 
     echo ""
-    echo "🚀 Running sql example..."
-    python sql_example.py
-
-    echo ""
-    echo "🚀 Running LangGraph memory example..."
-    python langgraph_example.py
+    echo "🚀 Running LangGraph chronological memory example..."
+    python langgraph_chronological.py
 else
     echo "❌ Build failed. Please check the error messages above."
     echo ""
