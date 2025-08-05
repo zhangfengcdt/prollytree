@@ -13,23 +13,26 @@ build:
     rust: "1.75"
   jobs:
     pre_build:
-      # Install Rust if not already available
+      # Install Rust if not already available and ensure it's in PATH
       - |
+        export PATH="$HOME/.cargo/bin:$PATH"
         if ! command -v rustc &> /dev/null; then
           echo "Installing Rust..."
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source ~/.cargo/env
+          . "$HOME/.cargo/env"
         fi
-      # Verify Rust installation
-      - rustc --version
-      - cargo --version
+        echo "Rust installation check:"
+        rustc --version || echo "Rust not found"
+        cargo --version || echo "Cargo not found"
       # Install Python build tools
       - python -m pip install --upgrade pip setuptools wheel
       - python -m pip install maturin
       # Build and install the ProllyTree Python package with SQL features
-      - cd $READTHEDOCS_PROJECT_PATH
-      - maturin build --release --features "python sql" --out target/wheels
-      - python -m pip install target/wheels/prollytree-*.whl
+      - |
+        export PATH="$HOME/.cargo/bin:$PATH"
+        cd $READTHEDOCS_PROJECT_PATH
+        maturin build --release --features "python sql" --out target/wheels
+        python -m pip install target/wheels/prollytree-*.whl
 
 # Build documentation in the docs/ directory with Sphinx
 sphinx:
