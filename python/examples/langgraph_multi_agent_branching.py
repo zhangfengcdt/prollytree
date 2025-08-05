@@ -25,18 +25,18 @@ Architecture:
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          Agent Workflow                                │
+│                          Agent Workflow                                 │
 │                                                                         │
-│                      Supervisor Agent                                  │
-│                      (main branch)                                     │
+│                      Supervisor Agent                                   │
+│                      (main branch)                                      │
 │                           │                                             │
-│              ┌─────────────┼─────────────┐                             │
-│              ▼             ▼             ▼                             │
-│        Troubleshooting   Billing   Customer History                    │
-│        (branch: tech)  (branch: bill) (branch: history)               │
+│              ┌─────────────┼─────────────┐                              │
+│              ▼             ▼             ▼                              │
+│        Troubleshooting   Billing   Customer History                     │
+│        (branch: tech)  (branch: bill) (branch: history)                 │
 │                                                                         │
-│        Each agent operates in isolated branch with handoff tools       │
-│        Supervisor validates and merges results using semantic rules    │
+│        Each agent operates in isolated branch with handoff tools        │
+│        Supervisor validates and merges results using semantic rules     │
 └─────────────────────────────────────────────────────────────────────────┘
 
 Key Features:
@@ -65,9 +65,6 @@ except ImportError:
     from pydantic.v1 import BaseModel, Field
 
 from langgraph.graph import StateGraph, START, END, MessagesState
-from langgraph.prebuilt import create_react_agent
-from langgraph.types import Command
-from typing_extensions import TypedDict
 
 # ProllyTree imports
 from prollytree import VersionedKvStore
