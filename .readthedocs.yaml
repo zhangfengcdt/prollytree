@@ -13,7 +13,17 @@ build:
     rust: "1.75"
   jobs:
     pre_build:
-      # Install Rust and build the Python package
+      # Install Rust if not already available
+      - |
+        if ! command -v rustc &> /dev/null; then
+          echo "Installing Rust..."
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source ~/.cargo/env
+        fi
+      # Verify Rust installation
+      - rustc --version
+      - cargo --version
+      # Install Python build tools
       - python -m pip install --upgrade pip setuptools wheel
       - python -m pip install maturin
       # Build and install the ProllyTree Python package with SQL features
