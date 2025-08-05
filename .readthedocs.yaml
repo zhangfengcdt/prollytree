@@ -30,8 +30,13 @@ build:
       # Build and install the ProllyTree Python package with SQL features
       - |
         export PATH="$HOME/.cargo/bin:$PATH"
-        cd $READTHEDOCS_PROJECT_PATH
+        echo "Current directory: $(pwd)"
+        echo "Project path: $READTHEDOCS_PROJECT_PATH"
+        ls -la
+        echo "Looking for Cargo.toml:"
+        find . -name "Cargo.toml" -type f
         maturin build --release --features "python sql" --out target/wheels
+        ls -la target/wheels/
         python -m pip install target/wheels/prollytree-*.whl
 
 # Build documentation in the docs/ directory with Sphinx
