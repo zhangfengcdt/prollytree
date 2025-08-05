@@ -90,14 +90,28 @@ cargo doc --document-private-items --no-deps
 # Build Python bindings
 ./python/build_python.sh
 
+# Build with SQL features
+./python/build_python.sh --with-sql
+
+# Build with all features
+./python/build_python.sh --all-features
+
 # Build and install Python bindings
 ./python/build_python.sh --install
 
 # Run Python tests (after building)
 python -m pytest python/tests/
 
+# Run specific Python test
+python python/tests/test_prollytree.py
+python python/tests/test_sql.py
+python python/tests/test_agent.py
+
 # Run Python examples
 cd python/examples && ./run_examples.sh
+
+# Run specific example
+cd python/examples && ./run_examples.sh langgraph_chronological.py
 ```
 
 ### Git-Prolly CLI Usage
@@ -140,6 +154,21 @@ cargo bench --bench sql
 
 # Run Git benchmarks
 cargo bench --bench git
+
+# Run storage benchmarks
+cargo bench --bench storage
+```
+
+### Documentation
+```bash
+# Build Python documentation locally
+cd python/docs && ./build_docs.sh
+
+# Build Python documentation only (requires prollytree installed)
+cd python/docs && sphinx-build -b html . _build/html
+
+# Serve documentation locally
+cd python/docs/_build/html && python -m http.server 8000
 ```
 
 ## Testing Patterns
@@ -155,6 +184,22 @@ cargo bench --bench git
 - Ensure Python bindings are built before running tests
 
 ## Important Implementation Details
+
+### Multi-Layer Architecture
+The codebase implements a layered architecture where each layer builds on the previous:
+
+1. **Core Tree Layer** (`src/tree.rs`, `src/node.rs`): Probabilistic B-tree with Merkle properties
+2. **Storage Layer** (`src/storage.rs`, `src/rocksdb/`, `src/git/storage.rs`): Pluggable backends
+3. **Version Control Layer** (`src/git/versioned_store.rs`): Git-like operations on trees
+4. **SQL Layer** (`src/sql.rs`): GlueSQL integration for query capabilities
+5. **Agent Memory Layer** (`src/agent/`): AI-specific memory abstractions
+6. **Language Bindings** (`src/python.rs`): Cross-language API exposure
+
+### Cross-Language Integration
+- **Rust-Python Boundary**: `src/python.rs` exposes all major features via PyO3
+- **Type Translation**: Rust types are carefully mapped to Python equivalents
+- **Error Handling**: Rust Results become Python exceptions with proper context
+- **Memory Safety**: PyO3 handles reference counting and garbage collection boundaries
 
 ### Tree Operations
 - The tree uses probabilistic balancing based on content hashes
@@ -193,6 +238,21 @@ cargo bench --bench git
 - Enable LRU cache for read-heavy workloads
 - Consider RocksDB backend for large datasets
 
+## Project Structure
+
+### Multi-Language Architecture
+- **Rust Core**: High-performance tree implementation with multiple storage backends
+- **Python Bindings**: Complete API coverage via PyO3 with SQL, versioning, and agent memory features
+- **CLI Tool**: `git-prolly` command-line interface for Git-like operations
+- **Documentation**: Auto-generated Sphinx docs at https://prollytree.readthedocs.io/
+
+### Recent Additions
+- **LangGraph Integration**: Examples showing AI agent workflows with ProllyTree memory
+- **SQL API**: Complete SQL interface exposed to Python via GlueSQL
+- **Historical Commit Access**: Track and retrieve commit history for specific keys
+- **Enhanced Build System**: Feature-specific build flags for Python bindings
+- **Comprehensive Documentation**: Read the Docs integration with auto-generated API reference
+
 ## Project Dependencies
 
 ### Critical Dependencies
@@ -202,3 +262,12 @@ cargo bench --bench git
 - `gluesql-core`: SQL query engine (optional feature)
 - `pyo3`: Python bindings (optional feature)
 - `rocksdb`: Persistent storage backend (optional feature)
+- `maturin`: Python extension building (for development)
+
+# important-instruction-reminders
+Do what has been asked; nothing more, nothing less.
+NEVER create files unless they're absolutely necessary for achieving your goal.
+ALWAYS prefer editing an existing file to creating a new one.
+NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+
+Note: This project has comprehensive documentation auto-generation via Sphinx at https://prollytree.readthedocs.io/ - prefer directing users there rather than creating new documentation files.
