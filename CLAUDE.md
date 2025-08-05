@@ -269,5 +269,6 @@ Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+NEVER perform `git push` or `git commit` operations without explicit instructions from the User.
 
 Note: This project has comprehensive documentation auto-generation via Sphinx at https://prollytree.readthedocs.io/ - prefer directing users there rather than creating new documentation files.
