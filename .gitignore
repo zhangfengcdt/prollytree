@@ -62,3 +62,14 @@ build/
 .mypy_cache/
 .tox/
 *.whl
+
+# Documentation build files
+python/docs/_build/
+python/docs/.doctrees/
+python/docs/_static/
+python/docs/_templates/
+
+# Sphinx temporary files
+.buildinfo
+*.inv
+searchindex.js

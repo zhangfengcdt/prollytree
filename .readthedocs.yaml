@@ -1,0 +1,41 @@
+# .readthedocs.yaml
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+
+# Required
+version: 2
+
+# Set the OS, Python version and other tools you might need
+build:
+  os: ubuntu-22.04
+  tools:
+    python: "3.11"
+    rust: "1.75"
+  jobs:
+    pre_create_environment:
+      # Install system dependencies
+      - apt-get update
+      - apt-get install -y build-essential pkg-config libssl-dev curl
+    pre_build:
+      # Install Rust and build the Python package
+      - python -m pip install --upgrade pip setuptools wheel
+      - python -m pip install maturin
+      # Build and install the ProllyTree Python package with SQL features
+      - cd $READTHEDOCS_PROJECT_PATH
+      - maturin build --release --features "python sql" --out target/wheels
+      - python -m pip install target/wheels/prollytree-*.whl
+
+# Build documentation in the docs/ directory with Sphinx
+sphinx:
+  configuration: python/docs/conf.py
+  fail_on_warning: false
+
+# Python requirements for documentation
+python:
+  install:
+    - requirements: python/docs/requirements.txt
+
+# Output formats
+formats:
+  - htmlzip
+  - pdf
