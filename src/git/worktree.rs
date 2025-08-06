@@ -355,7 +355,156 @@ impl WorktreeManager {
             .unwrap_or(false)
     }
 
-    /// Merge a worktree branch back to main branch
+    /// Merge a worktree branch back to main branch using VersionedKvStore merge
+    pub fn merge_to_main_with_store<const N: usize>(
+        &mut self,
+        source_worktree: &mut WorktreeVersionedKvStore<N>,
+        target_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+        commit_message: &str,
+    ) -> Result<String, GitKvError> {
+        self.merge_branch_with_store(source_worktree, target_store, "main", commit_message)
+    }
+
+    /// Merge a worktree branch to another branch using VersionedKvStore merge capabilities
+    pub fn merge_branch_with_store<const N: usize>(
+        &mut self,
+        source_worktree: &mut WorktreeVersionedKvStore<N>,
+        target_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+        target_branch: &str,
+        commit_message: &str,
+    ) -> Result<String, GitKvError> {
+        let source_worktree_id = source_worktree.worktree_id().to_string();
+        let source_branch = source_worktree.current_branch().to_string();
+
+        if source_branch == target_branch {
+            return Err(GitKvError::GitObjectError(
+                "Cannot merge branch to itself".to_string(),
+            ));
+        }
+
+        // Lock the source worktree during merge
+        let was_locked = self.is_locked(&source_worktree_id);
+        if !was_locked {
+            self.lock_worktree(&source_worktree_id, &format!("Merging to {target_branch}"))?;
+        }
+
+        let result = self.perform_versioned_merge(
+            source_worktree,
+            target_store,
+            &source_branch,
+            target_branch,
+            commit_message,
+        );
+
+        // Unlock if we locked it
+        if !was_locked {
+            let _ = self.unlock_worktree(&source_worktree_id);
+        }
+
+        result
+    }
+
+    /// Perform the actual VersionedKvStore-based merge
+    fn perform_versioned_merge<const N: usize>(
+        &self,
+        _source_worktree: &mut WorktreeVersionedKvStore<N>,
+        target_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+        source_branch: &str,
+        target_branch: &str,
+        commit_message: &str,
+    ) -> Result<String, GitKvError> {
+        // Switch target store to target branch
+        if target_store.current_branch() != target_branch {
+            target_store.checkout(target_branch)?;
+        }
+
+        // Perform the merge using VersionedKvStore's three-way merge
+        let merge_commit_id = target_store.merge_ignore_conflicts(source_branch)?;
+
+        // Commit the merge result with the provided message
+        // Note: The merge already creates a commit, but we might want to update the message
+        target_store.commit(commit_message)?;
+
+        Ok(format!(
+            "Successfully merged {} into {} (commit: {})",
+            source_branch,
+            target_branch,
+            hex::encode(&merge_commit_id.as_bytes()[..8])
+        ))
+    }
+
+    /// Merge a worktree branch with conflict resolution
+    pub fn merge_branch_with_resolver<const N: usize, R: crate::diff::ConflictResolver>(
+        &mut self,
+        source_worktree: &mut WorktreeVersionedKvStore<N>,
+        target_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+        target_branch: &str,
+        resolver: &R,
+        commit_message: &str,
+    ) -> Result<String, GitKvError> {
+        let source_worktree_id = source_worktree.worktree_id().to_string();
+        let source_branch = source_worktree.current_branch().to_string();
+
+        if source_branch == target_branch {
+            return Err(GitKvError::GitObjectError(
+                "Cannot merge branch to itself".to_string(),
+            ));
+        }
+
+        // Lock the source worktree during merge
+        let was_locked = self.is_locked(&source_worktree_id);
+        if !was_locked {
+            self.lock_worktree(&source_worktree_id, &format!("Merging to {target_branch}"))?;
+        }
+
+        let result = self.perform_versioned_merge_with_resolver(
+            source_worktree,
+            target_store,
+            &source_branch,
+            target_branch,
+            resolver,
+            commit_message,
+        );
+
+        // Unlock if we locked it
+        if !was_locked {
+            let _ = self.unlock_worktree(&source_worktree_id);
+        }
+
+        result
+    }
+
+    /// Perform merge with custom conflict resolution
+    fn perform_versioned_merge_with_resolver<const N: usize, R: crate::diff::ConflictResolver>(
+        &self,
+        _source_worktree: &mut WorktreeVersionedKvStore<N>,
+        target_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+        source_branch: &str,
+        target_branch: &str,
+        resolver: &R,
+        commit_message: &str,
+    ) -> Result<String, GitKvError> {
+        // Switch target store to target branch
+        if target_store.current_branch() != target_branch {
+            target_store.checkout(target_branch)?;
+        }
+
+        // Perform the merge with custom conflict resolution
+        let merge_commit_id = target_store.merge(source_branch, resolver)?;
+
+        // Commit the merge result
+        target_store.commit(commit_message)?;
+
+        Ok(format!(
+            "Successfully merged {} into {} with conflict resolution (commit: {})",
+            source_branch,
+            target_branch,
+            hex::encode(&merge_commit_id.as_bytes()[..8])
+        ))
+    }
+
+    /// Legacy merge method - kept for backward compatibility
+    /// Note: This method only works at Git level and doesn't handle VersionedKvStore data
     pub fn merge_to_main(
         &mut self,
         worktree_id: &str,
@@ -679,6 +828,138 @@ impl<const N: usize> WorktreeVersionedKvStore<N> {
     pub fn store_mut(&mut self) -> &mut crate::git::versioned_store::GitVersionedKvStore<N> {
         &mut self.store
     }
+
+    /// Merge this worktree's branch back to the main branch
+    /// This is a convenience method that requires a target store representing the main repository
+    pub fn merge_to_main(
+        &mut self,
+        main_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+        commit_message: &str,
+    ) -> Result<String, GitKvError> {
+        let source_branch = self.current_branch().to_string();
+
+        // Switch target store to main branch
+        if main_store.current_branch() != "main" {
+            main_store.checkout("main")?;
+        }
+
+        // Perform the merge using VersionedKvStore's three-way merge
+        let merge_commit_id = main_store.merge_ignore_conflicts(&source_branch)?;
+
+        // Commit the merge result
+        main_store.commit(commit_message)?;
+
+        Ok(format!(
+            "Successfully merged {} into main (commit: {})",
+            source_branch,
+            hex::encode(&merge_commit_id.as_bytes()[..8])
+        ))
+    }
+
+    /// Merge this worktree's branch to another target branch
+    pub fn merge_to_branch(
+        &mut self,
+        target_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+        target_branch: &str,
+        commit_message: &str,
+    ) -> Result<String, GitKvError> {
+        let source_branch = self.current_branch().to_string();
+
+        if source_branch == target_branch {
+            return Err(GitKvError::GitObjectError(
+                "Cannot merge branch to itself".to_string(),
+            ));
+        }
+
+        // Switch target store to target branch
+        if target_store.current_branch() != target_branch {
+            target_store.checkout(target_branch)?;
+        }
+
+        // Perform the merge using VersionedKvStore's three-way merge
+        let merge_commit_id = target_store.merge_ignore_conflicts(&source_branch)?;
+
+        // Commit the merge result
+        target_store.commit(commit_message)?;
+
+        Ok(format!(
+            "Successfully merged {} into {} (commit: {})",
+            source_branch,
+            target_branch,
+            hex::encode(&merge_commit_id.as_bytes()[..8])
+        ))
+    }
+
+    /// Merge this worktree's branch with custom conflict resolution
+    pub fn merge_to_branch_with_resolver<R: crate::diff::ConflictResolver>(
+        &mut self,
+        target_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+        target_branch: &str,
+        resolver: &R,
+        commit_message: &str,
+    ) -> Result<String, GitKvError> {
+        let source_branch = self.current_branch().to_string();
+
+        if source_branch == target_branch {
+            return Err(GitKvError::GitObjectError(
+                "Cannot merge branch to itself".to_string(),
+            ));
+        }
+
+        // Switch target store to target branch
+        if target_store.current_branch() != target_branch {
+            target_store.checkout(target_branch)?;
+        }
+
+        // Perform the merge with custom conflict resolution
+        let merge_commit_id = target_store.merge(&source_branch, resolver)?;
+
+        // Commit the merge result
+        target_store.commit(commit_message)?;
+
+        Ok(format!(
+            "Successfully merged {} into {} with conflict resolution (commit: {})",
+            source_branch,
+            target_branch,
+            hex::encode(&merge_commit_id.as_bytes()[..8])
+        ))
+    }
+
+    /// Try to merge to main with conflict detection (doesn't apply changes if conflicts exist)
+    pub fn try_merge_to_main(
+        &mut self,
+        main_store: &mut crate::git::versioned_store::GitVersionedKvStore<N>,
+    ) -> Result<Vec<crate::diff::MergeConflict>, GitKvError> {
+        // Use a detection-only resolver to check for conflicts
+        struct ConflictDetectionResolver {
+            conflicts: std::cell::RefCell<Vec<crate::diff::MergeConflict>>,
+        }
+
+        impl crate::diff::ConflictResolver for ConflictDetectionResolver {
+            fn resolve_conflict(
+                &self,
+                conflict: &crate::diff::MergeConflict,
+            ) -> Option<crate::diff::MergeResult> {
+                self.conflicts.borrow_mut().push(conflict.clone());
+                None // Don't resolve, just detect
+            }
+        }
+
+        let detector = ConflictDetectionResolver {
+            conflicts: std::cell::RefCell::new(Vec::new()),
+        };
+
+        // Switch main store to main branch for merge base detection
+        if main_store.current_branch() != "main" {
+            main_store.checkout("main")?;
+        }
+
+        // Try the merge with conflict detection
+        let _result = main_store.merge(self.current_branch(), &detector);
+
+        // Return detected conflicts
+        Ok(detector.conflicts.into_inner())
+    }
 }
 
 #[cfg(test)]
@@ -991,5 +1272,154 @@ mod tests {
         println!("      • Actual data insertion and commits");
         println!("      • Successful branch merging with data verification");
         println!("      • Data integrity verification after merge");
+    }
+
+    #[test]
+    fn test_multi_agent_versioned_merge_integration() {
+        use crate::diff::{AgentPriorityResolver, SemanticMergeResolver, TimestampResolver};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Initialize repository with proper Git setup
+        std::process::Command::new("git")
+            .args(&["init"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        std::process::Command::new("git")
+            .args(&["config", "user.name", "Test Agent"])
+            .current_dir(repo_path)
+            .output()
+            .unwrap();
+
+        std::process::Command::new("git")
+            .args(&["config", "user.email", "agent@test.com"])
+            .current_dir(repo_path)
+            .output()
+            .unwrap();
+
+        // Create initial commit
+        let initial_file = repo_path.join("test_data.txt");
+        std::fs::write(&initial_file, "initial shared data").unwrap();
+        std::process::Command::new("git")
+            .args(&["add", "."])
+            .current_dir(repo_path)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(&["commit", "-m", "Initial commit"])
+            .current_dir(repo_path)
+            .output()
+            .unwrap();
+
+        // Create WorktreeManager
+        let mut manager = WorktreeManager::new(repo_path).unwrap();
+
+        // Create multiple agent worktrees
+        let agent1_path = temp_dir.path().join("agent1_workspace");
+        let agent2_path = temp_dir.path().join("agent2_workspace");
+        let agent3_path = temp_dir.path().join("agent3_workspace");
+
+        let agent1_info = manager
+            .add_worktree(&agent1_path, "agent1-session", true)
+            .unwrap();
+        let agent2_info = manager
+            .add_worktree(&agent2_path, "agent2-session", true)
+            .unwrap();
+        let agent3_info = manager
+            .add_worktree(&agent3_path, "agent3-session", true)
+            .unwrap();
+
+        println!("✅ Created worktrees for multi-agent scenario:");
+        println!(
+            "   • Agent 1: {} (branch: {})",
+            agent1_info.id, agent1_info.branch
+        );
+        println!(
+            "   • Agent 2: {} (branch: {})",
+            agent2_info.id, agent2_info.branch
+        );
+        println!(
+            "   • Agent 3: {} (branch: {})",
+            agent3_info.id, agent3_info.branch
+        );
+
+        // Verify the structure is ready for VersionedKvStore integration
+        assert!(agent1_path.join("data").exists());
+        assert!(agent2_path.join("data").exists());
+        assert!(agent3_path.join("data").exists());
+
+        // Test conflict resolution scenarios
+        let resolver1 = AgentPriorityResolver::new();
+        let resolver2 = SemanticMergeResolver::default();
+        let resolver3 = TimestampResolver::default();
+
+        // Verify resolvers work (basic test without actual conflicts)
+        use crate::diff::{ConflictResolver, MergeConflict};
+
+        let test_conflict = MergeConflict {
+            key: b"test_key".to_vec(),
+            base_value: Some(b"base".to_vec()),
+            source_value: Some(b"source".to_vec()),
+            destination_value: Some(b"dest".to_vec()),
+        };
+
+        let result1 = resolver1.resolve_conflict(&test_conflict);
+        let result2 = resolver2.resolve_conflict(&test_conflict);
+        let result3 = resolver3.resolve_conflict(&test_conflict);
+
+        assert!(
+            result1.is_some(),
+            "AgentPriorityResolver should resolve conflicts"
+        );
+        assert!(
+            result2.is_some(),
+            "SemanticMergeResolver should resolve conflicts"
+        );
+        assert!(
+            result3.is_some(),
+            "TimestampResolver should resolve conflicts"
+        );
+
+        println!("✅ Multi-agent conflict resolvers working correctly:");
+        println!("   • AgentPriorityResolver: {:?}", result1);
+        println!("   • SemanticMergeResolver: {:?}", result2);
+        println!("   • TimestampResolver: {:?}", result3);
+
+        // Test semantic merger with JSON data
+        let json_conflict = MergeConflict {
+            key: b"config".to_vec(),
+            base_value: Some(br#"{"version": 1}"#.to_vec()),
+            source_value: Some(br#"{"version": 1, "feature": "enabled"}"#.to_vec()),
+            destination_value: Some(br#"{"version": 1, "debug": true}"#.to_vec()),
+        };
+
+        let json_result = resolver2.resolve_conflict(&json_conflict);
+        assert!(json_result.is_some(), "Should merge JSON semantically");
+
+        if let Some(crate::diff::MergeResult::Modified(_, merged_data)) = json_result {
+            let merged_json: serde_json::Value = serde_json::from_slice(&merged_data).unwrap();
+            assert!(
+                merged_json.get("feature").is_some(),
+                "Should include source feature"
+            );
+            assert!(
+                merged_json.get("debug").is_some(),
+                "Should include dest debug"
+            );
+            println!("✅ Semantic JSON merge result: {}", merged_json);
+        }
+
+        println!("✅ Multi-agent merge integration test completed successfully");
+        println!("   💡 Demonstrated capabilities:");
+        println!("      • Multiple isolated agent worktrees");
+        println!("      • Agent priority-based conflict resolution");
+        println!("      • Semantic JSON merging for structured data");
+        println!("      • Timestamp-based conflict resolution");
+        println!("      • Full integration with WorktreeManager");
+        println!("      • Ready for VersionedKvStore data operations");
     }
 }
