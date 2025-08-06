@@ -23,7 +23,6 @@ import tempfile
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 
 def test_versioned_store_with_worktree_merge():
