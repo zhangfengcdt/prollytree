@@ -741,6 +741,73 @@ impl From<StorageBackend> for PyStorageBackend {
     }
 }
 
+/// Python wrapper for MergeConflict
+#[pyclass(name = "MergeConflict")]
+#[derive(Clone)]
+struct PyMergeConflict {
+    key: Vec<u8>,
+    base_value: Option<Vec<u8>>,
+    source_value: Option<Vec<u8>>,
+    destination_value: Option<Vec<u8>>,
+}
+
+#[pymethods]
+impl PyMergeConflict {
+    #[getter]
+    fn key(&self, py: Python) -> PyResult<Py<PyBytes>> {
+        Ok(PyBytes::new_bound(py, &self.key).into())
+    }
+
+    #[getter]
+    fn base_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .base_value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    #[getter]
+    fn source_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .source_value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    #[getter]
+    fn destination_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .destination_value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MergeConflict(key={:?}, base={:?}, source={:?}, dest={:?})",
+            String::from_utf8_lossy(&self.key),
+            self.base_value
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v).to_string()),
+            self.source_value
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v).to_string()),
+            self.destination_value
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v).to_string()),
+        )
+    }
+}
+
+/// Python enum for conflict resolution strategies
+#[pyclass(name = "ConflictResolution", eq, eq_int)]
+#[derive(Clone, PartialEq)]
+enum PyConflictResolution {
+    IgnoreAll,
+    TakeSource,
+    TakeDestination,
+}
+
 #[pyclass(name = "VersionedKvStore")]
 struct PyVersionedKvStore {
     inner: Arc<Mutex<GitVersionedKvStore<32>>>,
@@ -965,9 +1032,331 @@ impl PyVersionedKvStore {
         })
     }
 
+    /// Merge another branch into the current branch
+    ///
+    /// Args:
+    ///     source_branch: Name of the branch to merge from
+    ///     conflict_resolution: Strategy for resolving conflicts (default: IgnoreAll)
+    ///
+    /// Returns:
+    ///     str: The commit ID of the merge commit
+    ///
+    /// Raises:
+    ///     ValueError: If merge fails or has unresolved conflicts
+    #[pyo3(signature = (source_branch, conflict_resolution=None))]
+    fn merge(
+        &self,
+        source_branch: String,
+        conflict_resolution: Option<PyConflictResolution>,
+    ) -> PyResult<String> {
+        let mut store = self.inner.lock().unwrap();
+
+        let resolution = conflict_resolution.unwrap_or(PyConflictResolution::IgnoreAll);
+
+        let commit_id = match resolution {
+            PyConflictResolution::IgnoreAll => store
+                .merge_ignore_conflicts(&source_branch)
+                .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?,
+            PyConflictResolution::TakeSource => {
+                let resolver = crate::diff::TakeSourceResolver;
+                store
+                    .merge(&source_branch, &resolver)
+                    .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+            }
+            PyConflictResolution::TakeDestination => {
+                let resolver = crate::diff::TakeDestinationResolver;
+                store
+                    .merge(&source_branch, &resolver)
+                    .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+            }
+        };
+
+        Ok(commit_id.to_hex().to_string())
+    }
+
+    /// Attempt to merge another branch and return any conflicts
+    ///
+    /// Args:
+    ///     source_branch: Name of the branch to merge from
+    ///
+    /// Returns:
+    ///     tuple: (success: bool, conflicts: List[MergeConflict])
+    ///            If success is True, conflicts will be empty and merge was applied
+    ///            If success is False, conflicts contains unresolved conflicts and merge was not applied
+    fn try_merge(&self, source_branch: String) -> PyResult<(bool, Vec<PyMergeConflict>)> {
+        let mut store = self.inner.lock().unwrap();
+
+        // Try to merge with a no-op resolver that leaves all conflicts unresolved
+        struct NoOpResolver;
+        impl crate::diff::ConflictResolver for NoOpResolver {
+            fn resolve_conflict(
+                &self,
+                _conflict: &crate::diff::MergeConflict,
+            ) -> Option<crate::diff::MergeResult> {
+                None // Leave all conflicts unresolved
+            }
+        }
+
+        match store.merge(&source_branch, &NoOpResolver) {
+            Ok(_commit_id) => {
+                // Merge succeeded with no conflicts
+                Ok((true, Vec::new()))
+            }
+            Err(crate::git::types::GitKvError::MergeConflictError(conflicts)) => {
+                // Convert conflicts to Python format
+                let py_conflicts: Vec<PyMergeConflict> = conflicts
+                    .into_iter()
+                    .map(|c| PyMergeConflict {
+                        key: c.key,
+                        base_value: c.base_value,
+                        source_value: c.source_value,
+                        destination_value: c.destination_value,
+                    })
+                    .collect();
+                Ok((false, py_conflicts))
+            }
+            Err(e) => Err(PyValueError::new_err(format!("Merge failed: {}", e))),
+        }
+    }
+
     fn storage_backend(&self) -> PyResult<PyStorageBackend> {
         let store = self.inner.lock().unwrap();
         Ok(store.storage_backend().clone().into())
+    }
+}
+
+#[cfg(feature = "git")]
+#[pyclass(name = "WorktreeManager")]
+struct PyWorktreeManager {
+    inner: Arc<Mutex<crate::git::worktree::WorktreeManager>>,
+}
+
+#[cfg(feature = "git")]
+#[pymethods]
+impl PyWorktreeManager {
+    #[new]
+    fn new(repo_path: String) -> PyResult<Self> {
+        let manager = crate::git::worktree::WorktreeManager::new(repo_path).map_err(|e| {
+            PyValueError::new_err(format!("Failed to create worktree manager: {}", e))
+        })?;
+
+        Ok(PyWorktreeManager {
+            inner: Arc::new(Mutex::new(manager)),
+        })
+    }
+
+    fn add_worktree(
+        &self,
+        path: String,
+        branch: String,
+        create_branch: bool,
+    ) -> PyResult<HashMap<String, Py<PyAny>>> {
+        let mut manager = self.inner.lock().unwrap();
+        let info = manager
+            .add_worktree(path, &branch, create_branch)
+            .map_err(|e| PyValueError::new_err(format!("Failed to add worktree: {}", e)))?;
+
+        Python::with_gil(|py| {
+            let mut map = HashMap::new();
+            map.insert("id".to_string(), info.id.into_py(py));
+            map.insert("path".to_string(), info.path.to_string_lossy().into_py(py));
+            map.insert("branch".to_string(), info.branch.into_py(py));
+            map.insert("is_linked".to_string(), info.is_linked.into_py(py));
+            Ok(map)
+        })
+    }
+
+    fn remove_worktree(&self, worktree_id: String) -> PyResult<()> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .remove_worktree(&worktree_id)
+            .map_err(|e| PyValueError::new_err(format!("Failed to remove worktree: {}", e)))?;
+        Ok(())
+    }
+
+    fn lock_worktree(&self, worktree_id: String, reason: String) -> PyResult<()> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .lock_worktree(&worktree_id, &reason)
+            .map_err(|e| PyValueError::new_err(format!("Failed to lock worktree: {}", e)))?;
+        Ok(())
+    }
+
+    fn unlock_worktree(&self, worktree_id: String) -> PyResult<()> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .unlock_worktree(&worktree_id)
+            .map_err(|e| PyValueError::new_err(format!("Failed to unlock worktree: {}", e)))?;
+        Ok(())
+    }
+
+    fn list_worktrees(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+        let manager = self.inner.lock().unwrap();
+        let worktrees = manager.list_worktrees();
+
+        Python::with_gil(|py| {
+            let results: Vec<HashMap<String, Py<PyAny>>> = worktrees
+                .iter()
+                .map(|info| {
+                    let mut map = HashMap::new();
+                    map.insert("id".to_string(), info.id.clone().into_py(py));
+                    map.insert("path".to_string(), info.path.to_string_lossy().into_py(py));
+                    map.insert("branch".to_string(), info.branch.clone().into_py(py));
+                    map.insert("is_linked".to_string(), info.is_linked.into_py(py));
+                    map
+                })
+                .collect();
+            Ok(results)
+        })
+    }
+
+    fn is_locked(&self, worktree_id: String) -> PyResult<bool> {
+        let manager = self.inner.lock().unwrap();
+        Ok(manager.is_locked(&worktree_id))
+    }
+
+    /// Merge a worktree branch back to main branch
+    fn merge_to_main(&self, worktree_id: String, commit_message: String) -> PyResult<String> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .merge_to_main(&worktree_id, &commit_message)
+            .map_err(|e| PyValueError::new_err(format!("Failed to merge to main: {}", e)))
+    }
+
+    /// Merge a worktree branch to another target branch
+    fn merge_branch(
+        &self,
+        source_worktree_id: String,
+        target_branch: String,
+        commit_message: String,
+    ) -> PyResult<String> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .merge_branch(&source_worktree_id, &target_branch, &commit_message)
+            .map_err(|e| PyValueError::new_err(format!("Failed to merge branch: {}", e)))
+    }
+
+    /// Get the current commit hash of a branch
+    fn get_branch_commit(&self, branch: String) -> PyResult<String> {
+        let manager = self.inner.lock().unwrap();
+        manager
+            .get_branch_commit(&branch)
+            .map_err(|e| PyValueError::new_err(format!("Failed to get branch commit: {}", e)))
+    }
+
+    /// List all branches in the repository
+    fn list_branches(&self) -> PyResult<Vec<String>> {
+        let manager = self.inner.lock().unwrap();
+        manager
+            .list_branches()
+            .map_err(|e| PyValueError::new_err(format!("Failed to list branches: {}", e)))
+    }
+}
+
+#[cfg(feature = "git")]
+#[pyclass(name = "WorktreeVersionedKvStore")]
+struct PyWorktreeVersionedKvStore {
+    inner: Arc<Mutex<crate::git::worktree::WorktreeVersionedKvStore<32>>>,
+}
+
+#[cfg(feature = "git")]
+#[pymethods]
+impl PyWorktreeVersionedKvStore {
+    #[staticmethod]
+    fn from_worktree(
+        worktree_path: String,
+        worktree_id: String,
+        branch: String,
+        manager: &PyWorktreeManager,
+    ) -> PyResult<Self> {
+        use std::path::PathBuf;
+
+        let worktree_info = crate::git::worktree::WorktreeInfo {
+            id: worktree_id,
+            path: PathBuf::from(worktree_path),
+            branch,
+            is_linked: true,
+            lock_file: None,
+        };
+
+        let store = crate::git::worktree::WorktreeVersionedKvStore::from_worktree(
+            worktree_info,
+            Arc::clone(&manager.inner),
+        )
+        .map_err(|e| PyValueError::new_err(format!("Failed to create worktree store: {}", e)))?;
+
+        Ok(PyWorktreeVersionedKvStore {
+            inner: Arc::new(Mutex::new(store)),
+        })
+    }
+
+    fn worktree_id(&self) -> PyResult<String> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.worktree_id().to_string())
+    }
+
+    fn current_branch(&self) -> PyResult<String> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.current_branch().to_string())
+    }
+
+    fn is_locked(&self) -> PyResult<bool> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.is_locked())
+    }
+
+    fn lock(&self, reason: String) -> PyResult<()> {
+        let store = self.inner.lock().unwrap();
+        store
+            .lock(&reason)
+            .map_err(|e| PyValueError::new_err(format!("Failed to lock worktree: {}", e)))?;
+        Ok(())
+    }
+
+    fn unlock(&self) -> PyResult<()> {
+        let store = self.inner.lock().unwrap();
+        store
+            .unlock()
+            .map_err(|e| PyValueError::new_err(format!("Failed to unlock worktree: {}", e)))?;
+        Ok(())
+    }
+
+    // Delegate key-value operations to the underlying store
+    fn insert(&self, key: Vec<u8>, value: Vec<u8>) -> PyResult<()> {
+        let mut store = self.inner.lock().unwrap();
+        store
+            .store_mut()
+            .insert(key, value)
+            .map_err(|e| PyValueError::new_err(format!("Failed to insert: {}", e)))?;
+        Ok(())
+    }
+
+    fn get(&self, key: Vec<u8>) -> PyResult<Option<Vec<u8>>> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.store().get(&key))
+    }
+
+    fn delete(&self, key: Vec<u8>) -> PyResult<bool> {
+        let mut store = self.inner.lock().unwrap();
+        let result = store
+            .store_mut()
+            .delete(&key)
+            .map_err(|e| PyValueError::new_err(format!("Failed to delete: {}", e)))?;
+        Ok(result)
+    }
+
+    fn commit(&self, message: String) -> PyResult<String> {
+        let mut store = self.inner.lock().unwrap();
+        let commit_id = store
+            .store_mut()
+            .commit(&message)
+            .map_err(|e| PyValueError::new_err(format!("Failed to commit: {}", e)))?;
+        Ok(commit_id.to_hex().to_string())
+    }
+
+    fn list_keys(&self) -> PyResult<Vec<Vec<u8>>> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.store().list_keys())
     }
 }
 
@@ -1364,7 +1753,13 @@ fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemoryType>()?;
     m.add_class::<PyAgentMemorySystem>()?;
     m.add_class::<PyStorageBackend>()?;
+    m.add_class::<PyMergeConflict>()?;
+    m.add_class::<PyConflictResolution>()?;
     m.add_class::<PyVersionedKvStore>()?;
+    #[cfg(feature = "git")]
+    m.add_class::<PyWorktreeManager>()?;
+    #[cfg(feature = "git")]
+    m.add_class::<PyWorktreeVersionedKvStore>()?;
     #[cfg(feature = "sql")]
     m.add_class::<PyProllySQLStore>()?;
     Ok(())

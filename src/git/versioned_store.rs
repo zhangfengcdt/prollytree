@@ -13,6 +13,7 @@ limitations under the License.
 */
 
 use crate::config::TreeConfig;
+use crate::diff::{ConflictResolver, IgnoreConflictsResolver};
 use crate::digest::ValueDigest;
 use crate::git::storage::GitNodeStorage;
 use crate::git::types::*;
@@ -757,6 +758,353 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         self.reload_tree_from_head()?;
 
         Ok(())
+    }
+
+    /// Merge another branch into the current branch with configurable conflict resolution
+    ///
+    /// This method performs a three-way merge using the ProllyTree merge functionality.
+    /// It merges changes from the source branch into the current (destination) branch.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_branch` - The branch to merge from
+    /// * `resolver` - Conflict resolver to handle merge conflicts
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(commit_id) if merge succeeded, or Err with unresolved conflicts
+    pub fn merge<R: ConflictResolver>(
+        &mut self,
+        source_branch: &str,
+        resolver: &R,
+    ) -> Result<gix::ObjectId, GitKvError> {
+        // Get current branch name
+        let dest_branch = self.current_branch.clone();
+
+        // Find common base commit
+        let base_commit = self.find_merge_base(&dest_branch, source_branch)?;
+
+        // Note: We don't need the tree root hashes for key-value level merge
+        // let base_root = self.get_tree_root_at_commit(&base_commit)?;
+        // let source_root = self.get_tree_root_at_branch(source_branch)?;
+        // let dest_root = self.tree.get_root_hash().unwrap(); // Current tree
+
+        // Perform the merge at the key-value level instead of tree level
+        // Get the actual key-value data from each branch
+        let base_kv = self.collect_keys_at_commit(&base_commit)?;
+        let source_kv = self.collect_keys_at_commit(&self.get_branch_commit(source_branch)?)?;
+        let mut dest_kv = HashMap::new();
+
+        // Collect current tree data
+        for key in self.tree.collect_keys() {
+            if let Some(value) = self.get(&key) {
+                dest_kv.insert(key, value);
+            }
+        }
+
+        // Perform three-way merge at key-value level
+        let mut merge_results = Vec::new();
+        let mut all_keys = std::collections::HashSet::new();
+
+        // Collect all keys from all three states
+        all_keys.extend(base_kv.keys().cloned());
+        all_keys.extend(source_kv.keys().cloned());
+        all_keys.extend(dest_kv.keys().cloned());
+
+        for key in all_keys {
+            let base_value = base_kv.get(&key);
+            let source_value = source_kv.get(&key);
+            let dest_value = dest_kv.get(&key);
+
+            match (base_value, source_value, dest_value) {
+                // Key exists in all three - check for modifications
+                (Some(base), Some(source), Some(dest)) => {
+                    if base == source && base == dest {
+                        // No changes, skip
+                        continue;
+                    } else if base == dest && base != source {
+                        // Only source changed - take source value
+                        merge_results.push(crate::diff::MergeResult::Modified(key, source.clone()));
+                    } else if base == source && base != dest {
+                        // Only dest changed - keep dest value (no-op)
+                        continue;
+                    } else if source == dest {
+                        // Both changed to same value - keep it (no-op)
+                        continue;
+                    } else {
+                        // Conflict: both branches modified differently
+                        let conflict = crate::diff::MergeConflict {
+                            key: key.clone(),
+                            base_value: Some(base.clone()),
+                            source_value: Some(source.clone()),
+                            destination_value: Some(dest.clone()),
+                        };
+                        merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                    }
+                }
+                // Key added in source, not in base or dest
+                (None, Some(source), None) => {
+                    merge_results.push(crate::diff::MergeResult::Added(key, source.clone()));
+                }
+                // Key added in dest, not in base or source - keep it (no-op)
+                (None, None, Some(_dest)) => {
+                    continue;
+                }
+                // Key added in both source and dest - potential conflict
+                (None, Some(source), Some(dest)) => {
+                    if source == dest {
+                        // Both added same value - keep it (no-op)
+                        continue;
+                    } else {
+                        // Conflict: both branches added different values
+                        let conflict = crate::diff::MergeConflict {
+                            key: key.clone(),
+                            base_value: None,
+                            source_value: Some(source.clone()),
+                            destination_value: Some(dest.clone()),
+                        };
+                        merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                    }
+                }
+                // Key deleted in source, still exists in dest
+                (Some(_base), None, Some(_dest)) => {
+                    // Source deleted it - apply deletion
+                    merge_results.push(crate::diff::MergeResult::Removed(key));
+                }
+                // Key deleted in dest, still exists in source - keep deletion (no-op)
+                (Some(_base), Some(_source), None) => {
+                    continue;
+                }
+                // Key deleted in both - no-op
+                (Some(_base), None, None) => {
+                    continue;
+                }
+                // All other cases - no action needed
+                _ => continue,
+            }
+        }
+
+        // Apply conflict resolution
+        let mut resolved_results = Vec::new();
+        let mut unresolved_conflicts = Vec::new();
+
+        for result in merge_results {
+            match result {
+                crate::diff::MergeResult::Conflict(conflict) => {
+                    if let Some(resolved_result) = resolver.resolve_conflict(&conflict) {
+                        resolved_results.push(resolved_result);
+                    } else {
+                        unresolved_conflicts.push(conflict);
+                    }
+                }
+                other => resolved_results.push(other),
+            }
+        }
+
+        // If there are unresolved conflicts, return them
+        if !unresolved_conflicts.is_empty() {
+            return Err(GitKvError::MergeConflictError(unresolved_conflicts));
+        }
+
+        // Apply resolved merge results directly to current tree
+        for result in resolved_results {
+            match result {
+                crate::diff::MergeResult::Added(key, value) => {
+                    self.tree.insert(key, value);
+                }
+                crate::diff::MergeResult::Modified(key, value) => {
+                    self.tree.insert(key, value); // insert overwrites existing
+                }
+                crate::diff::MergeResult::Removed(key) => {
+                    self.tree.delete(&key);
+                }
+                crate::diff::MergeResult::Conflict(_) => {
+                    // Should not happen since we handled conflicts above
+                    unreachable!("Conflicts should have been resolved");
+                }
+            }
+        }
+
+        // Clear staging area since we've applied changes directly to tree
+        self.staging_area.clear();
+        self.save_staging_area()?;
+
+        // Create merge commit
+        let message = format!("Merge branch '{source_branch}' into '{dest_branch}'");
+        let merge_commit_id = self.create_merge_commit(&message, source_branch)?;
+
+        Ok(merge_commit_id)
+    }
+
+    /// Convenience method to merge with default IgnoreConflictsResolver
+    pub fn merge_ignore_conflicts(
+        &mut self,
+        source_branch: &str,
+    ) -> Result<gix::ObjectId, GitKvError> {
+        self.merge(source_branch, &IgnoreConflictsResolver)
+    }
+
+    /// Find the merge base (common ancestor) of two branches
+    fn find_merge_base(&self, branch1: &str, branch2: &str) -> Result<gix::ObjectId, GitKvError> {
+        // Get commit IDs for both branches
+        let commit1 = self.get_branch_commit(branch1)?;
+        let commit2 = self.get_branch_commit(branch2)?;
+
+        // For now, use a simple approach: find common ancestor by walking history
+        // This is a simplified implementation - a real merge-base algorithm would be more sophisticated
+        let mut visited1 = std::collections::HashSet::new();
+        let mut queue1 = std::collections::VecDeque::new();
+        queue1.push_back(commit1);
+
+        // Collect all ancestors of branch1
+        while let Some(commit_id) = queue1.pop_front() {
+            if visited1.contains(&commit_id) {
+                continue;
+            }
+            visited1.insert(commit_id);
+
+            // Add parents
+            if let Ok(parents) = self.get_commit_parents(&commit_id) {
+                for parent in parents {
+                    if !visited1.contains(&parent) {
+                        queue1.push_back(parent);
+                    }
+                }
+            }
+        }
+
+        // Walk branch2 and find first common ancestor
+        let mut visited2 = std::collections::HashSet::new();
+        let mut queue2 = std::collections::VecDeque::new();
+        queue2.push_back(commit2);
+
+        while let Some(commit_id) = queue2.pop_front() {
+            if visited2.contains(&commit_id) {
+                continue;
+            }
+            visited2.insert(commit_id);
+
+            // Check if this commit is in branch1's ancestors
+            if visited1.contains(&commit_id) {
+                return Ok(commit_id);
+            }
+
+            // Add parents
+            if let Ok(parents) = self.get_commit_parents(&commit_id) {
+                for parent in parents {
+                    if !visited2.contains(&parent) {
+                        queue2.push_back(parent);
+                    }
+                }
+            }
+        }
+
+        Err(GitKvError::GitObjectError(
+            "No common ancestor found".to_string(),
+        ))
+    }
+
+    /// Get commit ID for a branch
+    fn get_branch_commit(&self, branch: &str) -> Result<gix::ObjectId, GitKvError> {
+        let branch_ref = format!("refs/heads/{branch}");
+        match self.git_repo.refs.find(&branch_ref) {
+            Ok(reference) => match reference.target.try_id() {
+                Some(commit_id) => Ok(commit_id.to_owned()),
+                None => Err(GitKvError::GitObjectError(format!(
+                    "Branch {branch} does not point to a commit"
+                ))),
+            },
+            Err(_) => Err(GitKvError::BranchNotFound(branch.to_string())),
+        }
+    }
+
+    /// Get parents of a commit
+    fn get_commit_parents(
+        &self,
+        commit_id: &gix::ObjectId,
+    ) -> Result<Vec<gix::ObjectId>, GitKvError> {
+        let mut buffer = Vec::new();
+        let commit_obj = self
+            .git_repo
+            .objects
+            .find(commit_id, &mut buffer)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to find commit: {e}")))?;
+
+        let parents = match commit_obj.decode() {
+            Ok(gix::objs::ObjectRef::Commit(commit)) => commit.parents().collect(),
+            _ => {
+                return Err(GitKvError::GitObjectError(
+                    "Object is not a commit".to_string(),
+                ))
+            }
+        };
+        Ok(parents)
+    }
+
+    /// Create a merge commit
+    fn create_merge_commit(
+        &mut self,
+        message: &str,
+        source_branch: &str,
+    ) -> Result<gix::ObjectId, GitKvError> {
+        // Get the source branch commit as second parent
+        let _source_commit = self.get_branch_commit(source_branch)?;
+
+        // Save current tree state
+        self.tree.persist_root();
+        self.tree
+            .save_config()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
+
+        // Save tree config to git
+        self.save_tree_config_to_git_internal()?;
+
+        // Create git tree and commit (similar to regular commit but with two parents)
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+
+        // Stage all files
+        let add_output = std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(&git_root)
+            .output()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
+
+        if !add_output.status.success() {
+            return Err(GitKvError::GitObjectError(format!(
+                "Git add failed: {}",
+                String::from_utf8_lossy(&add_output.stderr)
+            )));
+        }
+
+        // Create merge commit with two parents
+        let _current_commit = self.git_repo.head_id().map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to get current commit: {e}"))
+        })?;
+
+        let commit_output = std::process::Command::new("git")
+            .args(["commit", "-m", message, "--allow-empty"])
+            .current_dir(&git_root)
+            .env("GIT_AUTHOR_NAME", "ProllyTree")
+            .env("GIT_AUTHOR_EMAIL", "prollytree@example.com")
+            .env("GIT_COMMITTER_NAME", "ProllyTree")
+            .env("GIT_COMMITTER_EMAIL", "prollytree@example.com")
+            .output()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git commit: {e}")))?;
+
+        if !commit_output.status.success() {
+            return Err(GitKvError::GitObjectError(format!(
+                "Git commit failed: {}",
+                String::from_utf8_lossy(&commit_output.stderr)
+            )));
+        }
+
+        // Get the new commit ID
+        let new_commit = self
+            .git_repo
+            .head_id()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get new commit: {e}")))?;
+
+        Ok(new_commit.into())
     }
 
     /// Reload the tree state from the current HEAD commit
@@ -3050,5 +3398,173 @@ mod tests {
         store.commit("Concurrent insertions").unwrap();
         let keys = store.list_keys().unwrap();
         assert_eq!(keys.len(), 5);
+    }
+
+    #[test]
+    fn test_versioned_kv_store_merge() {
+        use crate::diff::TakeSourceResolver;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize a git repository
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        // Configure git user for commits
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to configure git user name");
+
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to configure git user email");
+
+        // Create a subdirectory for the dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        // Create initial commit on main branch
+        store
+            .insert(b"shared".to_vec(), b"original".to_vec())
+            .unwrap();
+        store
+            .insert(b"main_only".to_vec(), b"main_value".to_vec())
+            .unwrap();
+        store.commit("Initial commit on main").unwrap();
+
+        // Create feature branch
+        store.create_branch("feature").unwrap();
+
+        // Make changes on feature branch
+        store
+            .insert(b"shared".to_vec(), b"feature_value".to_vec())
+            .unwrap();
+        store
+            .insert(b"feature_only".to_vec(), b"feature_value".to_vec())
+            .unwrap();
+        store.commit("Feature branch changes").unwrap();
+
+        // Switch back to main
+        store.checkout("main").unwrap();
+
+        // Make different changes on main
+        store
+            .insert(b"shared".to_vec(), b"main_modified".to_vec())
+            .unwrap();
+        store
+            .insert(b"main_new".to_vec(), b"main_new_value".to_vec())
+            .unwrap();
+        store.commit("Main branch changes").unwrap();
+
+        // Test merge with conflict resolver (take source)
+        let resolver = TakeSourceResolver;
+        let merge_result = store.merge("feature", &resolver);
+
+        assert!(
+            merge_result.is_ok(),
+            "Merge should succeed with conflict resolver"
+        );
+        let _merge_commit_id = merge_result.unwrap();
+
+        // Test the merge results
+        assert_eq!(
+            store.get(b"shared"),
+            Some(b"feature_value".to_vec()),
+            "shared value should be from feature branch"
+        );
+        assert_eq!(
+            store.get(b"main_only"),
+            Some(b"main_value".to_vec()),
+            "main_only should remain"
+        );
+        assert_eq!(
+            store.get(b"feature_only"),
+            Some(b"feature_value".to_vec()),
+            "feature_only should be added"
+        );
+        assert_eq!(
+            store.get(b"main_new"),
+            Some(b"main_new_value".to_vec()),
+            "main_new should remain"
+        );
+
+        // Verify we're still on main branch
+        assert_eq!(store.current_branch(), "main");
+    }
+
+    #[test]
+    fn test_versioned_kv_store_merge_ignore_conflicts() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize git repository with proper config
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to configure git user name");
+
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to configure git user email");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        // Create base state
+        store
+            .insert(b"key1".to_vec(), b"base_value".to_vec())
+            .unwrap();
+        store.commit("Base commit").unwrap();
+
+        // Create feature branch with changes
+        store.create_branch("feature").unwrap();
+        store
+            .insert(b"key1".to_vec(), b"feature_value".to_vec())
+            .unwrap();
+        store
+            .insert(b"key2".to_vec(), b"feature_only".to_vec())
+            .unwrap();
+        store.commit("Feature changes").unwrap();
+
+        // Switch to main and make conflicting changes
+        store.checkout("main").unwrap();
+        store
+            .insert(b"key1".to_vec(), b"main_value".to_vec())
+            .unwrap();
+        store.commit("Main changes").unwrap();
+
+        // Test merge ignore conflicts (should keep main value for conflicts)
+        let merge_result = store.merge_ignore_conflicts("feature");
+
+        assert!(
+            merge_result.is_ok(),
+            "Merge ignore conflicts should succeed"
+        );
+
+        // Should keep main value for conflicting key, but add non-conflicting key
+        assert_eq!(store.get(b"key1"), Some(b"main_value".to_vec())); // Keep main value
+        assert_eq!(store.get(b"key2"), Some(b"feature_only".to_vec())); // Add from feature
     }
 }

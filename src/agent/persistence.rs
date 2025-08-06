@@ -692,8 +692,6 @@ mod tests {
                 backend_path
             };
 
-            let start_time = std::time::Instant::now();
-
             let mut store = match backend_name {
                 "Git" => BaseMemoryStore::init_with_thread_safe_git(
                     &actual_path,
@@ -731,8 +729,6 @@ mod tests {
                 .commit(&format!("Performance test for {} backend", backend_name))
                 .await
                 .unwrap();
-
-            let duration = start_time.elapsed();
 
             // Verify all memories were stored
             for i in 0..10 {

@@ -17,14 +17,42 @@ A Prolly Tree is a hybrid data structure that combines B-trees and Merkle trees
 to provide efficient data access with verifiable integrity.
 """
 
-from .prollytree import ProllyTree, TreeConfig, AgentMemorySystem, MemoryType, VersionedKvStore, StorageBackend
+from .prollytree import (
+    ProllyTree,
+    TreeConfig,
+    AgentMemorySystem,
+    MemoryType,
+    VersionedKvStore,
+    StorageBackend,
+    MergeConflict,
+    ConflictResolution
+)
 
 # Try to import SQL functionality if available
 try:
     from .prollytree import ProllySQLStore
-    __all__ = ["ProllyTree", "TreeConfig", "AgentMemorySystem", "MemoryType", "VersionedKvStore", "StorageBackend", "ProllySQLStore"]
+    __all__ = [
+        "ProllyTree",
+        "TreeConfig",
+        "AgentMemorySystem",
+        "MemoryType",
+        "VersionedKvStore",
+        "StorageBackend",
+        "MergeConflict",
+        "ConflictResolution",
+        "ProllySQLStore"
+    ]
 except ImportError:
     # SQL feature not available
-    __all__ = ["ProllyTree", "TreeConfig", "AgentMemorySystem", "MemoryType", "VersionedKvStore", "StorageBackend"]
+    __all__ = [
+        "ProllyTree",
+        "TreeConfig",
+        "AgentMemorySystem",
+        "MemoryType",
+        "VersionedKvStore",
+        "StorageBackend",
+        "MergeConflict",
+        "ConflictResolution"
+    ]
 
 __version__ = "0.2.1"

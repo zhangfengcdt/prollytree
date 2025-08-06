@@ -305,6 +305,114 @@ Performance Examples
 
        return tree
 
+Branch Merging and Conflict Resolution
+---------------------------------------
+
+.. code-block:: python
+
+   from prollytree import VersionedKvStore, ConflictResolution, MergeConflict
+   import tempfile
+   import os
+   import subprocess
+
+   def example_merge_operations():
+       """Comprehensive example of branch merging with conflict resolution"""
+
+       # Create temporary directory for the example
+       with tempfile.TemporaryDirectory() as tmpdir:
+           # Initialize git repository
+           subprocess.run(['git', 'init'], cwd=tmpdir, check=True, capture_output=True)
+           subprocess.run(['git', 'config', 'user.name', 'Example'], cwd=tmpdir, check=True, capture_output=True)
+           subprocess.run(['git', 'config', 'user.email', 'example@test.com'], cwd=tmpdir, check=True, capture_output=True)
+
+           # Create data subdirectory
+           data_dir = os.path.join(tmpdir, 'data')
+           os.makedirs(data_dir)
+
+           store = VersionedKvStore(data_dir)
+
+           print("=== Basic Merge Without Conflicts ===")
+
+           # Initial data
+           store.insert(b"users:alice", b"Alice Smith")
+           store.insert(b"users:bob", b"Bob Jones")
+           store.insert(b"config:theme", b"light")
+           store.commit("Initial data")
+
+           # Create feature branch
+           store.create_branch("add-user-feature")
+
+           # Changes on feature branch
+           store.insert(b"users:charlie", b"Charlie Brown")
+           store.update(b"config:theme", b"dark")
+           store.commit("Add Charlie and dark theme")
+
+           # Switch back to main and make different changes
+           store.checkout("main")
+           store.insert(b"users:diana", b"Diana Prince")
+           store.commit("Add Diana")
+
+           # Merge feature branch
+           merge_commit = store.merge("add-user-feature", ConflictResolution.TakeSource)
+           print(f"Merge successful: {merge_commit[:8]}")
+
+           # Show final state
+           print("Final users:")
+           for key in [b"users:alice", b"users:bob", b"users:charlie", b"users:diana"]:
+               value = store.get(key)
+               if value:
+                   print(f"  {key.decode()}: {value.decode()}")
+
+           print(f"Theme: {store.get(b'config:theme').decode()}")
+
+           print("\\n=== Conflict Detection ===")
+
+           # Create another scenario with conflicts
+           store.create_branch("conflicting-feature")
+           store.update(b"config:theme", b"blue")
+           store.commit("Change theme to blue")
+
+           store.checkout("main")
+           store.update(b"config:theme", b"red")
+           store.commit("Change theme to red")
+
+           # Check for conflicts without applying
+           success, conflicts = store.try_merge("conflicting-feature")
+           if not success:
+               print(f"Detected {len(conflicts)} conflicts:")
+               for conflict in conflicts:
+                   print(f"  Key: {conflict.key.decode()}")
+                   print(f"    Source: {conflict.source_value.decode()}")
+                   print(f"    Destination: {conflict.destination_value.decode()}")
+
+           print("\\n=== Conflict Resolution Strategies ===")
+
+           # Demonstrate different resolution strategies
+           strategies = [
+               ("IgnoreAll", ConflictResolution.IgnoreAll),
+               ("TakeSource", ConflictResolution.TakeSource),
+               ("TakeDestination", ConflictResolution.TakeDestination)
+           ]
+
+           for name, strategy in strategies:
+               # Create test branch for each strategy
+               branch_name = f"test-{name.lower()}"
+               store.checkout("main")
+               store.create_branch(branch_name)
+
+               store.update(b"config:theme", b"feature-theme")
+               store.commit(f"Feature theme on {branch_name}")
+
+               store.checkout("main")
+
+               # Apply merge with strategy
+               merge_commit = store.merge(branch_name, strategy)
+               final_theme = store.get(b"config:theme").decode()
+               print(f"{name:15} -> Theme: {final_theme}")
+
+               # Reset main for next test
+               store.checkout("main")
+
 Running Examples
 ----------------
 
@@ -326,6 +434,9 @@ Running Examples
 
        print("\\n=== AI Agent Memory ===")
        example_ai_agent_memory()
+
+       print("\\n=== Branch Merging ===")
+       example_merge_operations()
 
        print("\\n=== Performance ===")
        example_batch_operations()

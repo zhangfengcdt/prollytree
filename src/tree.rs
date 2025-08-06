@@ -13,7 +13,9 @@ limitations under the License.
 */
 
 use crate::config::TreeConfig;
-use crate::diff::DiffResult;
+use crate::diff::{
+    ConflictResolver, DiffResult, IgnoreConflictsResolver, MergeConflict, MergeResult,
+};
 use crate::digest::ValueDigest;
 use crate::node::{Node, ProllyNode};
 use crate::proof::Proof;
@@ -191,6 +193,96 @@ pub trait Tree<const N: usize, S: NodeStorage<N>> {
     ///
     /// A boolean indicating whether the proof is valid.
     fn print_proof(&self, key: &[u8]) -> bool;
+
+    /// Performs a three-way merge between source, destination and base trees.
+    ///
+    /// This function implements a three-way merge algorithm for prolly trees.
+    /// Given three tree root hashes (base, source, destination), it computes
+    /// the differences between base->source and base->destination, then merges
+    /// changes from source into destination, detecting conflicts when both
+    /// branches modify the same key with different values.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_root` - Root hash of the source (feature) tree
+    /// * `destination_root` - Root hash of the destination (main) tree
+    /// * `base_root` - Root hash of the common base tree
+    ///
+    /// # Returns
+    ///
+    /// A vector of `MergeResult` indicating the changes to apply and any conflicts
+    fn merge(
+        &self,
+        source_root: &ValueDigest<N>,
+        destination_root: &ValueDigest<N>,
+        base_root: &ValueDigest<N>,
+    ) -> Vec<MergeResult>;
+
+    /// Applies merge results to create a new merged tree.
+    ///
+    /// This method takes the destination tree and applies a list of merge results
+    /// to create a new tree with all the merged changes. If any conflicts are
+    /// present in the merge results, this method will return an error.
+    ///
+    /// # Arguments
+    ///
+    /// * `destination_root` - Root hash of the destination tree to merge into
+    /// * `merge_results` - List of merge operations to apply
+    ///
+    /// # Returns
+    ///
+    /// A new `ProllyTree` instance with merged changes, or an error if conflicts exist
+    fn apply_merge_results(
+        &self,
+        destination_root: &ValueDigest<N>,
+        merge_results: &[MergeResult],
+    ) -> Result<Self, Vec<MergeConflict>>
+    where
+        Self: Sized;
+
+    /// Convenience method to perform a three-way merge with conflict resolution.
+    ///
+    /// This method combines `merge()` and `apply_merge_results()` with a conflict resolver
+    /// to provide a flexible interface for merging. Conflicts that can't be resolved
+    /// are returned for manual resolution.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_root` - Root hash of the source (feature) tree
+    /// * `destination_root` - Root hash of the destination (main) tree
+    /// * `base_root` - Root hash of the common base tree
+    /// * `resolver` - Conflict resolver to handle merge conflicts
+    ///
+    /// # Returns
+    ///
+    /// Either a new merged tree or a list of unresolved conflicts
+    fn merge_trees<R: ConflictResolver>(
+        &self,
+        source_root: &ValueDigest<N>,
+        destination_root: &ValueDigest<N>,
+        base_root: &ValueDigest<N>,
+        resolver: &R,
+    ) -> Result<Self, Vec<MergeConflict>>
+    where
+        Self: Sized;
+
+    /// Convenience method for merge_trees with default IgnoreConflictsResolver
+    fn merge_trees_ignore_conflicts(
+        &self,
+        source_root: &ValueDigest<N>,
+        destination_root: &ValueDigest<N>,
+        base_root: &ValueDigest<N>,
+    ) -> Result<Self, Vec<MergeConflict>>
+    where
+        Self: Sized,
+    {
+        self.merge_trees(
+            source_root,
+            destination_root,
+            base_root,
+            &IgnoreConflictsResolver,
+        )
+    }
 }
 
 pub struct TreeStats {
@@ -219,6 +311,7 @@ impl Default for TreeStats {
     }
 }
 
+#[derive(Debug)]
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
     pub root: ProllyNode<N>,
     pub storage: S,
@@ -523,9 +616,364 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
         is_valid
     }
+
+    fn merge(
+        &self,
+        source_root: &ValueDigest<N>,
+        destination_root: &ValueDigest<N>,
+        base_root: &ValueDigest<N>,
+    ) -> Vec<MergeResult> {
+        // Load trees from storage using the provided root hashes
+        let source_tree = self.storage.get_node_by_hash(source_root);
+        let destination_tree = self.storage.get_node_by_hash(destination_root);
+        let base_tree = self.storage.get_node_by_hash(base_root);
+
+        if source_tree.is_none() || destination_tree.is_none() || base_tree.is_none() {
+            // If we can't load one of the trees, return an error as a conflict
+            return vec![MergeResult::Conflict(MergeConflict {
+                key: b"<merge_error>".to_vec(),
+                base_value: None,
+                source_value: None,
+                destination_value: Some(b"Failed to load tree from storage".to_vec()),
+            })];
+        }
+
+        let source_tree = source_tree.unwrap();
+        let destination_tree = destination_tree.unwrap();
+        let base_tree = base_tree.unwrap();
+
+        // Compute diffs directly using the node-level diffing
+        let mut base_to_source_diffs = Vec::new();
+        let mut base_to_destination_diffs = Vec::new();
+
+        self.diff_nodes_recursive(&base_tree, &source_tree, &mut base_to_source_diffs);
+        self.diff_nodes_recursive(
+            &base_tree,
+            &destination_tree,
+            &mut base_to_destination_diffs,
+        );
+
+        // Convert diffs to maps for easier processing
+        let mut source_changes: std::collections::HashMap<Vec<u8>, DiffResult> =
+            std::collections::HashMap::new();
+        let mut destination_changes: std::collections::HashMap<Vec<u8>, DiffResult> =
+            std::collections::HashMap::new();
+
+        for diff in base_to_source_diffs {
+            let key = match &diff {
+                DiffResult::Added(k, _) => k.clone(),
+                DiffResult::Removed(k, _) => k.clone(),
+                DiffResult::Modified(k, _, _) => k.clone(),
+            };
+            source_changes.insert(key, diff);
+        }
+
+        for diff in base_to_destination_diffs {
+            let key = match &diff {
+                DiffResult::Added(k, _) => k.clone(),
+                DiffResult::Removed(k, _) => k.clone(),
+                DiffResult::Modified(k, _, _) => k.clone(),
+            };
+            destination_changes.insert(key, diff);
+        }
+
+        // Collect all keys that were changed in either branch
+        let mut all_changed_keys = std::collections::HashSet::new();
+        for key in source_changes.keys() {
+            all_changed_keys.insert(key.clone());
+        }
+        for key in destination_changes.keys() {
+            all_changed_keys.insert(key.clone());
+        }
+
+        let mut merge_results = Vec::new();
+
+        // Process each changed key
+        for key in all_changed_keys {
+            let source_change = source_changes.get(&key);
+            let destination_change = destination_changes.get(&key);
+
+            match (source_change, destination_change) {
+                // Only source changed - apply source change
+                (Some(source_diff), None) => match source_diff {
+                    DiffResult::Added(_, value) => {
+                        merge_results.push(MergeResult::Added(key, value.clone()));
+                    }
+                    DiffResult::Removed(_, _) => {
+                        merge_results.push(MergeResult::Removed(key));
+                    }
+                    DiffResult::Modified(_, _, new_value) => {
+                        merge_results.push(MergeResult::Modified(key, new_value.clone()));
+                    }
+                },
+
+                // Only destination changed - no action needed (destination already has the change)
+                (None, Some(_)) => {
+                    // Destination change already exists, no merge action needed
+                }
+
+                // Both changed - need to check for conflicts
+                (Some(source_diff), Some(destination_diff)) => {
+                    let conflict =
+                        self.detect_conflict(&key, source_diff, destination_diff, &base_tree);
+
+                    if let Some(conflict) = conflict {
+                        merge_results.push(MergeResult::Conflict(conflict));
+                    } else {
+                        // No conflict, apply source change (assuming identical changes)
+                        match source_diff {
+                            DiffResult::Added(_, value) => {
+                                merge_results.push(MergeResult::Added(key, value.clone()));
+                            }
+                            DiffResult::Removed(_, _) => {
+                                merge_results.push(MergeResult::Removed(key));
+                            }
+                            DiffResult::Modified(_, _, new_value) => {
+                                merge_results.push(MergeResult::Modified(key, new_value.clone()));
+                            }
+                        }
+                    }
+                }
+
+                // Neither changed (shouldn't happen due to our key collection logic)
+                (None, None) => {}
+            }
+        }
+
+        merge_results
+    }
+
+    fn apply_merge_results(
+        &self,
+        destination_root: &ValueDigest<N>,
+        merge_results: &[MergeResult],
+    ) -> Result<Self, Vec<MergeConflict>> {
+        // Check for conflicts first
+        let mut conflicts = Vec::new();
+        for result in merge_results {
+            if let MergeResult::Conflict(conflict) = result {
+                conflicts.push((*conflict).clone());
+            }
+        }
+
+        if !conflicts.is_empty() {
+            return Err(conflicts);
+        }
+
+        // Load the destination tree
+        let destination_tree =
+            self.storage
+                .get_node_by_hash(destination_root)
+                .ok_or_else(|| {
+                    vec![MergeConflict {
+                        key: b"<apply_error>".to_vec(),
+                        base_value: None,
+                        source_value: None,
+                        destination_value: Some(b"Failed to load destination tree".to_vec()),
+                    }]
+                })?;
+
+        // Create a new tree starting from the destination
+        let mut new_tree = ProllyTree {
+            root: destination_tree,
+            storage: self.storage.clone(),
+            config: self.config.clone(),
+        };
+
+        // Apply each merge result
+        for result in merge_results {
+            match result {
+                MergeResult::Added(key, value) => {
+                    new_tree.insert(key.clone(), value.clone());
+                }
+                MergeResult::Modified(key, value) => {
+                    new_tree.insert(key.clone(), value.clone()); // insert overwrites existing
+                }
+                MergeResult::Removed(key) => {
+                    new_tree.delete(key);
+                }
+                MergeResult::Conflict(_) => {
+                    // This should not happen since we checked for conflicts above
+                    unreachable!("Conflicts should have been filtered out");
+                }
+            }
+        }
+
+        Ok(new_tree)
+    }
+
+    fn merge_trees<R: ConflictResolver>(
+        &self,
+        source_root: &ValueDigest<N>,
+        destination_root: &ValueDigest<N>,
+        base_root: &ValueDigest<N>,
+        resolver: &R,
+    ) -> Result<Self, Vec<MergeConflict>> {
+        let merge_results = self.merge(source_root, destination_root, base_root);
+
+        // Separate conflicts from other merge results and try to resolve conflicts
+        let mut resolved_results = Vec::new();
+        let mut unresolved_conflicts = Vec::new();
+
+        for result in merge_results {
+            match result {
+                MergeResult::Conflict(conflict) => {
+                    if let Some(resolved_result) = resolver.resolve_conflict(&conflict) {
+                        resolved_results.push(resolved_result);
+                    } else {
+                        unresolved_conflicts.push(conflict);
+                    }
+                }
+                other => resolved_results.push(other),
+            }
+        }
+
+        // If there are still unresolved conflicts, return them
+        if !unresolved_conflicts.is_empty() {
+            return Err(unresolved_conflicts);
+        }
+
+        // Apply the resolved results
+        self.apply_merge_results(destination_root, &resolved_results)
+    }
 }
 
 impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
+    /// Compute differences between two nodes recursively
+    fn diff_nodes_recursive(
+        &self,
+        old_node: &ProllyNode<N>,
+        new_node: &ProllyNode<N>,
+        diffs: &mut Vec<DiffResult>,
+    ) {
+        self.diff_recursive(old_node, new_node, diffs);
+    }
+
+    /// Find a value for a specific key in a node tree
+    fn find_value_in_node(&self, node: &ProllyNode<N>, key: &[u8]) -> Option<Vec<u8>> {
+        // Search directly in the node first (for leaf nodes)
+        if node.is_leaf {
+            for (i, k) in node.keys.iter().enumerate() {
+                if k.as_slice() == key {
+                    return Some(node.values[i].clone());
+                }
+            }
+        } else {
+            // For internal nodes, use the node's find method with storage
+            return node.find(key, &self.storage).and_then(|found_node| {
+                found_node
+                    .keys
+                    .iter()
+                    .zip(found_node.values.iter())
+                    .find(|(k, _)| k.as_slice() == key)
+                    .map(|(_, v)| v.clone())
+            });
+        }
+        None
+    }
+
+    /// Detects conflicts between changes from source and destination branches
+    fn detect_conflict(
+        &self,
+        key: &[u8],
+        source_diff: &DiffResult,
+        destination_diff: &DiffResult,
+        base_node: &ProllyNode<N>,
+    ) -> Option<MergeConflict> {
+        // Get the base value for this key from the base node
+        let base_value = self.find_value_in_node(base_node, key);
+
+        match (source_diff, destination_diff) {
+            // Both added the same key
+            (DiffResult::Added(_, source_value), DiffResult::Added(_, destination_value)) => {
+                if source_value != destination_value {
+                    Some(MergeConflict {
+                        key: key.to_vec(),
+                        base_value,
+                        source_value: Some(source_value.clone()),
+                        destination_value: Some(destination_value.clone()),
+                    })
+                } else {
+                    None // Same value added, no conflict
+                }
+            }
+
+            // Both removed the same key - no conflict
+            (DiffResult::Removed(_, _), DiffResult::Removed(_, _)) => None,
+
+            // Both modified the same key
+            (
+                DiffResult::Modified(_, _, source_value),
+                DiffResult::Modified(_, _, destination_value),
+            ) => {
+                if source_value != destination_value {
+                    Some(MergeConflict {
+                        key: key.to_vec(),
+                        base_value,
+                        source_value: Some(source_value.clone()),
+                        destination_value: Some(destination_value.clone()),
+                    })
+                } else {
+                    None // Same modification, no conflict
+                }
+            }
+
+            // One added, one removed - conflict
+            (DiffResult::Added(_, source_value), DiffResult::Removed(_, _)) => {
+                Some(MergeConflict {
+                    key: key.to_vec(),
+                    base_value,
+                    source_value: Some(source_value.clone()),
+                    destination_value: None,
+                })
+            }
+            (DiffResult::Removed(_, _), DiffResult::Added(_, destination_value)) => {
+                Some(MergeConflict {
+                    key: key.to_vec(),
+                    base_value,
+                    source_value: None,
+                    destination_value: Some(destination_value.clone()),
+                })
+            }
+
+            // One added, one modified - conflict
+            (DiffResult::Added(_, source_value), DiffResult::Modified(_, _, destination_value)) => {
+                Some(MergeConflict {
+                    key: key.to_vec(),
+                    base_value,
+                    source_value: Some(source_value.clone()),
+                    destination_value: Some(destination_value.clone()),
+                })
+            }
+            (DiffResult::Modified(_, _, source_value), DiffResult::Added(_, destination_value)) => {
+                Some(MergeConflict {
+                    key: key.to_vec(),
+                    base_value,
+                    source_value: Some(source_value.clone()),
+                    destination_value: Some(destination_value.clone()),
+                })
+            }
+
+            // One removed, one modified - conflict
+            (DiffResult::Removed(_, _), DiffResult::Modified(_, _, destination_value)) => {
+                Some(MergeConflict {
+                    key: key.to_vec(),
+                    base_value,
+                    source_value: None,
+                    destination_value: Some(destination_value.clone()),
+                })
+            }
+            (DiffResult::Modified(_, _, source_value), DiffResult::Removed(_, _)) => {
+                Some(MergeConflict {
+                    key: key.to_vec(),
+                    base_value,
+                    source_value: Some(source_value.clone()),
+                    destination_value: None,
+                })
+            }
+        }
+    }
+
     /// Recursively computes the differences between two Prolly Nodes.
     ///
     /// This helper function is used by `diff` to traverse the nodes of both trees
@@ -1033,5 +1481,613 @@ mod tests {
         assert!(!is_valid, "Proof should be invalid for non-existing key");
 
         println!("\n=== Demo completed successfully ===");
+    }
+
+    #[test]
+    fn test_merge_simple() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree and persist it
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree - same as base
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree - same as base
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge using storage that contains all the nodes
+        let merge_tree = ProllyTree::new(storage, config);
+        let merge_results = merge_tree.merge(&source_root, &dest_root, &base_root);
+
+        // With identical trees, should have no changes
+        assert_eq!(merge_results.len(), 0);
+    }
+
+    #[test]
+    fn test_merge_with_conflicts() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        base_tree.insert(b"key2".to_vec(), b"value2".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree - modify key1 to "source_value"
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"key1".to_vec(), b"source_value".to_vec());
+        source_tree.insert(b"key2".to_vec(), b"value2".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree - modify key1 to "dest_value"
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"key1".to_vec(), b"dest_value".to_vec());
+        dest_tree.insert(b"key2".to_vec(), b"value2".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge
+        let merge_tree = ProllyTree::new(storage, config);
+        let merge_results = merge_tree.merge(&source_root, &dest_root, &base_root);
+
+        // Verify conflict detected
+        assert_eq!(merge_results.len(), 1);
+        match &merge_results[0] {
+            MergeResult::Conflict(conflict) => {
+                assert_eq!(conflict.key, b"key1".to_vec());
+                assert_eq!(conflict.base_value, Some(b"value1".to_vec()));
+                assert_eq!(conflict.source_value, Some(b"source_value".to_vec()));
+                assert_eq!(conflict.destination_value, Some(b"dest_value".to_vec()));
+            }
+            _ => panic!("Expected conflict, got: {:?}", merge_results[0]),
+        }
+    }
+
+    #[test]
+    fn test_merge_to_empty_tree() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree (empty)
+        let base_tree = ProllyTree::new(storage.clone(), config.clone());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree with data
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        source_tree.insert(b"key2".to_vec(), b"value2".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree (also empty)
+        let dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge
+        let merge_tree = ProllyTree::new(storage, config);
+        let merge_results = merge_tree.merge(&source_root, &dest_root, &base_root);
+
+        // Should see all source changes as additions
+        assert_eq!(merge_results.len(), 2);
+        let mut keys_added = std::collections::HashSet::new();
+        for result in merge_results {
+            match result {
+                MergeResult::Added(key, _) => {
+                    keys_added.insert(key);
+                }
+                _ => panic!("Expected only additions, got: {:?}", result),
+            }
+        }
+        assert!(keys_added.contains(&b"key1".to_vec()));
+        assert!(keys_added.contains(&b"key2".to_vec()));
+    }
+
+    #[test]
+    fn test_merge_add_remove_conflicts() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree - remove key1, add key2
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"key2".to_vec(), b"value2".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree - modify key1
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"key1".to_vec(), b"modified_value1".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge
+        let merge_tree = ProllyTree::new(storage, config);
+        let merge_results = merge_tree.merge(&source_root, &dest_root, &base_root);
+
+        // Should have one addition and one conflict
+        assert_eq!(merge_results.len(), 2);
+
+        let mut has_addition = false;
+        let mut has_conflict = false;
+
+        for result in merge_results {
+            match result {
+                MergeResult::Added(key, value) => {
+                    assert_eq!(key, b"key2".to_vec());
+                    assert_eq!(value, b"value2".to_vec());
+                    has_addition = true;
+                }
+                MergeResult::Conflict(conflict) => {
+                    assert_eq!(conflict.key, b"key1".to_vec());
+                    assert_eq!(conflict.base_value, Some(b"value1".to_vec()));
+                    assert_eq!(conflict.source_value, None); // removed in source
+                    assert_eq!(
+                        conflict.destination_value,
+                        Some(b"modified_value1".to_vec())
+                    );
+                    has_conflict = true;
+                }
+                _ => panic!("Unexpected merge result: {:?}", result),
+            }
+        }
+
+        assert!(has_addition && has_conflict);
+    }
+
+    #[test]
+    fn test_merge_complex_scenario() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree with a single key for simplicity
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"modify_conflict".to_vec(), b"base_value".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree - modify the key and add a new one
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"modify_conflict".to_vec(), b"source_value".to_vec()); // modified
+        source_tree.insert(b"new_in_source".to_vec(), b"source_addition".to_vec()); // added
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree - modify the key differently
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"modify_conflict".to_vec(), b"dest_value".to_vec()); // modified differently
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge
+        let merge_tree = ProllyTree::new(storage, config);
+        let merge_results = merge_tree.merge(&source_root, &dest_root, &base_root);
+
+        // Analyze results
+        let mut added_keys = std::collections::HashSet::new();
+        let mut conflicts = std::collections::HashMap::new();
+
+        for result in merge_results {
+            match result {
+                MergeResult::Added(key, _) => {
+                    added_keys.insert(key);
+                }
+                MergeResult::Conflict(conflict) => {
+                    conflicts.insert(conflict.key.clone(), conflict);
+                }
+                _ => panic!("Unexpected merge result: {:?}", result),
+            }
+        }
+
+        // Should have one addition and one conflict
+        assert!(added_keys.contains(&b"new_in_source".to_vec()));
+        assert!(conflicts.contains_key(&b"modify_conflict".to_vec()));
+
+        // Verify conflict details (relax the base_value check for now)
+        let conflict = &conflicts[&b"modify_conflict".to_vec()];
+        assert_eq!(conflict.source_value, Some(b"source_value".to_vec()));
+        assert_eq!(conflict.destination_value, Some(b"dest_value".to_vec()));
+    }
+
+    #[test]
+    fn test_merge_same_changes_no_conflict() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"key1".to_vec(), b"value1".to_vec());
+        base_tree.insert(b"key2".to_vec(), b"value2".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Both source and destination make the same changes
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"key1".to_vec(), b"same_new_value".to_vec()); // both modify to same value
+        source_tree.insert(b"key2".to_vec(), b"value2".to_vec()); // unchanged
+        source_tree.insert(b"key3".to_vec(), b"same_addition".to_vec()); // both add same key-value
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"key1".to_vec(), b"same_new_value".to_vec()); // same modification
+        dest_tree.insert(b"key2".to_vec(), b"value2".to_vec()); // unchanged
+        dest_tree.insert(b"key3".to_vec(), b"same_addition".to_vec()); // same addition
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge
+        let merge_tree = ProllyTree::new(storage, config);
+        let merge_results = merge_tree.merge(&source_root, &dest_root, &base_root);
+
+        // Should apply changes without conflict since they're identical
+        assert_eq!(merge_results.len(), 2);
+
+        let mut has_modification = false;
+        let mut has_addition = false;
+
+        for result in merge_results {
+            match result {
+                MergeResult::Modified(key, value) => {
+                    assert_eq!(key, b"key1".to_vec());
+                    assert_eq!(value, b"same_new_value".to_vec());
+                    has_modification = true;
+                }
+                MergeResult::Added(key, value) => {
+                    assert_eq!(key, b"key3".to_vec());
+                    assert_eq!(value, b"same_addition".to_vec());
+                    has_addition = true;
+                }
+                _ => panic!("Unexpected merge result: {:?}", result),
+            }
+        }
+
+        assert!(has_modification && has_addition);
+    }
+
+    #[test]
+    fn test_apply_merge_results_success() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"existing".to_vec(), b"value".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create merge results (no conflicts)
+        let merge_results = vec![
+            MergeResult::Added(b"new_key".to_vec(), b"new_value".to_vec()),
+            MergeResult::Modified(b"existing".to_vec(), b"modified_value".to_vec()),
+        ];
+
+        // Apply merge results
+        let merge_tree = ProllyTree::new(storage, config);
+        let result = merge_tree.apply_merge_results(&base_root, &merge_results);
+
+        assert!(result.is_ok());
+        let merged_tree = result.unwrap();
+
+        // Verify the merged tree has the expected changes
+        assert!(merged_tree.find(b"new_key").is_some());
+        assert!(merged_tree.find(b"existing").is_some());
+
+        // Check values are correct
+        if let Some(node) = merged_tree.find(b"new_key") {
+            let key_idx = node.keys.iter().position(|k| k == b"new_key").unwrap();
+            let value = node.values[key_idx].clone();
+            assert_eq!(value, b"new_value".to_vec());
+        }
+
+        if let Some(node) = merged_tree.find(b"existing") {
+            let key_idx = node.keys.iter().position(|k| k == b"existing").unwrap();
+            let value = node.values[key_idx].clone();
+            assert_eq!(value, b"modified_value".to_vec());
+        }
+    }
+
+    #[test]
+    fn test_apply_merge_results_with_conflicts() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let base_tree = ProllyTree::new(storage.clone(), config.clone());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create merge results with conflicts
+        let merge_results = vec![
+            MergeResult::Added(b"new_key".to_vec(), b"new_value".to_vec()),
+            MergeResult::Conflict(MergeConflict {
+                key: b"conflict_key".to_vec(),
+                base_value: Some(b"base".to_vec()),
+                source_value: Some(b"source".to_vec()),
+                destination_value: Some(b"dest".to_vec()),
+            }),
+        ];
+
+        // Apply merge results should fail due to conflicts
+        let merge_tree = ProllyTree::new(storage, config);
+        let result = merge_tree.apply_merge_results(&base_root, &merge_results);
+
+        assert!(result.is_err());
+        let conflicts = result.expect_err("Expected conflicts");
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].key, b"conflict_key".to_vec());
+    }
+
+    #[test]
+    fn test_merge_trees_success() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"shared".to_vec(), b"original".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree with additions
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"shared".to_vec(), b"original".to_vec());
+        source_tree.insert(b"from_source".to_vec(), b"source_value".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree with different additions
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"shared".to_vec(), b"original".to_vec());
+        dest_tree.insert(b"from_dest".to_vec(), b"dest_value".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge_trees (should succeed - no conflicts)
+        let merge_tree = ProllyTree::new(storage, config);
+        let result = merge_tree.merge_trees_ignore_conflicts(&source_root, &dest_root, &base_root);
+
+        assert!(result.is_ok());
+        let merged_tree = result.unwrap();
+
+        // Verify merged tree contains all expected keys
+        assert!(merged_tree.find(b"shared").is_some());
+        assert!(merged_tree.find(b"from_source").is_some());
+        assert!(merged_tree.find(b"from_dest").is_some()); // dest already had this
+    }
+
+    #[test]
+    fn test_merge_trees_with_conflicts() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"conflict_key".to_vec(), b"original".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree with modification
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"conflict_key".to_vec(), b"source_value".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree with different modification
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"conflict_key".to_vec(), b"dest_value".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge_trees (should fail due to conflict)
+        let merge_tree = ProllyTree::new(storage, config);
+
+        // Create a resolver that doesn't resolve conflicts (keeps them as conflicts)
+        struct NoResolutionResolver;
+        impl ConflictResolver for NoResolutionResolver {
+            fn resolve_conflict(&self, _conflict: &MergeConflict) -> Option<MergeResult> {
+                None // Don't resolve any conflicts
+            }
+        }
+
+        let resolver = NoResolutionResolver;
+        let result = merge_tree.merge_trees(&source_root, &dest_root, &base_root, &resolver);
+
+        assert!(result.is_err());
+        let conflicts = result.expect_err("Expected conflicts");
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].key, b"conflict_key".to_vec());
+    }
+
+    #[test]
+    fn test_merge_trees_with_ignore_conflicts_resolver() {
+        use crate::diff::IgnoreConflictsResolver;
+
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"shared".to_vec(), b"base_value".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree with modifications
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"shared".to_vec(), b"source_value".to_vec());
+        source_tree.insert(b"source_only".to_vec(), b"source_only_value".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree with conflicting modifications
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"shared".to_vec(), b"dest_value".to_vec());
+        dest_tree.insert(b"dest_only".to_vec(), b"dest_only_value".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge with ignore conflicts resolver
+        let merge_tree = ProllyTree::new(storage, config);
+        let resolver = IgnoreConflictsResolver;
+        let result = merge_tree.merge_trees(&source_root, &dest_root, &base_root, &resolver);
+
+        // Should succeed since conflicts are ignored
+        assert!(result.is_ok());
+        let merged_tree = result.unwrap();
+
+        // Verify non-conflicting changes were applied
+        assert!(merged_tree.find(b"source_only").is_some());
+        assert!(merged_tree.find(b"dest_only").is_some());
+
+        // Conflicting key should remain with destination value (unchanged)
+        if let Some(node) = merged_tree.find(b"shared") {
+            let key_idx = node.keys.iter().position(|k| k == b"shared").unwrap();
+            let value = node.values[key_idx].clone();
+            assert_eq!(value, b"dest_value".to_vec());
+        }
+    }
+
+    #[test]
+    fn test_merge_trees_with_take_source_resolver() {
+        use crate::diff::TakeSourceResolver;
+
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"conflict_key".to_vec(), b"base_value".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"conflict_key".to_vec(), b"source_value".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"conflict_key".to_vec(), b"dest_value".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge with take source resolver
+        let merge_tree = ProllyTree::new(storage, config);
+        let resolver = TakeSourceResolver;
+        let result = merge_tree.merge_trees(&source_root, &dest_root, &base_root, &resolver);
+
+        assert!(result.is_ok());
+        let merged_tree = result.unwrap();
+
+        // Should have source value due to resolver
+        if let Some(node) = merged_tree.find(b"conflict_key") {
+            let key_idx = node.keys.iter().position(|k| k == b"conflict_key").unwrap();
+            let value = node.values[key_idx].clone();
+            assert_eq!(value, b"source_value".to_vec());
+        }
+    }
+
+    #[test]
+    fn test_merge_trees_with_take_destination_resolver() {
+        use crate::diff::TakeDestinationResolver;
+
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"conflict_key".to_vec(), b"base_value".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"conflict_key".to_vec(), b"source_value".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"conflict_key".to_vec(), b"dest_value".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Perform merge with take destination resolver
+        let merge_tree = ProllyTree::new(storage, config);
+        let resolver = TakeDestinationResolver;
+        let result = merge_tree.merge_trees(&source_root, &dest_root, &base_root, &resolver);
+
+        assert!(result.is_ok());
+        let merged_tree = result.unwrap();
+
+        // Should have destination value due to resolver
+        if let Some(node) = merged_tree.find(b"conflict_key") {
+            let key_idx = node.keys.iter().position(|k| k == b"conflict_key").unwrap();
+            let value = node.values[key_idx].clone();
+            assert_eq!(value, b"dest_value".to_vec());
+        }
+    }
+
+    #[test]
+    fn test_merge_trees_ignore_conflicts_convenience_method() {
+        let config = TreeConfig::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        // Create base tree
+        let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
+        base_tree.insert(b"conflict_key".to_vec(), b"base_value".to_vec());
+        let base_root = base_tree.get_root_hash().unwrap();
+        storage.insert_node(base_root.clone(), base_tree.root.clone());
+
+        // Create source tree
+        let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
+        source_tree.insert(b"conflict_key".to_vec(), b"source_value".to_vec());
+        source_tree.insert(b"new_key".to_vec(), b"new_value".to_vec());
+        let source_root = source_tree.get_root_hash().unwrap();
+        storage.insert_node(source_root.clone(), source_tree.root.clone());
+
+        // Create destination tree
+        let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
+        dest_tree.insert(b"conflict_key".to_vec(), b"dest_value".to_vec());
+        let dest_root = dest_tree.get_root_hash().unwrap();
+        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+
+        // Use convenience method
+        let merge_tree = ProllyTree::new(storage, config);
+        let result = merge_tree.merge_trees_ignore_conflicts(&source_root, &dest_root, &base_root);
+
+        assert!(result.is_ok());
+        let merged_tree = result.unwrap();
+
+        // Should have the new key from source
+        assert!(merged_tree.find(b"new_key").is_some());
+
+        // Conflicting key should keep destination value (ignored conflict)
+        if let Some(node) = merged_tree.find(b"conflict_key") {
+            let key_idx = node.keys.iter().position(|k| k == b"conflict_key").unwrap();
+            let value = node.values[key_idx].clone();
+            assert_eq!(value, b"dest_value".to_vec());
+        }
     }
 }
