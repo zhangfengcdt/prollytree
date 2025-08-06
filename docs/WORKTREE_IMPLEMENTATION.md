@@ -174,6 +174,177 @@ agent_store.insert(b"key", b"value")
 agent_store.commit("Agent work")
 ```
 
+### Branch Merging Operations
+
+#### Rust Merge API
+
+```rust
+use prollytree::git::WorktreeManager;
+
+let mut manager = WorktreeManager::new("/path/to/repo")?;
+
+// Create worktree for feature development
+let feature_info = manager.add_worktree(
+    "/path/to/feature_workspace",
+    "feature-branch",
+    true
+)?;
+
+// ... agent does work in feature branch ...
+
+// Merge feature branch back to main
+let merge_result = manager.merge_to_main(
+    &feature_info.id,
+    "Merge feature work to main"
+)?;
+println!("Merge result: {}", merge_result);
+
+// Merge between arbitrary branches
+let merge_result = manager.merge_branch(
+    &feature_info.id,
+    "develop",
+    "Merge feature to develop branch"
+)?;
+
+// List all branches
+let branches = manager.list_branches()?;
+for branch in branches {
+    let commit = manager.get_branch_commit(&branch)?;
+    println!("Branch {}: {}", branch, commit);
+}
+```
+
+#### Python Merge API
+
+```python
+from prollytree.prollytree import WorktreeManager
+
+manager = WorktreeManager("/path/to/repo")
+
+# Create worktrees for multiple agents
+agents = ["billing", "support", "analysis"]
+agent_worktrees = {}
+
+for agent in agents:
+    info = manager.add_worktree(
+        f"/tmp/{agent}_workspace",
+        f"session-001-{agent}",
+        True
+    )
+    agent_worktrees[agent] = info
+    print(f"Agent {agent}: {info['branch']}")
+
+# ... agents do their work ...
+
+# Merge agent work back to main
+for agent, info in agent_worktrees.items():
+    try:
+        merge_result = manager.merge_to_main(
+            info['id'],
+            f"Merge {agent} work to main"
+        )
+        print(f"✅ Merged {agent}: {merge_result}")
+
+        # Get updated commit info
+        main_commit = manager.get_branch_commit("main")
+        print(f"Main now at: {main_commit[:8]}")
+
+    except Exception as e:
+        print(f"❌ Failed to merge {agent}: {e}")
+
+# Cross-branch merging
+manager.merge_branch(
+    agent_worktrees["billing"]["id"],
+    "develop",
+    "Merge billing changes to develop"
+)
+
+# List all branches and their commits
+branches = manager.list_branches()
+for branch in branches:
+    commit = manager.get_branch_commit(branch)
+    print(f"• {branch}: {commit[:8]}")
+```
+
+### Complete Multi-Agent Workflow
+
+```python
+from prollytree.prollytree import WorktreeManager
+
+class MultiAgentWorkflow:
+    def __init__(self, repo_path):
+        self.manager = WorktreeManager(repo_path)
+        self.agent_worktrees = {}
+
+    def create_agent_workspace(self, agent_name, session_id):
+        """Create isolated workspace for an agent"""
+        branch_name = f"{session_id}-{agent_name}"
+        workspace_path = f"/tmp/agents/{agent_name}_workspace"
+
+        info = self.manager.add_worktree(workspace_path, branch_name, True)
+        self.agent_worktrees[agent_name] = info
+
+        return info
+
+    def merge_agent_work(self, agent_name, commit_message):
+        """Merge agent's work back to main after validation"""
+        if agent_name not in self.agent_worktrees:
+            raise ValueError(f"Agent {agent_name} not found")
+
+        info = self.agent_worktrees[agent_name]
+
+        # Lock the worktree during merge
+        self.manager.lock_worktree(info['id'], f"Merging {agent_name} work")
+
+        try:
+            # Perform validation here
+            if self.validate_agent_work(agent_name):
+                merge_result = self.manager.merge_to_main(
+                    info['id'],
+                    commit_message
+                )
+                return merge_result
+            else:
+                raise ValueError("Agent work validation failed")
+        finally:
+            self.manager.unlock_worktree(info['id'])
+
+    def validate_agent_work(self, agent_name):
+        """Validate agent work before merging"""
+        # Custom validation logic
+        return True
+
+    def cleanup_agent(self, agent_name):
+        """Clean up agent workspace"""
+        if agent_name in self.agent_worktrees:
+            info = self.agent_worktrees[agent_name]
+            self.manager.remove_worktree(info['id'])
+            del self.agent_worktrees[agent_name]
+
+# Usage
+workflow = MultiAgentWorkflow("/path/to/shared/repo")
+
+# Create agents
+agents = ["billing", "support", "analysis"]
+for agent in agents:
+    workflow.create_agent_workspace(agent, "session-001")
+
+# ... agents do their work ...
+
+# Merge validated work
+for agent in agents:
+    try:
+        result = workflow.merge_agent_work(
+            agent,
+            f"Integrate {agent} agent improvements"
+        )
+        print(f"✅ {agent}: {result}")
+    except Exception as e:
+        print(f"❌ {agent}: {e}")
+    finally:
+        workflow.cleanup_agent(agent)
+```
+
 ## Integration with Multi-Agent Systems
 
 This worktree implementation provides the foundation for safe multi-agent operations:

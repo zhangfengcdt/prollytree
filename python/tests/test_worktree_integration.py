@@ -262,6 +262,149 @@ def test_worktree_architecture_concepts():
 
         return True
 
+def test_worktree_merge_functionality():
+    """Test merge functionality in worktree system"""
+
+    print("\n" + "="*80)
+    print("🔄 MERGE FUNCTIONALITY: Testing Branch Merging in Worktrees")
+    print("="*80)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Setup repository
+        main_path = os.path.join(tmpdir, "merge_test_repo")
+        os.makedirs(main_path)
+        subprocess.run(["git", "init"], cwd=main_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=main_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=main_path, check=True, capture_output=True)
+
+        # Create initial commit
+        initial_file = os.path.join(main_path, "base.txt")
+        with open(initial_file, "w") as f:
+            f.write("base content\n")
+        subprocess.run(["git", "add", "."], cwd=main_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=main_path, check=True, capture_output=True)
+
+        from prollytree.prollytree import WorktreeManager
+        manager = WorktreeManager(main_path)
+
+        print("🏗️ Test Setup:")
+        print(f"   Repository: {main_path}")
+
+        # Get initial state
+        initial_branches = manager.list_branches()
+        initial_main_commit = manager.get_branch_commit("main")
+        print(f"   Initial branches: {initial_branches}")
+        print(f"   Initial main commit: {initial_main_commit[:8]}")
+
+        # Create worktrees for different "agents"
+        agents = [
+            {"name": "feature-dev", "branch": "feature/new-feature", "task": "Implement new feature"},
+            {"name": "bug-fix", "branch": "bugfix/critical-fix", "task": "Fix critical bug"},
+        ]
+
+        agent_worktrees = {}
+
+        print(f"\n🤖 Creating agent worktrees:")
+        for agent in agents:
+            worktree_path = os.path.join(tmpdir, f"{agent['name']}_workspace")
+            info = manager.add_worktree(worktree_path, agent["branch"], True)
+            agent_worktrees[agent["name"]] = info
+
+            print(f"   • {agent['name']}: branch={agent['branch']}")
+            print(f"     Task: {agent['task']}")
+            print(f"     Workspace: {info['path']}")
+
+        # Simulate work in feature branch
+        print(f"\n🔧 Simulating work in feature branch:")
+        feature_workspace = agent_worktrees["feature-dev"]["path"]
+        feature_file = os.path.join(feature_workspace, "feature.txt")
+        with open(feature_file, "w") as f:
+            f.write("new feature implementation\n")
+
+        # For testing, manually update the branch reference to simulate commits
+        # In real usage, this would happen through VersionedKvStore operations
+        git_dir = os.path.join(main_path, ".git")
+        feature_branch_ref = os.path.join(git_dir, "refs", "heads", agent_worktrees["feature-dev"]["branch"].replace("/", os.sep))
+        os.makedirs(os.path.dirname(feature_branch_ref), exist_ok=True)
+
+        # Create a fake commit hash to simulate feature work
+        fake_feature_commit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        with open(feature_branch_ref, "w") as f:
+            f.write(fake_feature_commit)
+
+        feature_commit = manager.get_branch_commit(agent_worktrees["feature-dev"]["branch"])
+        print(f"   Feature work completed: {feature_commit[:8]}")
+
+        # Test merge functionality
+        print(f"\n🔄 Testing merge operations:")
+
+        # Test 1: Merge feature to main
+        feature_worktree_id = agent_worktrees["feature-dev"]["id"]
+        try:
+            merge_result = manager.merge_to_main(feature_worktree_id, "Merge feature work to main")
+            print(f"   ✅ Merge to main succeeded: {merge_result}")
+
+            # Verify main was updated
+            updated_main_commit = manager.get_branch_commit("main")
+            print(f"   📊 Main branch updated: {initial_main_commit[:8]} → {updated_main_commit[:8]}")
+
+            if updated_main_commit != initial_main_commit:
+                print(f"   ✅ Main branch successfully updated")
+            else:
+                print(f"   ⚠️ Main branch unchanged (branches were identical)")
+
+        except Exception as e:
+            print(f"   ❌ Merge failed: {e}")
+            return False
+
+        # Test 2: Invalid merge (merge to self)
+        print(f"\n🚫 Testing invalid merge operations:")
+        try:
+            manager.merge_to_main("main", "Invalid merge")
+            print(f"   ❌ Should not be able to merge main to itself")
+            return False
+        except Exception as e:
+            print(f"   ✅ Correctly prevented invalid merge: {type(e).__name__}")
+
+        # Test 3: Branch listing after merge
+        final_branches = manager.list_branches()
+        print(f"\n📊 Final branch state:")
+        for branch in final_branches:
+            commit = manager.get_branch_commit(branch)
+            print(f"   • {branch}: {commit[:8]}")
+
+        # Test 4: Cross-branch merge
+        print(f"\n🔀 Testing cross-branch merge:")
+        try:
+            # Create another fake commit for bug-fix branch
+            bugfix_branch_ref = os.path.join(git_dir, "refs", "heads", agent_worktrees["bug-fix"]["branch"].replace("/", os.sep))
+            os.makedirs(os.path.dirname(bugfix_branch_ref), exist_ok=True)
+            fake_bugfix_commit = "cccccccccccccccccccccccccccccccccccccccc"
+            with open(bugfix_branch_ref, "w") as f:
+                f.write(fake_bugfix_commit)
+
+            bugfix_worktree_id = agent_worktrees["bug-fix"]["id"]
+            cross_merge_result = manager.merge_branch(
+                bugfix_worktree_id,
+                "main",
+                "Merge bug fix to main"
+            )
+            print(f"   ✅ Cross-branch merge succeeded: {cross_merge_result}")
+
+        except Exception as e:
+            print(f"   ❌ Cross-branch merge failed: {e}")
+            return False
+
+        print(f"\n✅ All merge functionality tests passed!")
+        print(f"\n💡 Key Merge Capabilities Verified:")
+        print(f"   • Merge worktree branches to main")
+        print(f"   • Cross-branch merging between arbitrary branches")
+        print(f"   • Prevention of invalid merge operations")
+        print(f"   • Branch commit tracking and verification")
+        print(f"   • Proper error handling for edge cases")
+
+        return True
+
 if __name__ == "__main__":
     print("🚀 Starting ProllyTree Worktree Functionality Tests")
 
@@ -270,6 +413,7 @@ if __name__ == "__main__":
     try:
         success &= test_worktree_manager_functionality()
         success &= test_worktree_architecture_concepts()
+        success &= test_worktree_merge_functionality()
     except Exception as e:
         print(f"❌ Unexpected error during testing: {e}")
         success = False

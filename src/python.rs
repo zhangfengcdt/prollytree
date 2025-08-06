@@ -1060,6 +1060,43 @@ impl PyWorktreeManager {
         let manager = self.inner.lock().unwrap();
         Ok(manager.is_locked(&worktree_id))
     }
+
+    /// Merge a worktree branch back to main branch
+    fn merge_to_main(&self, worktree_id: String, commit_message: String) -> PyResult<String> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .merge_to_main(&worktree_id, &commit_message)
+            .map_err(|e| PyValueError::new_err(format!("Failed to merge to main: {}", e)))
+    }
+
+    /// Merge a worktree branch to another target branch
+    fn merge_branch(
+        &self,
+        source_worktree_id: String,
+        target_branch: String,
+        commit_message: String,
+    ) -> PyResult<String> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .merge_branch(&source_worktree_id, &target_branch, &commit_message)
+            .map_err(|e| PyValueError::new_err(format!("Failed to merge branch: {}", e)))
+    }
+
+    /// Get the current commit hash of a branch
+    fn get_branch_commit(&self, branch: String) -> PyResult<String> {
+        let manager = self.inner.lock().unwrap();
+        manager
+            .get_branch_commit(&branch)
+            .map_err(|e| PyValueError::new_err(format!("Failed to get branch commit: {}", e)))
+    }
+
+    /// List all branches in the repository
+    fn list_branches(&self) -> PyResult<Vec<String>> {
+        let manager = self.inner.lock().unwrap();
+        manager
+            .list_branches()
+            .map_err(|e| PyValueError::new_err(format!("Failed to list branches: {}", e)))
+    }
 }
 
 #[cfg(feature = "git")]

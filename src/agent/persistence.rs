@@ -732,7 +732,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let duration = start_time.elapsed();
+            let _duration = start_time.elapsed();
 
             // Verify all memories were stored
             for i in 0..10 {
