@@ -29,30 +29,37 @@ from .prollytree import (
 )
 
 # Try to import SQL functionality if available
+sql_available = False
 try:
     from .prollytree import ProllySQLStore
-    __all__ = [
-        "ProllyTree",
-        "TreeConfig",
-        "AgentMemorySystem",
-        "MemoryType",
-        "VersionedKvStore",
-        "StorageBackend",
-        "MergeConflict",
-        "ConflictResolution",
-        "ProllySQLStore"
-    ]
+    sql_available = True
 except ImportError:
-    # SQL feature not available
-    __all__ = [
-        "ProllyTree",
-        "TreeConfig",
-        "AgentMemorySystem",
-        "MemoryType",
-        "VersionedKvStore",
-        "StorageBackend",
-        "MergeConflict",
-        "ConflictResolution"
-    ]
+    pass
+
+# Try to import Git functionality if available
+git_available = False
+try:
+    from .prollytree import WorktreeManager, WorktreeVersionedKvStore
+    git_available = True
+except ImportError:
+    pass
+
+# Build __all__ based on available features
+__all__ = [
+    "ProllyTree",
+    "TreeConfig",
+    "AgentMemorySystem",
+    "MemoryType",
+    "VersionedKvStore",
+    "StorageBackend",
+    "MergeConflict",
+    "ConflictResolution"
+]
+
+if sql_available:
+    __all__.append("ProllySQLStore")
+
+if git_available:
+    __all__.extend(["WorktreeManager", "WorktreeVersionedKvStore"])
 
 __version__ = "0.2.1"
