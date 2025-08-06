@@ -52,9 +52,10 @@ import os
 import subprocess
 import tempfile
 import uuid
+import base64
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Dict, List, Optional, Any, Literal
+from typing import Annotated, Dict, List, Optional, Any, Literal, Tuple
 from dataclasses import dataclass, field
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
@@ -65,6 +66,7 @@ except ImportError:
     from pydantic.v1 import BaseModel, Field
 
 from langgraph.graph import StateGraph, START, END, MessagesState
+from langgraph.store.base import BaseStore
 
 # ProllyTree imports
 from prollytree import VersionedKvStore
@@ -133,44 +135,173 @@ class MultiAgentState(MessagesState):
     resolution_quality: str
 
 # ============================================================================
-# Branched Memory Service for Agent Isolation
+# ProllyVersionedMemoryStore with Branch Isolation
 # ============================================================================
 
-class BranchedMemoryService:
-    """Memory service with Git-like branching for agent isolation"""
+class ProllyVersionedMemoryStore(BaseStore):
+    """ProllyTree-backed versioned memory store with branch isolation for multi-agent systems.
+
+    This store provides:
+    1. Standard BaseStore interface for LangGraph integration
+    2. Git-like branching for agent isolation
+    3. Semantic validation during merge operations
+    4. Complete audit trail of all agent operations
+    """
 
     def __init__(self, store_path: str):
-        """Initialize the branched memory service"""
-        self.store_path = store_path
-        os.makedirs(store_path, exist_ok=True)
+        """Initialize the main store and prepare for agent-specific stores."""
+        super().__init__()
 
-        # Create a subdirectory for the data store
-        data_path = os.path.join(store_path, "data")
-        os.makedirs(data_path, exist_ok=True)
+        # Create a subdirectory for the store (not in git root)
+        self.store_subdir = os.path.join(store_path, "data")
+        os.makedirs(self.store_subdir, exist_ok=True)
 
-        # Initialize git repo in the parent directory
+        # Initialize git repo in parent if needed
         if not os.path.exists(os.path.join(store_path, '.git')):
             subprocess.run(["git", "init", "--quiet"], cwd=store_path, check=True)
             subprocess.run(["git", "config", "user.name", "Multi-Agent System"], cwd=store_path, check=True)
             subprocess.run(["git", "config", "user.email", "agents@example.com"], cwd=store_path, check=True)
 
-        # Initialize ProllyTree store in subdirectory
-        self.data_path = data_path
-        self.kv_store = VersionedKvStore(data_path)
+        # Main store instance (for supervisor operations)
+        self.kv_store = VersionedKvStore(self.store_subdir)
+
+        # Branch management
         self.main_branch = "main"
         self.current_branch = "main"
-
-        # Track branch metadata
         self.branch_metadata = {}
         self.agent_branches = {}  # agent_name -> branch_name
+        self.agent_stores = {}   # agent_name -> VersionedKvStore instance
 
-        print(f"✅ Initialized branched memory service at {store_path}")
+        print(f"✅ Initialized ProllyTree store with branching at {self.store_subdir}")
 
+    def _encode_value(self, value: Any) -> bytes:
+        """Encode any value to bytes for storage."""
+        if isinstance(value, bytes):
+            return value
+        elif isinstance(value, str):
+            return value.encode('utf-8')
+        else:
+            # Use JSON with base64 for complex objects
+            json_str = json.dumps(value, default=lambda x: {
+                '__type': 'bytes',
+                'data': base64.b64encode(x).decode() if isinstance(x, bytes) else str(x)
+            })
+            return json_str.encode('utf-8')
+
+    def _decode_value(self, data: bytes) -> Any:
+        """Decode bytes from storage back to original type."""
+        if not data:
+            return None
+
+        try:
+            # Try to decode as JSON first
+            json_str = data.decode('utf-8')
+            obj = json.loads(json_str)
+
+            # Handle special types
+            if isinstance(obj, dict) and '__type' in obj:
+                if obj['__type'] == 'bytes':
+                    return base64.b64decode(obj['data'])
+            return obj
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # Return as string if not JSON
+            try:
+                return data.decode('utf-8')
+            except UnicodeDecodeError:
+                return data
+
+    # BaseStore interface methods
+    def batch(self, ops: List[Tuple]) -> List[Any]:
+        """Batch operations - required by BaseStore."""
+        results = []
+        for op in ops:
+            if len(op) == 2:
+                method, args = op
+                result = getattr(self, method)(*args)
+                results.append(result)
+        return results
+
+    def abatch(self, ops: List[Tuple]) -> List[Any]:
+        """Async batch operations - synchronous implementation."""
+        return self.batch(ops)
+
+    def search(self, namespace: tuple, *, filter: Optional[dict] = None, limit: int = 10) -> List[tuple]:
+        """Search for items in a namespace."""
+        prefix = ":".join(namespace) + ":"
+        results = []
+
+        # Use list_keys() to get all keys
+        try:
+            keys = self.kv_store.list_keys()
+            count = 0
+            for key in keys:
+                if count >= limit:
+                    break
+
+                key_str = key.decode('utf-8')
+                if key_str.startswith(prefix):
+                    value = self.kv_store.get(key)
+                    decoded_value = self._decode_value(value)
+
+                    # Apply filter if provided
+                    if filter:
+                        # Simple filter matching
+                        if not all(decoded_value.get(k) == v for k, v in filter.items() if isinstance(decoded_value, dict)):
+                            continue
+
+                    # Extract item key from full key
+                    item_key = key_str[len(prefix):]
+                    results.append((namespace, item_key, decoded_value))
+                    count += 1
+        except AttributeError:
+            # If list_keys not available, return empty
+            pass
+
+        return results
+
+    def put(self, namespace: tuple, key: str, value: dict) -> None:
+        """Store a value in a namespace."""
+        full_key = ":".join(namespace) + ":" + key
+        key_bytes = full_key.encode('utf-8')
+        value_bytes = self._encode_value(value)
+
+        # Check if key exists to decide between insert/update
+        existing = self.kv_store.get(key_bytes)
+        if existing:
+            self.kv_store.update(key_bytes, value_bytes)
+            print(f"   📝 Updated: {full_key}")
+        else:
+            self.kv_store.insert(key_bytes, value_bytes)
+            print(f"   ➕ Inserted: {full_key}")
+
+    def get(self, namespace: tuple, key: str) -> Optional[dict]:
+        """Retrieve a value from a namespace."""
+        full_key = ":".join(namespace) + ":" + key
+        key_bytes = full_key.encode('utf-8')
+        data = self.kv_store.get(key_bytes)
+        return self._decode_value(data) if data else None
+
+    def delete(self, namespace: tuple, key: str) -> None:
+        """Delete a key from a namespace."""
+        full_key = ":".join(namespace) + ":" + key
+        key_bytes = full_key.encode('utf-8')
+        self.kv_store.delete(key_bytes)
+        print(f"   ❌ Deleted: {full_key}")
+
+    # Branch management methods
     def create_agent_branch(self, agent_name: str, session_id: str) -> str:
-        """Create an isolated branch for a specific agent"""
+        """Create an isolated Git branch and dedicated VersionedKvStore for a specific agent"""
         branch_name = f"{session_id}-{agent_name}-{uuid.uuid4().hex[:8]}"
 
-        # Store branch metadata
+        # Create actual Git branch using main VersionedKvStore API
+        self.kv_store.create_branch(branch_name)
+
+        # Create a dedicated VersionedKvStore instance for this agent
+        # This allows the agent to work independently on their branch
+        agent_store = VersionedKvStore(self.store_subdir)
+        agent_store.checkout(branch_name)  # Switch agent's store to their branch
+
+        # Store branch metadata using the agent's dedicated store
         self.branch_metadata[branch_name] = {
             'agent_name': agent_name,
             'session_id': session_id,
@@ -178,83 +309,136 @@ class BranchedMemoryService:
             'parent_branch': self.main_branch
         }
 
-        # Store metadata in the store
-        metadata_key = f"branch:metadata:{branch_name}".encode('utf-8')
-        metadata_value = json.dumps(self.branch_metadata[branch_name]).encode('utf-8')
-        self.kv_store.insert(metadata_key, metadata_value)
-        self.kv_store.commit(f"Created branch for {agent_name} agent")
+        # Store metadata using BaseStore interface on the agent's store
+        # (temporarily store it through the main store interface but on agent's branch)
+        original_branch = self.kv_store.current_branch()
+        self.kv_store.checkout(branch_name)
+        self.put(("branches", "metadata"), branch_name, self.branch_metadata[branch_name])
 
-        # Track agent branch mapping
+        # Track agent mappings
         self.agent_branches[agent_name] = branch_name
-        self.current_branch = branch_name
+        self.agent_stores[agent_name] = agent_store  # Each agent gets their own store instance
 
-        print(f"🌿 Created isolated branch '{branch_name}' for {agent_name}")
+        # Commit the metadata in the agent's branch
+        agent_store.commit(f"Initialize {agent_name} agent branch with metadata")
+
+        # Switch main store back to original branch
+        self.kv_store.checkout(original_branch)
+
+        print(f"🌿 Created Git branch '{branch_name}' with dedicated VersionedKvStore for {agent_name}")
+        print(f"   📊 Agent's store current branch: {agent_store.current_branch()}")
+        print(f"   📊 Main store current branch: {self.kv_store.current_branch()}")
         return branch_name
 
-    def store_agent_data(self, agent_name: str, key: str, data: Dict[str, Any]):
-        """Store data in the agent's isolated branch"""
-        if agent_name not in self.agent_branches:
-            raise ValueError(f"No branch exists for agent {agent_name}")
-
-        branch_name = self.agent_branches[agent_name]
-        full_key = f"agent:{agent_name}:{key}".encode('utf-8')
-        value = json.dumps(data).encode('utf-8')
-
-        # Store in agent's branch
-        existing = self.kv_store.get(full_key)
-        if existing:
-            self.kv_store.update(full_key, value)
-        else:
-            self.kv_store.insert(full_key, value)
-
-        self.kv_store.commit(f"{agent_name}: Stored {key}")
-        print(f"   💾 {agent_name} stored: {key} in branch {branch_name}")
-
-    def get_agent_data(self, agent_name: str, key: str) -> Optional[Dict[str, Any]]:
-        """Get data from agent's branch"""
-        full_key = f"agent:{agent_name}:{key}".encode('utf-8')
-        data = self.kv_store.get(full_key)
-        if data:
-            return json.loads(data.decode('utf-8'))
-        return None
-
-    def validate_and_merge_agent_data(self, agent_name: str, validation_fn=None) -> bool:
-        """Validate and merge agent data back to main"""
+    def checkout_agent_branch(self, agent_name: str) -> bool:
+        """Switch to the agent's isolated branch"""
         if agent_name not in self.agent_branches:
             return False
 
         branch_name = self.agent_branches[agent_name]
+        self.kv_store.checkout(branch_name)
+        self.current_branch = branch_name
+        print(f"   🔄 Switched to {agent_name}'s branch: {branch_name}")
+        return True
 
-        # Get all agent data from their branch
-        agent_keys = [key for key in self.kv_store.list_keys()
-                     if key.decode('utf-8').startswith(f"agent:{agent_name}:")]
+    def checkout_main_branch(self):
+        """Switch back to the main branch"""
+        self.kv_store.checkout(self.main_branch)
+        self.current_branch = self.main_branch
+        print(f"   🔄 Switched back to main branch")
 
+    def store_agent_analysis(self, agent_name: str, analysis_type: str, data: Dict[str, Any]):
+        """Store agent analysis data using their dedicated VersionedKvStore"""
+        if agent_name not in self.agent_stores:
+            raise ValueError(f"No dedicated store exists for agent {agent_name}")
+
+        # Get the agent's dedicated VersionedKvStore instance
+        agent_store = self.agent_stores[agent_name]
+        branch_name = self.agent_branches[agent_name]
+
+        # Store analysis data directly in the agent's dedicated VersionedKvStore
+        full_key = f"analysis:{analysis_type}"
+        key_bytes = full_key.encode('utf-8')
+        value_bytes = self._encode_value(data)
+
+        # Check if key exists to decide between insert/update
+        existing = agent_store.get(key_bytes)
+        if existing:
+            agent_store.update(key_bytes, value_bytes)
+            print(f"   📝 {agent_name} updated: {full_key} using dedicated store")
+        else:
+            agent_store.insert(key_bytes, value_bytes)
+            print(f"   ➕ {agent_name} inserted: {full_key} using dedicated store")
+
+        # Commit using the agent's dedicated store
+        agent_store.commit(f"{agent_name}: Stored {analysis_type}")
+        print(f"   💾 {agent_name} committed: {analysis_type} on branch {branch_name}")
+        print(f"      📊 Agent store branch: {agent_store.current_branch()}")
+
+    def get_agent_analysis(self, agent_name: str, analysis_type: str) -> Optional[Dict[str, Any]]:
+        """Get agent analysis data using their dedicated VersionedKvStore"""
+        if agent_name not in self.agent_stores:
+            return None
+
+        # Get the agent's dedicated VersionedKvStore instance
+        agent_store = self.agent_stores[agent_name]
+
+        # Get the data directly from the agent's dedicated store (already on their branch)
+        full_key = f"analysis:{analysis_type}"
+        key_bytes = full_key.encode('utf-8')
+        data = agent_store.get(key_bytes)
+        return self._decode_value(data) if data else None
+
+    def validate_and_merge_agent_data(self, agent_name: str, validation_fn=None) -> bool:
+        """Validate and merge agent data from their dedicated VersionedKvStore to main"""
+        if agent_name not in self.agent_stores:
+            return False
+
+        agent_store = self.agent_stores[agent_name]
+        branch_name = self.agent_branches[agent_name]
+
+        # Get all agent data from their dedicated store (already on their branch)
         agent_data = {}
-        for key in agent_keys:
-            key_str = key.decode('utf-8')
-            data = self.kv_store.get(key)
-            if data:
-                agent_data[key_str] = json.loads(data.decode('utf-8'))
+
+        # Get all analysis data directly from the agent's dedicated store
+        try:
+            keys = agent_store.list_keys()
+            for key in keys:
+                key_str = key.decode('utf-8')
+                if key_str.startswith("analysis:"):
+                    analysis_type = key_str[len("analysis:"):]
+                    value = agent_store.get(key)
+                    decoded_value = self._decode_value(value)
+                    agent_data[analysis_type] = decoded_value
+        except AttributeError:
+            # If list_keys not available, continue with empty data
+            pass
 
         # Validate if function provided
         if validation_fn and not validation_fn(agent_data, agent_name):
             print(f"   ❌ Validation failed for {agent_name}")
             return False
 
-        # Merge to main namespace
-        for key_str, data in agent_data.items():
-            merged_key = f"merged:{branch_name}:{key_str}".encode('utf-8')
-            merged_value = json.dumps(data).encode('utf-8')
+        # Ensure main store is on main branch before merging
+        self.checkout_main_branch()
 
-            existing = self.kv_store.get(merged_key)
-            if existing:
-                self.kv_store.update(merged_key, merged_value)
-            else:
-                self.kv_store.insert(merged_key, merged_value)
+        # Merge to main branch using main store
+        merged_namespace = ("merged", branch_name)
+        for key, data in agent_data.items():
+            self.put(merged_namespace, f"{agent_name}:{key}", data)
 
-        self.kv_store.commit(f"Merged {agent_name} data from {branch_name}")
-        print(f"   ✅ Successfully merged {agent_name} branch data")
+        # Commit merge using main store (which should now be on main branch)
+        self.kv_store.commit(f"Merged {agent_name} data from Git branch {branch_name}")
+        print(f"   ✅ Successfully merged {agent_name} data from dedicated store (branch {branch_name}) to main")
+        print(f"      📊 Main store branch: {self.kv_store.current_branch()}")
+        print(f"      📊 Agent store branch: {agent_store.current_branch()}")
         return True
+
+    def commit(self, message: str) -> str:
+        """Create a Git-like commit of current state."""
+        commit_id = self.kv_store.commit(message)
+        print(f"   💾 Committed: {commit_id[:8]} - {message}")
+        return commit_id
 
     def get_commit_history(self) -> List[Dict[str, Any]]:
         """Get commit history showing agent activities"""
@@ -270,6 +454,15 @@ class BranchedMemoryService:
             })
 
         return history
+
+    def get_branch_info(self) -> Dict[str, Any]:
+        """Get information about all branches"""
+        return {
+            'current_branch': self.kv_store.current_branch(),
+            'all_branches': self.kv_store.list_branches(),
+            'agent_branches': self.agent_branches,
+            'main_branch': self.main_branch
+        }
 
 # ============================================================================
 # Mock LLM for Demonstration
@@ -357,56 +550,18 @@ except ImportError:
     llm = MockLLM()
     print("🔄 Using mock LLM for agents (install langchain-openai for real LLM)")
 
-# ============================================================================
-# Agent Tools with Branch Isolation
-# ============================================================================
-
-def create_agent_tools(memory_service: BranchedMemoryService, agent_name: str):
-    """Create tools for an agent with branch isolation"""
-
-    @tool
-    def store_analysis_data(key: str, data: str) -> str:
-        """Store analysis data in the agent's isolated branch.
-
-        Args:
-            key: The key to store the data under
-            data: The data to store (as JSON string)
-        """
-        try:
-            data_dict = json.loads(data) if isinstance(data, str) else data
-            memory_service.store_agent_data(agent_name, key, data_dict)
-            return f"Successfully stored {key} in {agent_name}'s isolated branch"
-        except Exception as e:
-            return f"Error storing data: {e}"
-
-    @tool
-    def get_customer_context() -> str:
-        """Get the current customer context for analysis."""
-        # This would be passed through state in real implementation
-        return "Customer context available through state management"
-
-    @tool
-    def handoff_to_supervisor(summary: str) -> str:
-        """Hand off back to supervisor with analysis summary.
-
-        Args:
-            summary: Summary of the analysis performed and recommendations
-        """
-        return f"Handing off to supervisor: {summary}"
-
-    return [store_analysis_data, get_customer_context, handoff_to_supervisor]
 
 # ============================================================================
 # Agent Node Functions with Branch Isolation
 # ============================================================================
 
-def troubleshooting_agent_node(state, memory_service: BranchedMemoryService):
+def troubleshooting_agent_node(state, store: ProllyVersionedMemoryStore):
     """Process technical issues in isolated branch"""
     agent_name = "troubleshooting"
 
     # Create isolated branch if not exists
-    if agent_name not in memory_service.agent_branches:
-        branch_name = memory_service.create_agent_branch(agent_name, state["session_id"])
+    if agent_name not in store.agent_branches:
+        branch_name = store.create_agent_branch(agent_name, state["session_id"])
 
     # Simulate agent analysis
     customer = state["customer_context"]
@@ -428,7 +583,7 @@ def troubleshooting_agent_node(state, memory_service: BranchedMemoryService):
         "requires_technician": True
     }
 
-    memory_service.store_agent_data(agent_name, "technical_analysis", analysis_data)
+    store.store_agent_analysis(agent_name, "technical_analysis", analysis_data)
 
     # Update state
     agent_results = state.get("agent_results", {})
@@ -441,13 +596,13 @@ def troubleshooting_agent_node(state, memory_service: BranchedMemoryService):
         )]
     }
 
-def billing_agent_node(state, memory_service: BranchedMemoryService):
+def billing_agent_node(state, store: ProllyVersionedMemoryStore):
     """Process billing issues in isolated branch"""
     agent_name = "billing"
 
     # Create isolated branch if not exists
-    if agent_name not in memory_service.agent_branches:
-        branch_name = memory_service.create_agent_branch(agent_name, state["session_id"])
+    if agent_name not in store.agent_branches:
+        branch_name = store.create_agent_branch(agent_name, state["session_id"])
 
     customer = state["customer_context"]
     print(f"💰 {agent_name.title()} Agent analyzing: {customer.issue_description}")
@@ -483,7 +638,7 @@ def billing_agent_node(state, memory_service: BranchedMemoryService):
             "credit_required": False
         }
 
-    memory_service.store_agent_data(agent_name, "billing_analysis", analysis_data)
+    store.store_agent_analysis(agent_name, "billing_analysis", analysis_data)
 
     # Update state
     agent_results = state.get("agent_results", {})
@@ -496,13 +651,13 @@ def billing_agent_node(state, memory_service: BranchedMemoryService):
         )]
     }
 
-def customer_history_agent_node(state, memory_service: BranchedMemoryService):
+def customer_history_agent_node(state, store: ProllyVersionedMemoryStore):
     """Process customer relationship analysis in isolated branch"""
     agent_name = "customer_history"
 
     # Create isolated branch if not exists
-    if agent_name not in memory_service.agent_branches:
-        branch_name = memory_service.create_agent_branch(agent_name, state["session_id"])
+    if agent_name not in store.agent_branches:
+        branch_name = store.create_agent_branch(agent_name, state["session_id"])
 
     customer = state["customer_context"]
     print(f"📊 {agent_name.title()} Agent analyzing: {customer.name}'s relationship")
@@ -540,7 +695,7 @@ def customer_history_agent_node(state, memory_service: BranchedMemoryService):
             "escalation_recommended": False
         }
 
-    memory_service.store_agent_data(agent_name, "relationship_analysis", analysis_data)
+    store.store_agent_analysis(agent_name, "relationship_analysis", analysis_data)
 
     # Update state
     agent_results = state.get("agent_results", {})
@@ -557,7 +712,7 @@ def customer_history_agent_node(state, memory_service: BranchedMemoryService):
 # Supervisor Node Functions
 # ============================================================================
 
-def supervisor_node(state, memory_service: BranchedMemoryService):
+def supervisor_node(state, store: ProllyVersionedMemoryStore):
     """Supervisor node that determines next agent to run"""
     customer = state["customer_context"]
 
@@ -582,7 +737,7 @@ def supervisor_node(state, memory_service: BranchedMemoryService):
         )]
     }
 
-def validation_node(state, memory_service: BranchedMemoryService):
+def validation_node(state, store: ProllyVersionedMemoryStore):
     """Validate and merge results from all agents"""
     print("🔍 Supervisor performing semantic validation and merge...")
 
@@ -590,7 +745,7 @@ def validation_node(state, memory_service: BranchedMemoryService):
     validation_results = {}
 
     for agent_name in ["troubleshooting", "billing", "customer_history"]:
-        if agent_name in memory_service.agent_branches:
+        if agent_name in store.agent_branches:
             # Define validation function
             def validate_agent_data(data, agent):
                 # Check if agent stayed within their domain
@@ -602,7 +757,7 @@ def validation_node(state, memory_service: BranchedMemoryService):
                         return False  # Technical shouldn't handle billing
                 return True
 
-            success = memory_service.validate_and_merge_agent_data(agent_name, validate_agent_data)
+            success = store.validate_and_merge_agent_data(agent_name, validate_agent_data)
             validation_results[agent_name] = success
 
     successful_merges = sum(validation_results.values())
@@ -679,18 +834,18 @@ def display_workflow_diagram(workflow):
 # Multi-Agent Workflow Creation
 # ============================================================================
 
-def create_multi_agent_workflow(memory_service: BranchedMemoryService):
+def create_multi_agent_workflow(store: ProllyVersionedMemoryStore):
     """Create the multi-agent workflow with supervisor pattern and branch isolation"""
 
     # Build the state graph
     builder = StateGraph(MultiAgentState)
 
-    # Add nodes with memory service injection
-    builder.add_node("supervisor", lambda state: supervisor_node(state, memory_service))
-    builder.add_node("troubleshooting", lambda state: troubleshooting_agent_node(state, memory_service))
-    builder.add_node("billing", lambda state: billing_agent_node(state, memory_service))
-    builder.add_node("customer_history", lambda state: customer_history_agent_node(state, memory_service))
-    builder.add_node("validate_and_merge", lambda state: validation_node(state, memory_service))
+    # Add nodes with store injection
+    builder.add_node("supervisor", lambda state: supervisor_node(state, store))
+    builder.add_node("troubleshooting", lambda state: troubleshooting_agent_node(state, store))
+    builder.add_node("billing", lambda state: billing_agent_node(state, store))
+    builder.add_node("customer_history", lambda state: customer_history_agent_node(state, store))
+    builder.add_node("validate_and_merge", lambda state: validation_node(state, store))
 
     # Define the workflow
     builder.add_edge(START, "supervisor")
@@ -714,7 +869,8 @@ def create_multi_agent_workflow(memory_service: BranchedMemoryService):
     # End after validation
     builder.add_edge("validate_and_merge", END)
 
-    return builder.compile()
+    # Compile with the external store for LangGraph integration
+    return builder.compile(store=store)
 
 # ============================================================================
 # Demonstration Functions
@@ -734,15 +890,15 @@ def demonstrate_supervisor_pattern():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         store_path = os.path.join(tmpdir, "supervisor_memory")
-        memory = BranchedMemoryService(store_path)
+        store = ProllyVersionedMemoryStore(store_path)
 
         # Capture initial memory state
         print(f"\n🧠 INITIAL MEMORY STATE:")
-        initial_keys = memory.kv_store.list_keys()
+        initial_keys = store.kv_store.list_keys()
         print(f"   📊 Main memory entries before agents: {len(initial_keys)}")
 
-        # Create workflow
-        workflow = create_multi_agent_workflow(memory)
+        # Create workflow with external store integration
+        workflow = create_multi_agent_workflow(store)
 
         # Display workflow diagram
         print(f"\n📊 LangGraph Supervisor Workflow:")
@@ -803,7 +959,7 @@ def demonstrate_supervisor_pattern():
 
         # Show memory changes after agent work
         print(f"\n🧠 MEMORY CHANGES AFTER AGENT WORK:")
-        final_keys = memory.kv_store.list_keys()
+        final_keys = store.kv_store.list_keys()
         merged_keys = [key.decode('utf-8') for key in final_keys if key.decode('utf-8').startswith('merged:')]
 
         print(f"   📊 Total memory entries: {len(final_keys)}")
@@ -815,14 +971,17 @@ def demonstrate_supervisor_pattern():
                 print(f"      - {key}")
 
         # Show agent branch tracking
-        print(f"\n🌿 BRANCH ISOLATION TRACKING:")
-        print(f"   📊 Agent branches created: {len(memory.agent_branches)}")
-        for agent_name, branch_name in memory.agent_branches.items():
-            print(f"      • {agent_name}: {branch_name}")
+        print(f"\n🌿 GIT BRANCH ISOLATION TRACKING:")
+        branch_info = store.get_branch_info()
+        print(f"   📊 Current Git branch: {branch_info['current_branch']}")
+        print(f"   📊 All Git branches: {branch_info['all_branches']}")
+        print(f"   📊 Agent→Branch mapping:")
+        for agent_name, branch_name in branch_info['agent_branches'].items():
+            print(f"      • {agent_name} → {branch_name}")
 
         # Show commit history
         print(f"\n📚 GIT-LIKE AUDIT TRAIL:")
-        history = memory.get_commit_history()
+        history = store.get_commit_history()
         print(f"   📊 Total commits: {len(history)}")
         for commit in history[-5:]:
             print(f"      {commit['id']} - {commit['message']}")
@@ -853,22 +1012,22 @@ def demonstrate_supervisor_pattern():
         print("="*70)
 
         print(f"\n✅ LangGraph Supervisor Pattern:")
-        print(f"   • Proper agent delegation with Command objects")
-        print(f"   • Handoff tools for controlled communication")
-        print(f"   • State management through MessagesState")
+        print(f"   • Function-based nodes with proper state management")
+        print(f"   • Conditional routing based on issue classification")
+        print(f"   • ProllyVersionedMemoryStore as external long-term store")
         print(f"   • Supervisor validates and routes intelligently")
 
-        print(f"\n✅ Branch Isolation Benefits:")
-        print(f"   • Each agent works in isolated memory branch")
-        print(f"   • No context bleeding between agents")
+        print(f"\n✅ ProllyTree BaseStore Integration:")
+        print(f"   • Proper LangGraph external store interface")
+        print(f"   • Git-like branching for complete agent isolation")
         print(f"   • Semantic validation during merge operations")
-        print(f"   • Complete audit trail with Git-like history")
+        print(f"   • Complete audit trail with versioned commits")
 
         print(f"\n✅ Context Bleeding Prevention:")
-        print(f"   • Troubleshooting agent can't see billing data")
-        print(f"   • Billing agent can't see technical diagnostics")
-        print(f"   • Customer history provides context without pollution")
-        print(f"   • Supervisor orchestrates clean information flow")
+        print(f"   • Each agent operates in isolated branch namespace")
+        print(f"   • No cross-contamination between agent domains")
+        print(f"   • Validation prevents inappropriate recommendations")
+        print(f"   • Shared long-term memory with branch-level isolation")
 
 def main():
     """Run the LangGraph supervisor demonstration"""
@@ -879,12 +1038,12 @@ def main():
     print("="*80)
 
     print("\n🎯 Key Features Demonstrated:")
-    print("  • LangGraph supervisor pattern with proper delegation")
-    print("  • Branch isolation for each specialized agent")
-    print("  • Handoff tools and Command objects for routing")
+    print("  • LangGraph supervisor pattern with ProllyVersionedMemoryStore")
+    print("  • Branch isolation using LangGraph's external store interface")
+    print("  • Function-based nodes with proper state management")
     print("  • Semantic validation during merge operations")
     print("  • Git-like audit trail of all agent activities")
-    print("  • Prevention of context bleeding between agents")
+    print("  • BaseStore integration preventing context bleeding")
 
     try:
         demonstrate_supervisor_pattern()
