@@ -82,13 +82,16 @@ impl WorktreeManager {
 
     /// Discover existing worktrees in the repository
     fn discover_worktrees(&mut self) -> Result<(), GitKvError> {
-        // Add the main worktree
+        // Add the main worktree (use current branch name as the worktree ID)
+        let main_branch = self
+            .get_current_branch(&self.main_repo_path)
+            .unwrap_or_else(|_| "main".to_string());
         self.worktrees.insert(
-            "main".to_string(),
+            "main".to_string(), // Always use "main" as the ID for the primary worktree for consistency
             WorktreeInfo {
                 id: "main".to_string(),
                 path: self.main_repo_path.clone(),
-                branch: self.get_current_branch(&self.main_repo_path)?,
+                branch: main_branch,
                 is_linked: false,
                 lock_file: None,
             },
@@ -245,21 +248,8 @@ impl WorktreeManager {
         _worktree_id: &str,
         branch: &str,
     ) -> Result<(), GitKvError> {
-        // Get the current commit from the main branch
-        let main_head = self.git_dir.join("refs").join("heads").join("main");
-        let commit_id = if main_head.exists() {
-            fs::read_to_string(&main_head)
-                .map_err(GitKvError::IoError)?
-                .trim()
-                .to_string()
-        } else {
-            // If main doesn't exist, create an initial commit
-            // This would normally involve creating a tree object and commit object
-            // For now, we'll return an error
-            return Err(GitKvError::BranchNotFound(
-                "Main branch not found, cannot create new branch".to_string(),
-            ));
-        };
+        // Find the current HEAD commit (works with any default branch name)
+        let commit_id = self.get_head_commit()?;
 
         // Create the branch reference
         let branch_ref = self.git_dir.join("refs").join("heads").join(branch);
@@ -270,6 +260,44 @@ impl WorktreeManager {
         fs::write(&branch_ref, &commit_id).map_err(GitKvError::IoError)?;
 
         Ok(())
+    }
+
+    /// Get the current HEAD commit hash, works with any default branch
+    fn get_head_commit(&self) -> Result<String, GitKvError> {
+        let head_file = self.git_dir.join("HEAD");
+        if !head_file.exists() {
+            return Err(GitKvError::BranchNotFound(
+                "No HEAD found, repository may not be initialized".to_string(),
+            ));
+        }
+
+        let head_content = fs::read_to_string(&head_file).map_err(GitKvError::IoError)?;
+        let head_content = head_content.trim();
+
+        if head_content.starts_with("ref: refs/heads/") {
+            // HEAD points to a branch, read that branch's commit
+            let branch_name = head_content.strip_prefix("ref: refs/heads/").unwrap();
+            let branch_ref = self.git_dir.join("refs").join("heads").join(branch_name);
+
+            if branch_ref.exists() {
+                let commit_id = fs::read_to_string(&branch_ref)
+                    .map_err(GitKvError::IoError)?
+                    .trim()
+                    .to_string();
+                Ok(commit_id)
+            } else {
+                Err(GitKvError::BranchNotFound(format!(
+                    "Branch {branch_name} referenced by HEAD not found"
+                )))
+            }
+        } else if head_content.len() == 40 && head_content.chars().all(|c| c.is_ascii_hexdigit()) {
+            // HEAD contains a direct commit hash (detached HEAD)
+            Ok(head_content.to_string())
+        } else {
+            Err(GitKvError::BranchNotFound(
+                "Could not determine HEAD commit".to_string(),
+            ))
+        }
     }
 
     /// Remove a worktree
@@ -1056,17 +1084,72 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_worktree_manager_creation() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
-
-        // Initialize a git repository
+    /// Helper function to initialize a Git repository properly for testing
+    fn init_test_git_repo(repo_path: &std::path::Path) {
+        // Initialize Git repository
         std::process::Command::new("git")
             .args(&["init"])
             .current_dir(repo_path)
             .output()
             .expect("Failed to initialize git repository");
+
+        // Configure Git user (required for commits)
+        std::process::Command::new("git")
+            .args(&["config", "user.name", "Test User"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to configure git user name");
+
+        std::process::Command::new("git")
+            .args(&["config", "user.email", "test@example.com"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to configure git user email");
+
+        // Ensure we're using 'main' as default branch name for consistency
+        std::process::Command::new("git")
+            .args(&["config", "init.defaultBranch", "main"])
+            .current_dir(repo_path)
+            .output()
+            .ok(); // This might fail on older Git versions, ignore
+
+        // Create initial file and commit to establish main branch
+        let test_file = repo_path.join("README.md");
+        std::fs::write(&test_file, "# Test Repository").expect("Failed to create test file");
+
+        std::process::Command::new("git")
+            .args(&["add", "."])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to add files");
+
+        std::process::Command::new("git")
+            .args(&["commit", "-m", "Initial commit"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to create initial commit");
+
+        // Ensure we're on main branch (some Git versions might create 'master' by default)
+        std::process::Command::new("git")
+            .args(&["checkout", "-b", "main"])
+            .current_dir(repo_path)
+            .output()
+            .ok(); // Ignore if main already exists
+
+        std::process::Command::new("git")
+            .args(&["branch", "-D", "master"])
+            .current_dir(repo_path)
+            .output()
+            .ok(); // Ignore if master doesn't exist
+    }
+
+    #[test]
+    fn test_worktree_manager_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Initialize a git repository properly
+        init_test_git_repo(repo_path);
 
         // Create worktree manager
         let manager = WorktreeManager::new(repo_path);
@@ -1081,39 +1164,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
 
-        // Initialize a git repository
-        std::process::Command::new("git")
-            .args(&["init"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to initialize git repository");
-
-        // Create initial commit on main branch
-        std::process::Command::new("git")
-            .args(&["config", "user.name", "Test"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        std::process::Command::new("git")
-            .args(&["config", "user.email", "test@example.com"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        std::fs::write(repo_path.join("test.txt"), "test").unwrap();
-
-        std::process::Command::new("git")
-            .args(&["add", "."])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        std::process::Command::new("git")
-            .args(&["commit", "-m", "Initial commit"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
+        // Initialize a git repository properly
+        init_test_git_repo(repo_path);
 
         // Create worktree manager
         let mut manager = WorktreeManager::new(repo_path).unwrap();
@@ -1122,7 +1174,7 @@ mod tests {
         let worktree_path = temp_dir.path().join("worktree1");
         let result = manager.add_worktree(&worktree_path, "feature-branch", true);
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Failed to add worktree: {:?}", result.err());
         let info = result.unwrap();
         assert_eq!(info.branch, "feature-branch");
         assert!(info.is_linked);
@@ -1134,12 +1186,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
 
-        // Initialize a git repository
-        std::process::Command::new("git")
-            .args(&["init"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to initialize git repository");
+        // Initialize a git repository properly
+        init_test_git_repo(repo_path);
 
         // Create worktree manager
         let mut manager = WorktreeManager::new(repo_path).unwrap();
@@ -1167,38 +1215,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
 
-        // Initialize repository
-        std::process::Command::new("git")
-            .args(&["init"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to initialize git repository");
-
-        std::process::Command::new("git")
-            .args(&["config", "user.name", "Test"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        std::process::Command::new("git")
-            .args(&["config", "user.email", "test@example.com"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        // Create initial commit
-        let test_file = repo_path.join("README.md");
-        std::fs::write(&test_file, "# Test").unwrap();
-        std::process::Command::new("git")
-            .args(&["add", "."])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(&["commit", "-m", "Initial"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
+        // Initialize repository properly
+        init_test_git_repo(repo_path);
 
         // Create worktree manager
         let mut manager = WorktreeManager::new(repo_path).unwrap();
@@ -1249,38 +1267,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
 
-        // Initialize repository with initial commit
-        std::process::Command::new("git")
-            .args(&["init"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to initialize git repository");
-
-        std::process::Command::new("git")
-            .args(&["config", "user.name", "Test"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        std::process::Command::new("git")
-            .args(&["config", "user.email", "test@example.com"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        // Create initial file and commit
-        let initial_file = repo_path.join("data.txt");
-        std::fs::write(&initial_file, "initial data").unwrap();
-        std::process::Command::new("git")
-            .args(&["add", "."])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(&["commit", "-m", "Initial commit"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
+        // Initialize repository properly
+        init_test_git_repo(repo_path);
 
         // Create worktree manager
         let mut manager = WorktreeManager::new(repo_path).unwrap();
@@ -1371,38 +1359,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
 
-        // Initialize repository with proper Git setup
-        std::process::Command::new("git")
-            .args(&["init"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to initialize git repository");
-
-        std::process::Command::new("git")
-            .args(&["config", "user.name", "Test Agent"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        std::process::Command::new("git")
-            .args(&["config", "user.email", "agent@test.com"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        // Create initial commit
-        let initial_file = repo_path.join("test_data.txt");
-        std::fs::write(&initial_file, "initial shared data").unwrap();
-        std::process::Command::new("git")
-            .args(&["add", "."])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(&["commit", "-m", "Initial commit"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
+        // Initialize repository properly
+        init_test_git_repo(repo_path);
 
         // Create WorktreeManager
         let mut manager = WorktreeManager::new(repo_path).unwrap();
@@ -1519,38 +1477,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
 
-        // Initialize repository with Git
-        std::process::Command::new("git")
-            .args(&["init"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to initialize git repository");
-
-        std::process::Command::new("git")
-            .args(&["config", "user.name", "Test"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        std::process::Command::new("git")
-            .args(&["config", "user.email", "test@example.com"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-
-        // Create initial file and commit
-        let initial_file = repo_path.join("data.txt");
-        std::fs::write(&initial_file, "initial data").unwrap();
-        std::process::Command::new("git")
-            .args(&["add", "."])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(&["commit", "-m", "Initial commit"])
-            .current_dir(repo_path)
-            .output()
-            .unwrap();
+        // Initialize repository properly
+        init_test_git_repo(repo_path);
 
         // Create data directory structure for VersionedKvStore
         let main_data_path = repo_path.join("data");
