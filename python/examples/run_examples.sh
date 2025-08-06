@@ -12,6 +12,7 @@ get_example_file() {
         "sql") echo "sql_example.py" ;;
         "langgraph") echo "langgraph_example.py" ;;
         "chronological") echo "langgraph_chronological.py" ;;
+        "merge") echo "merge_example.py" ;;
         *) echo "" ;;
     esac
 }
@@ -28,6 +29,7 @@ show_usage() {
     echo "  sql           - SQL query example"
     echo "  langgraph     - LangGraph memory example"
     echo "  chronological - LangGraph chronological memory example"
+    echo "  merge         - Branch merging with conflict resolution example"
     echo ""
     echo "If no example name is provided, all examples will be run."
 }
@@ -90,6 +92,7 @@ if ./python/build_python.sh --all-features --install; then
         run_example "SQL" "sql_example.py"
         run_example "LangGraph memory" "langgraph_example.py"
         run_example "LangGraph chronological memory" "langgraph_chronological.py"
+        run_example "merge with conflict resolution" "merge_example.py"
     else
         # Run only the requested example
         EXAMPLE_FILE=$(get_example_file "$REQUESTED_EXAMPLE")
