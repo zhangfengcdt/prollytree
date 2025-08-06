@@ -69,7 +69,7 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.store.base import BaseStore
 
 # ProllyTree imports
-from prollytree import VersionedKvStore
+from prollytree import VersionedKvStore, ConflictResolution
 
 # ============================================================================
 # Agent Types and Data Models
@@ -139,40 +139,47 @@ class MultiAgentState(MessagesState):
 # ============================================================================
 
 class ProllyVersionedMemoryStore(BaseStore):
-    """ProllyTree-backed versioned memory store with branch isolation for multi-agent systems.
+    """VersionedKvStore-backed memory store with branch isolation for multi-agent systems.
 
     This store provides:
     1. Standard BaseStore interface for LangGraph integration
-    2. Git-like branching for agent isolation
-    3. Semantic validation during merge operations
+    2. Git-like branching for agent isolation using VersionedKvStore
+    3. Intelligent conflict resolution during merge operations
     4. Complete audit trail of all agent operations
     """
 
     def __init__(self, store_path: str):
-        """Initialize the main store and prepare for agent-specific stores."""
+        """Initialize the main store and prepare for agent-specific branches."""
         super().__init__()
 
-        # Create a subdirectory for the store (not in git root)
-        self.store_subdir = os.path.join(store_path, "data")
-        os.makedirs(self.store_subdir, exist_ok=True)
+        self.store_path = store_path
+        os.makedirs(store_path, exist_ok=True)
 
-        # Initialize git repo in parent if needed
+        # Initialize git repository if needed
         if not os.path.exists(os.path.join(store_path, '.git')):
             subprocess.run(["git", "init", "--quiet"], cwd=store_path, check=True)
             subprocess.run(["git", "config", "user.name", "Multi-Agent System"], cwd=store_path, check=True)
             subprocess.run(["git", "config", "user.email", "agents@example.com"], cwd=store_path, check=True)
 
-        # Main store instance (for supervisor operations)
-        self.kv_store = VersionedKvStore(self.store_subdir)
+            # Create initial commit
+            readme_path = os.path.join(store_path, "README.md")
+            with open(readme_path, "w") as f:
+                f.write("# Multi-Agent Memory Store\n")
+            subprocess.run(["git", "add", "."], cwd=store_path, check=True)
+            subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=store_path, check=True)
 
-        # Branch management
+        # Create main VersionedKvStore in data subdirectory
+        self.data_dir = os.path.join(store_path, "data")
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.main_store = VersionedKvStore(self.data_dir)
+
+        # Agent branch tracking
         self.main_branch = "main"
-        self.current_branch = "main"
-        self.branch_metadata = {}
+        self.agent_stores = {}  # agent_name -> VersionedKvStore (on their branch)
         self.agent_branches = {}  # agent_name -> branch_name
-        self.agent_stores = {}   # agent_name -> VersionedKvStore instance
+        self.branch_metadata = {}
 
-        print(f"✅ Initialized ProllyTree store with branching at {self.store_subdir}")
+        print(f"✅ Initialized VersionedKvStore-backed store at {store_path}")
 
     def _encode_value(self, value: Any) -> bytes:
         """Encode any value to bytes for storage."""
@@ -232,7 +239,7 @@ class ProllyVersionedMemoryStore(BaseStore):
 
         # Use list_keys() to get all keys
         try:
-            keys = self.kv_store.list_keys()
+            keys = self.main_store.list_keys()
             count = 0
             for key in keys:
                 if count >= limit:
@@ -240,7 +247,7 @@ class ProllyVersionedMemoryStore(BaseStore):
 
                 key_str = key.decode('utf-8')
                 if key_str.startswith(prefix):
-                    value = self.kv_store.get(key)
+                    value = self.main_store.get(key)
                     decoded_value = self._decode_value(value)
 
                     # Apply filter if provided
@@ -266,42 +273,41 @@ class ProllyVersionedMemoryStore(BaseStore):
         value_bytes = self._encode_value(value)
 
         # Check if key exists to decide between insert/update
-        existing = self.kv_store.get(key_bytes)
+        existing = self.main_store.get(key_bytes)
         if existing:
-            self.kv_store.update(key_bytes, value_bytes)
+            self.main_store.update(key_bytes, value_bytes)
             print(f"   📝 Updated: {full_key}")
         else:
-            self.kv_store.insert(key_bytes, value_bytes)
+            self.main_store.insert(key_bytes, value_bytes)
             print(f"   ➕ Inserted: {full_key}")
 
     def get(self, namespace: tuple, key: str) -> Optional[dict]:
         """Retrieve a value from a namespace."""
         full_key = ":".join(namespace) + ":" + key
         key_bytes = full_key.encode('utf-8')
-        data = self.kv_store.get(key_bytes)
+        data = self.main_store.get(key_bytes)
         return self._decode_value(data) if data else None
 
     def delete(self, namespace: tuple, key: str) -> None:
         """Delete a key from a namespace."""
         full_key = ":".join(namespace) + ":" + key
         key_bytes = full_key.encode('utf-8')
-        self.kv_store.delete(key_bytes)
+        self.main_store.delete(key_bytes)
         print(f"   ❌ Deleted: {full_key}")
 
     # Branch management methods
     def create_agent_branch(self, agent_name: str, session_id: str) -> str:
-        """Create an isolated Git branch and dedicated VersionedKvStore for a specific agent"""
+        """Create an isolated Git branch with dedicated VersionedKvStore for a specific agent"""
         branch_name = f"{session_id}-{agent_name}-{uuid.uuid4().hex[:8]}"
 
-        # Create actual Git branch using main VersionedKvStore API
-        self.kv_store.create_branch(branch_name)
+        # Create Git branch using main VersionedKvStore
+        self.main_store.create_branch(branch_name)
 
-        # Create a dedicated VersionedKvStore instance for this agent
-        # This allows the agent to work independently on their branch
-        agent_store = VersionedKvStore(self.store_subdir)
-        agent_store.checkout(branch_name)  # Switch agent's store to their branch
+        # Create dedicated VersionedKvStore instance for the agent
+        agent_store = VersionedKvStore(self.data_dir)
+        agent_store.checkout(branch_name)
 
-        # Store branch metadata using the agent's dedicated store
+        # Store branch metadata
         self.branch_metadata[branch_name] = {
             'agent_name': agent_name,
             'session_id': session_id,
@@ -309,54 +315,37 @@ class ProllyVersionedMemoryStore(BaseStore):
             'parent_branch': self.main_branch
         }
 
-        # Store metadata using BaseStore interface on the agent's store
-        # (temporarily store it through the main store interface but on agent's branch)
-        original_branch = self.kv_store.current_branch()
-        self.kv_store.checkout(branch_name)
-        self.put(("branches", "metadata"), branch_name, self.branch_metadata[branch_name])
-
         # Track agent mappings
+        self.agent_stores[agent_name] = agent_store
         self.agent_branches[agent_name] = branch_name
-        self.agent_stores[agent_name] = agent_store  # Each agent gets their own store instance
 
-        # Commit the metadata in the agent's branch
+        # Store metadata in the agent's branch
+        metadata_key = f"metadata:agent:{agent_name}".encode('utf-8')
+        metadata_value = self._encode_value(self.branch_metadata[branch_name])
+        agent_store.insert(metadata_key, metadata_value)
         agent_store.commit(f"Initialize {agent_name} agent branch with metadata")
 
-        # Switch main store back to original branch
-        self.kv_store.checkout(original_branch)
-
-        print(f"🌿 Created Git branch '{branch_name}' with dedicated VersionedKvStore for {agent_name}")
-        print(f"   📊 Agent's store current branch: {agent_store.current_branch()}")
-        print(f"   📊 Main store current branch: {self.kv_store.current_branch()}")
+        print(f"🌿 Created Git branch '{branch_name}' with VersionedKvStore for {agent_name}")
+        print(f"   📊 Agent store branch: {agent_store.current_branch()}")
         return branch_name
 
-    def checkout_agent_branch(self, agent_name: str) -> bool:
-        """Switch to the agent's isolated branch"""
-        if agent_name not in self.agent_branches:
-            return False
+    def get_agent_store(self, agent_name: str) -> Optional[VersionedKvStore]:
+        """Get the agent's isolated branch store"""
+        return self.agent_stores.get(agent_name)
 
-        branch_name = self.agent_branches[agent_name]
-        self.kv_store.checkout(branch_name)
-        self.current_branch = branch_name
-        print(f"   🔄 Switched to {agent_name}'s branch: {branch_name}")
-        return True
-
-    def checkout_main_branch(self):
-        """Switch back to the main branch"""
-        self.kv_store.checkout(self.main_branch)
-        self.current_branch = self.main_branch
-        print(f"   🔄 Switched back to main branch")
+    def get_main_store(self) -> VersionedKvStore:
+        """Get the main store for supervisor operations"""
+        return self.main_store
 
     def store_agent_analysis(self, agent_name: str, analysis_type: str, data: Dict[str, Any]):
         """Store agent analysis data using their dedicated VersionedKvStore"""
         if agent_name not in self.agent_stores:
             raise ValueError(f"No dedicated store exists for agent {agent_name}")
 
-        # Get the agent's dedicated VersionedKvStore instance
+        # Get the agent's VersionedKvStore instance
         agent_store = self.agent_stores[agent_name]
-        branch_name = self.agent_branches[agent_name]
 
-        # Store analysis data directly in the agent's dedicated VersionedKvStore
+        # Store analysis data directly in the agent's store
         full_key = f"analysis:{analysis_type}"
         key_bytes = full_key.encode('utf-8')
         value_bytes = self._encode_value(data)
@@ -370,37 +359,34 @@ class ProllyVersionedMemoryStore(BaseStore):
             agent_store.insert(key_bytes, value_bytes)
             print(f"   ➕ {agent_name} inserted: {full_key} using dedicated store")
 
-        # Commit using the agent's dedicated store
+        # Commit using the agent's store
         agent_store.commit(f"{agent_name}: Stored {analysis_type}")
-        print(f"   💾 {agent_name} committed: {analysis_type} on branch {branch_name}")
-        print(f"      📊 Agent store branch: {agent_store.current_branch()}")
+        print(f"   💾 {agent_name} committed: {analysis_type} on branch {agent_store.current_branch()}")
 
     def get_agent_analysis(self, agent_name: str, analysis_type: str) -> Optional[Dict[str, Any]]:
         """Get agent analysis data using their dedicated VersionedKvStore"""
         if agent_name not in self.agent_stores:
             return None
 
-        # Get the agent's dedicated VersionedKvStore instance
+        # Get the agent's VersionedKvStore instance
         agent_store = self.agent_stores[agent_name]
 
-        # Get the data directly from the agent's dedicated store (already on their branch)
+        # Get the data directly from the agent's store
         full_key = f"analysis:{analysis_type}"
         key_bytes = full_key.encode('utf-8')
         data = agent_store.get(key_bytes)
         return self._decode_value(data) if data else None
 
-    def validate_and_merge_agent_data(self, agent_name: str, validation_fn=None) -> bool:
-        """Validate and merge agent data from their dedicated VersionedKvStore to main"""
+    def validate_and_merge_agent_data(self, agent_name: str, validation_fn=None, conflict_resolution_strategy: str = "ignore_conflicts") -> bool:
+        """Validate and merge agent data from their VersionedKvStore to main using intelligent conflict resolution"""
         if agent_name not in self.agent_stores:
             return False
 
         agent_store = self.agent_stores[agent_name]
-        branch_name = self.agent_branches[agent_name]
+        agent_branch = self.agent_branches[agent_name]
 
-        # Get all agent data from their dedicated store (already on their branch)
+        # Get all agent data from their store
         agent_data = {}
-
-        # Get all analysis data directly from the agent's dedicated store
         try:
             keys = agent_store.list_keys()
             for key in keys:
@@ -411,7 +397,6 @@ class ProllyVersionedMemoryStore(BaseStore):
                     decoded_value = self._decode_value(value)
                     agent_data[analysis_type] = decoded_value
         except AttributeError:
-            # If list_keys not available, continue with empty data
             pass
 
         # Validate if function provided
@@ -419,30 +404,52 @@ class ProllyVersionedMemoryStore(BaseStore):
             print(f"   ❌ Validation failed for {agent_name}")
             return False
 
-        # Ensure main store is on main branch before merging
-        self.checkout_main_branch()
+        # Switch main store to main branch for merge
+        original_branch = self.main_store.current_branch()
+        self.main_store.checkout(self.main_branch)
 
-        # Merge to main branch using main store
-        merged_namespace = ("merged", branch_name)
-        for key, data in agent_data.items():
-            self.put(merged_namespace, f"{agent_name}:{key}", data)
+        try:
+            # Perform merge using VersionedKvStore's merge capabilities
+            if conflict_resolution_strategy == "ignore_conflicts":
+                merge_result = self.main_store.merge_ignore_conflicts(agent_branch)
+            else:
+                # Try regular merge first
+                try:
+                    conflicts = self.main_store.try_merge(agent_branch)
+                    if conflicts:
+                        print(f"   ⚠️  Merge conflicts detected for {agent_name}: {len(conflicts)} conflicts")
+                        # Use ignore_conflicts as fallback
+                        merge_result = self.main_store.merge_ignore_conflicts(agent_branch)
+                        print(f"   🔄 Used ignore_conflicts fallback for {agent_name}")
+                    else:
+                        merge_result = self.main_store.merge(agent_branch, ConflictResolution.TakeSource)
+                except Exception:
+                    # Fallback to ignore_conflicts
+                    merge_result = self.main_store.merge_ignore_conflicts(agent_branch)
 
-        # Commit merge using main store (which should now be on main branch)
-        self.kv_store.commit(f"Merged {agent_name} data from Git branch {branch_name}")
-        print(f"   ✅ Successfully merged {agent_name} data from dedicated store (branch {branch_name}) to main")
-        print(f"      📊 Main store branch: {self.kv_store.current_branch()}")
-        print(f"      📊 Agent store branch: {agent_store.current_branch()}")
-        return True
+            self.main_store.commit(f"Merged {agent_name} data using {conflict_resolution_strategy} resolution")
+
+            print(f"   ✅ Successfully merged {agent_name} data using {conflict_resolution_strategy} resolution")
+            print(f"      📊 Merge result: {merge_result}")
+            return True
+
+        except Exception as e:
+            print(f"   ❌ Merge failed for {agent_name}: {e}")
+            return False
+        finally:
+            # Restore original branch if needed
+            if original_branch != self.main_branch:
+                self.main_store.checkout(original_branch)
 
     def commit(self, message: str) -> str:
-        """Create a Git-like commit of current state."""
-        commit_id = self.kv_store.commit(message)
+        """Create a Git-like commit of current state in main store."""
+        commit_id = self.main_store.commit(message)
         print(f"   💾 Committed: {commit_id[:8]} - {message}")
         return commit_id
 
     def get_commit_history(self) -> List[Dict[str, Any]]:
-        """Get commit history showing agent activities"""
-        commits = self.kv_store.log()
+        """Get commit history showing agent activities across all worktrees"""
+        commits = self.main_store.log()
 
         history = []
         for commit in commits:
@@ -456,12 +463,13 @@ class ProllyVersionedMemoryStore(BaseStore):
         return history
 
     def get_branch_info(self) -> Dict[str, Any]:
-        """Get information about all branches"""
+        """Get information about all branches and stores"""
         return {
-            'current_branch': self.kv_store.current_branch(),
-            'all_branches': self.kv_store.list_branches(),
-            'agent_branches': self.agent_branches,
-            'main_branch': self.main_branch
+            'main_branch': self.main_branch,
+            'main_store_branch': self.main_store.current_branch(),
+            'all_branches': self.main_store.list_branches(),
+            'agent_branches': {name: store.current_branch() for name, store in self.agent_stores.items()},
+            'branch_metadata': self.branch_metadata
         }
 
 # ============================================================================
@@ -556,18 +564,18 @@ except ImportError:
 # ============================================================================
 
 def troubleshooting_agent_node(state, store: ProllyVersionedMemoryStore):
-    """Process technical issues in isolated branch"""
+    """Process technical issues in isolated worktree"""
     agent_name = "troubleshooting"
 
-    # Create isolated branch if not exists
-    if agent_name not in store.agent_branches:
-        branch_name = store.create_agent_branch(agent_name, state["session_id"])
+    # Create isolated worktree if not exists
+    if agent_name not in store.agent_stores:
+        branch_name = store.create_agent_worktree(agent_name, state["session_id"])
 
     # Simulate agent analysis
     customer = state["customer_context"]
     print(f"🔧 {agent_name.title()} Agent analyzing: {customer.issue_description}")
 
-    # Store analysis in isolated branch
+    # Store analysis in isolated worktree
     analysis_data = {
         "agent": agent_name,
         "customer_id": customer.customer_id,
@@ -580,7 +588,9 @@ def troubleshooting_agent_node(state, store: ProllyVersionedMemoryStore):
             "Verify area infrastructure for service outages"
         ],
         "confidence": 0.85,
-        "requires_technician": True
+        "requires_technician": True,
+        "analysis_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "agent_priority": 8  # Technical expertise priority
     }
 
     store.store_agent_analysis(agent_name, "technical_analysis", analysis_data)
@@ -597,17 +607,17 @@ def troubleshooting_agent_node(state, store: ProllyVersionedMemoryStore):
     }
 
 def billing_agent_node(state, store: ProllyVersionedMemoryStore):
-    """Process billing issues in isolated branch"""
+    """Process billing issues in isolated worktree"""
     agent_name = "billing"
 
-    # Create isolated branch if not exists
-    if agent_name not in store.agent_branches:
-        branch_name = store.create_agent_branch(agent_name, state["session_id"])
+    # Create isolated worktree if not exists
+    if agent_name not in store.agent_stores:
+        branch_name = store.create_agent_worktree(agent_name, state["session_id"])
 
     customer = state["customer_context"]
     print(f"💰 {agent_name.title()} Agent analyzing: {customer.issue_description}")
 
-    # Store analysis in isolated branch
+    # Store analysis in isolated worktree
     if customer.issue_type == IssueType.BILLING_DISPUTE:
         analysis_data = {
             "agent": agent_name,
@@ -622,7 +632,9 @@ def billing_agent_node(state, store: ProllyVersionedMemoryStore):
             ],
             "confidence": 0.90,
             "credit_required": True,
-            "credit_amount": 45.99
+            "credit_amount": 45.99,
+            "analysis_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "agent_priority": 9  # High priority for billing disputes
         }
     else:
         analysis_data = {
@@ -635,7 +647,9 @@ def billing_agent_node(state, store: ProllyVersionedMemoryStore):
                 "No billing implications for technical problems"
             ],
             "confidence": 0.95,
-            "credit_required": False
+            "credit_required": False,
+            "analysis_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "agent_priority": 5  # Lower priority for non-billing issues
         }
 
     store.store_agent_analysis(agent_name, "billing_analysis", analysis_data)
@@ -652,17 +666,17 @@ def billing_agent_node(state, store: ProllyVersionedMemoryStore):
     }
 
 def customer_history_agent_node(state, store: ProllyVersionedMemoryStore):
-    """Process customer relationship analysis in isolated branch"""
+    """Process customer relationship analysis in isolated worktree"""
     agent_name = "customer_history"
 
-    # Create isolated branch if not exists
-    if agent_name not in store.agent_branches:
-        branch_name = store.create_agent_branch(agent_name, state["session_id"])
+    # Create isolated worktree if not exists
+    if agent_name not in store.agent_stores:
+        branch_name = store.create_agent_worktree(agent_name, state["session_id"])
 
     customer = state["customer_context"]
     print(f"📊 {agent_name.title()} Agent analyzing: {customer.name}'s relationship")
 
-    # Store analysis in isolated branch
+    # Store analysis in isolated worktree
     if customer.account_type == "Premium":
         analysis_data = {
             "agent": agent_name,
@@ -677,7 +691,9 @@ def customer_history_agent_node(state, store: ProllyVersionedMemoryStore):
             ],
             "confidence": 0.80,
             "priority_level": "high",
-            "escalation_recommended": True
+            "escalation_recommended": True,
+            "analysis_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "agent_priority": 10  # Highest priority for premium customers
         }
     else:
         analysis_data = {
@@ -692,7 +708,9 @@ def customer_history_agent_node(state, store: ProllyVersionedMemoryStore):
             ],
             "confidence": 0.75,
             "priority_level": "normal",
-            "escalation_recommended": False
+            "escalation_recommended": False,
+            "analysis_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "agent_priority": 6  # Standard priority for regular customers
         }
 
     store.store_agent_analysis(agent_name, "relationship_analysis", analysis_data)
@@ -738,45 +756,83 @@ def supervisor_node(state, store: ProllyVersionedMemoryStore):
     }
 
 def validation_node(state, store: ProllyVersionedMemoryStore):
-    """Validate and merge results from all agents"""
-    print("🔍 Supervisor performing semantic validation and merge...")
+    """Validate and merge results from all agents using intelligent conflict resolution"""
+    print("🔍 Supervisor performing semantic validation and intelligent merge...")
 
-    # Validate each agent's results
+    # Validate each agent's results using different conflict resolution strategies
     validation_results = {}
+    merge_strategies_used = {}
 
     for agent_name in ["troubleshooting", "billing", "customer_history"]:
-        if agent_name in store.agent_branches:
+        if agent_name in store.agent_stores:
             # Define validation function
             def validate_agent_data(data, agent):
                 # Check if agent stayed within their domain
                 for key, value in data.items():
                     value_str = str(value).lower()
                     if agent == "billing" and any(tech_word in value_str for tech_word in ["modem", "technician", "signal"]):
+                        print(f"   ⚠️  Domain violation: {agent} handling technical terms")
                         return False  # Billing shouldn't handle technical
                     if agent == "troubleshooting" and any(bill_word in value_str for bill_word in ["credit", "payment", "charge"]):
+                        print(f"   ⚠️  Domain violation: {agent} handling billing terms")
                         return False  # Technical shouldn't handle billing
                 return True
 
-            success = store.validate_and_merge_agent_data(agent_name, validate_agent_data)
+            # Choose merge strategy based on agent type and issue complexity
+            customer = state["customer_context"]
+            if customer.account_type == "Premium" or customer.priority == "high":
+                # Use advanced merge for premium customers
+                merge_strategy = "conflict_aware"
+                print(f"   🏆 Using conflict-aware merge for {agent_name} (premium customer)")
+            elif agent_name == "billing" and customer.issue_type == IssueType.BILLING_DISPUTE:
+                # Use conflict-aware merge for complex billing data
+                merge_strategy = "conflict_aware"
+                print(f"   🧠 Using conflict-aware merge for {agent_name} (complex billing data)")
+            else:
+                # Use ignore_conflicts for standard cases
+                merge_strategy = "ignore_conflicts"
+                print(f"   ⏰ Using ignore_conflicts merge for {agent_name} (standard case)")
+
+            success = store.validate_and_merge_agent_data(agent_name, validate_agent_data, merge_strategy)
             validation_results[agent_name] = success
+            merge_strategies_used[agent_name] = merge_strategy
 
     successful_merges = sum(validation_results.values())
     total_agents = len(validation_results)
 
-    result_summary = f"Merged {successful_merges}/{total_agents} agent results with semantic validation"
+    result_summary = f"Merged {successful_merges}/{total_agents} agent results using intelligent conflict resolution"
     print(f"✅ {result_summary}")
 
-    # Generate final recommendations
+    # Show merge strategies used
+    for agent, strategy in merge_strategies_used.items():
+        success_icon = "✅" if validation_results.get(agent) else "❌"
+        print(f"   {success_icon} {agent}: {strategy} resolution")
+
+    # Generate final recommendations with metadata
     final_recommendations = []
     agent_results = state.get("agent_results", {})
     for agent_name, result in agent_results.items():
         if result:
-            final_recommendations.extend(result.get("recommendations", []))
+            recommendations = result.get("recommendations", [])
+            # Add metadata to recommendations
+            for rec in recommendations:
+                final_recommendations.append({
+                    "recommendation": rec,
+                    "agent": agent_name,
+                    "confidence": result.get("confidence", 0.0),
+                    "priority": result.get("agent_priority", 5),
+                    "timestamp": result.get("analysis_timestamp")
+                })
+
+    # Sort recommendations by priority and confidence
+    final_recommendations.sort(key=lambda x: (-x["priority"], -x["confidence"]))
 
     return {
         "isolation_success": successful_merges == total_agents,
         "context_bleeding_detected": not (successful_merges == total_agents),
-        "final_recommendations": final_recommendations,
+        "final_recommendations": [r["recommendation"] for r in final_recommendations],  # Extract just the text
+        "recommendation_metadata": final_recommendations,  # Keep full metadata
+        "merge_strategies_used": merge_strategies_used,
         "resolution_quality": "high" if successful_merges == total_agents else "medium",
         "messages": state["messages"] + [AIMessage(content=result_summary)]
     }
@@ -894,7 +950,7 @@ def demonstrate_supervisor_pattern():
 
         # Capture initial memory state
         print(f"\n🧠 INITIAL MEMORY STATE:")
-        initial_keys = store.kv_store.list_keys()
+        initial_keys = store.main_store.list_keys()
         print(f"   📊 Main memory entries before agents: {len(initial_keys)}")
 
         # Create workflow with external store integration
@@ -959,7 +1015,7 @@ def demonstrate_supervisor_pattern():
 
         # Show memory changes after agent work
         print(f"\n🧠 MEMORY CHANGES AFTER AGENT WORK:")
-        final_keys = store.kv_store.list_keys()
+        final_keys = store.main_store.list_keys()
         merged_keys = [key.decode('utf-8') for key in final_keys if key.decode('utf-8').startswith('merged:')]
 
         print(f"   📊 Total memory entries: {len(final_keys)}")
@@ -973,7 +1029,7 @@ def demonstrate_supervisor_pattern():
         # Show agent branch tracking
         print(f"\n🌿 GIT BRANCH ISOLATION TRACKING:")
         branch_info = store.get_branch_info()
-        print(f"   📊 Current Git branch: {branch_info['current_branch']}")
+        print(f"   📊 Current Git branch: {branch_info['main_store_branch']}")
         print(f"   📊 All Git branches: {branch_info['all_branches']}")
         print(f"   📊 Agent→Branch mapping:")
         for agent_name, branch_name in branch_info['agent_branches'].items():
@@ -1014,20 +1070,21 @@ def demonstrate_supervisor_pattern():
         print(f"\n✅ LangGraph Supervisor Pattern:")
         print(f"   • Function-based nodes with proper state management")
         print(f"   • Conditional routing based on issue classification")
-        print(f"   • ProllyVersionedMemoryStore as external long-term store")
+        print(f"   • VersionedKvStore-based ProllyVersionedMemoryStore as external long-term store")
         print(f"   • Supervisor validates and routes intelligently")
 
-        print(f"\n✅ ProllyTree BaseStore Integration:")
+        print(f"\n✅ VersionedKvStore Integration:")
         print(f"   • Proper LangGraph external store interface")
         print(f"   • Git-like branching for complete agent isolation")
-        print(f"   • Semantic validation during merge operations")
+        print(f"   • Intelligent conflict resolution with multiple strategies")
+        print(f"   • merge_ignore_conflicts and try_merge capabilities")
         print(f"   • Complete audit trail with versioned commits")
 
         print(f"\n✅ Context Bleeding Prevention:")
-        print(f"   • Each agent operates in isolated branch namespace")
+        print(f"   • Each agent operates in isolated branch with dedicated VersionedKvStore")
         print(f"   • No cross-contamination between agent domains")
-        print(f"   • Validation prevents inappropriate recommendations")
-        print(f"   • Shared long-term memory with branch-level isolation")
+        print(f"   • Domain validation prevents inappropriate recommendations")
+        print(f"   • Shared long-term memory with complete branch-level isolation")
 
 def main():
     """Run the LangGraph supervisor demonstration"""
@@ -1038,12 +1095,13 @@ def main():
     print("="*80)
 
     print("\n🎯 Key Features Demonstrated:")
-    print("  • LangGraph supervisor pattern with ProllyVersionedMemoryStore")
-    print("  • Branch isolation using LangGraph's external store interface")
-    print("  • Function-based nodes with proper state management")
-    print("  • Semantic validation during merge operations")
-    print("  • Git-like audit trail of all agent activities")
-    print("  • BaseStore integration preventing context bleeding")
+    print("  • LangGraph supervisor pattern with VersionedKvStore-backed storage")
+    print("  • Complete branch isolation using dedicated VersionedKvStore instances")
+    print("  • Intelligent conflict resolution with multiple strategies")
+    print("  • ConflictResolution enum for merge strategy selection")
+    print("  • merge_ignore_conflicts and try_merge for conflict handling")
+    print("  • Domain validation preventing context bleeding")
+    print("  • Complete Git audit trail of all agent activities")
 
     try:
         demonstrate_supervisor_pattern()
@@ -1052,12 +1110,13 @@ def main():
         print("✅ LangGraph Supervisor Demonstration Complete!")
         print("="*80)
         print("\nKey Architectural Patterns Shown:")
-        print("  1. LangGraph supervisor manages intelligent agent delegation")
-        print("  2. Branch isolation prevents context bleeding completely")
-        print("  3. Handoff tools enable controlled agent communication")
-        print("  4. Semantic validation ensures appropriate recommendations")
-        print("  5. Git-like history provides complete audit trail")
-        print("  6. Command objects enable proper workflow routing")
+        print("  1. LangGraph supervisor with VersionedKvStore for intelligent delegation")
+        print("  2. Complete branch isolation prevents context bleeding")
+        print("  3. Multi-strategy conflict resolution (ignore_conflicts, try_merge)")
+        print("  4. Dedicated VersionedKvStore instances for agent-specific operations")
+        print("  5. Domain validation ensures appropriate recommendations")
+        print("  6. Git branch history provides complete audit trail")
+        print("  7. Intelligent merge operations with conflict detection")
 
     except ImportError as e:
         print(f"\n❌ Error: {e}")
