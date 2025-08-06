@@ -114,6 +114,54 @@ ProllyTree provides Git-like versioned storage:
    for commit in commits:
        print(f"{commit['id'][:8]} - {commit['message']}")
 
+Branch Operations & Merging
+----------------------------
+
+ProllyTree supports Git-like branching and merging with conflict resolution:
+
+.. code-block:: python
+
+   from prollytree import VersionedKvStore, ConflictResolution
+
+   store = VersionedKvStore("/path/to/store")
+
+   # Set up initial data
+   store.insert(b"config:theme", b"light")
+   store.insert(b"config:lang", b"en")
+   store.commit("Initial configuration")
+
+   # Create and switch to feature branch
+   store.create_branch("feature-dark-mode")
+
+   # Make changes on feature branch
+   store.update(b"config:theme", b"dark")
+   store.insert(b"config:animations", b"enabled")
+   store.commit("Add dark mode and animations")
+
+   # Switch back to main branch
+   store.checkout("main")
+
+   # Make different changes on main
+   store.update(b"config:lang", b"fr")
+   store.commit("Change language to French")
+
+   # Merge feature branch with conflict resolution
+   try:
+       # Attempt merge, taking source values on conflicts
+       merge_commit = store.merge("feature-dark-mode", ConflictResolution.TakeSource)
+       print(f"Merge successful: {merge_commit[:8]}")
+   except Exception as e:
+       print(f"Merge failed: {e}")
+
+   # Check for conflicts without applying merge
+   success, conflicts = store.try_merge("feature-dark-mode")
+   if not success:
+       print(f"Found {len(conflicts)} conflicts:")
+       for conflict in conflicts:
+           print(f"  Key: {conflict.key}")
+           print(f"    Source: {conflict.source_value}")
+           print(f"    Destination: {conflict.destination_value}")
+
 SQL Queries
 -----------
 

@@ -31,7 +31,7 @@ use std::sync::RwLock;
 /// # Type Parameters
 ///
 /// - `N`: The size of the value digest.
-pub trait NodeStorage<const N: usize>: Send + Sync {
+pub trait NodeStorage<const N: usize>: Send + Sync + Clone {
     /// Retrieves a node from storage by its hash.
     ///
     /// # Arguments
@@ -67,6 +67,7 @@ pub trait NodeStorage<const N: usize>: Send + Sync {
 /// # Type Parameters
 ///
 /// - `N`: The size of the value digest.
+#[derive(Debug)]
 pub struct InMemoryNodeStorage<const N: usize> {
     map: HashMap<ValueDigest<N>, ProllyNode<N>>,
     configs: RwLock<HashMap<String, Vec<u8>>>,
@@ -127,6 +128,7 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct FileNodeStorage<const N: usize> {
     storage_dir: PathBuf,
 }

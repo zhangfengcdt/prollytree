@@ -30,6 +30,7 @@ const NODE_PREFIX: &[u8] = b"node:";
 ///
 /// This storage implementation uses RocksDB as the persistent storage backend,
 /// with an LRU cache for frequently accessed nodes to improve performance.
+#[derive(Debug)]
 pub struct RocksDBNodeStorage<const N: usize> {
     db: Arc<DB>,
     cache: Arc<Mutex<LruCache<ValueDigest<N>, ProllyNode<N>>>>,

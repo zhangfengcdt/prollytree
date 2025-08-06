@@ -71,6 +71,9 @@ cargo test --features git worktree
 
 # Run Python integration tests (requires Python bindings built)
 python tests/test_worktree_integration.py
+
+# Test merge functionality specifically
+cargo test test_versioned_kv_store_merge --lib -- --nocapture
 ```
 
 ### Code Quality
@@ -112,7 +115,9 @@ python -m pytest python/tests/
 python python/tests/test_prollytree.py
 python python/tests/test_sql.py
 python python/tests/test_agent.py
+
 python python/tests/test_worktree_integration.py
+python python/tests/test_merge.py  # Merge functionality tests
 
 # Run Python examples
 cd python/examples && ./run_examples.sh
@@ -132,6 +137,10 @@ cd python/examples && ./run_examples.sh langgraph_chronological.py
 
 # Commit changes
 ./target/debug/git-prolly commit -m "Initial data"
+
+# Branch operations
+./target/debug/git-prolly checkout -b feature-branch
+./target/debug/git-prolly checkout main
 
 # List all keys
 ./target/debug/git-prolly list
@@ -223,6 +232,16 @@ The codebase implements a layered architecture where each layer builds on the pr
 - LRU cache available for frequently accessed nodes
 - Python bindings handle memory safely through PyO3
 
+### Merge Operations & Conflict Resolution
+- **Three-way merge**: Uses common base commit to intelligently merge branches
+- **Key-value level merging**: Operates on actual data rather than tree structure for reliability
+- **Conflict resolution strategies**:
+  - `IgnoreConflictsResolver`: Keeps destination branch values (default for `merge_ignore_conflicts`)
+  - `TakeSourceResolver`: Always prefers source branch values
+  - `TakeDestinationResolver`: Always keeps current branch values
+- **Python API**: Full merge support with `store.merge(branch, ConflictResolution.TakeSource)` and `store.try_merge(branch)` for conflict detection
+- **Implementation**: `src/git/versioned_store.rs` contains merge logic, `src/diff.rs` defines conflict resolvers
+
 ### Concurrency
 - Thread-safe variants available for multi-threaded access
 - Agent memory system uses Tokio for async operations
@@ -254,6 +273,9 @@ The codebase implements a layered architecture where each layer builds on the pr
 - **Documentation**: Auto-generated Sphinx docs at https://prollytree.readthedocs.io/
 
 ### Recent Additions
+- **Branch Merging**: Three-way merge functionality with configurable conflict resolution strategies
+- **Conflict Resolution**: Support for IgnoreAll, TakeSource, and TakeDestination merge strategies
+- **Python Merge API**: Complete Python bindings for merge operations with MergeConflict detection
 - **LangGraph Integration**: Examples showing AI agent workflows with ProllyTree memory
 - **SQL API**: Complete SQL interface exposed to Python via GlueSQL
 - **Historical Commit Access**: Track and retrieve commit history for specific keys
@@ -277,5 +299,19 @@ NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 NEVER perform `git push` or `git commit` operations without explicit instructions from the User.
+ALWAYS add Apache 2.0 license headers to new files (Rust, Python, etc.). Format:
+```
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+```
 
 Note: This project has comprehensive documentation auto-generation via Sphinx at https://prollytree.readthedocs.io/ - prefer directing users there rather than creating new documentation files.

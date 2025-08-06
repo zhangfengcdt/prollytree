@@ -741,6 +741,73 @@ impl From<StorageBackend> for PyStorageBackend {
     }
 }
 
+/// Python wrapper for MergeConflict
+#[pyclass(name = "MergeConflict")]
+#[derive(Clone)]
+struct PyMergeConflict {
+    key: Vec<u8>,
+    base_value: Option<Vec<u8>>,
+    source_value: Option<Vec<u8>>,
+    destination_value: Option<Vec<u8>>,
+}
+
+#[pymethods]
+impl PyMergeConflict {
+    #[getter]
+    fn key(&self, py: Python) -> PyResult<Py<PyBytes>> {
+        Ok(PyBytes::new_bound(py, &self.key).into())
+    }
+
+    #[getter]
+    fn base_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .base_value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    #[getter]
+    fn source_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .source_value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    #[getter]
+    fn destination_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .destination_value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MergeConflict(key={:?}, base={:?}, source={:?}, dest={:?})",
+            String::from_utf8_lossy(&self.key),
+            self.base_value
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v).to_string()),
+            self.source_value
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v).to_string()),
+            self.destination_value
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v).to_string()),
+        )
+    }
+}
+
+/// Python enum for conflict resolution strategies
+#[pyclass(name = "ConflictResolution", eq, eq_int)]
+#[derive(Clone, PartialEq)]
+enum PyConflictResolution {
+    IgnoreAll,
+    TakeSource,
+    TakeDestination,
+}
+
 #[pyclass(name = "VersionedKvStore")]
 struct PyVersionedKvStore {
     inner: Arc<Mutex<GitVersionedKvStore<32>>>,
@@ -963,6 +1030,93 @@ impl PyVersionedKvStore {
                 .collect();
             results
         })
+    }
+
+    /// Merge another branch into the current branch
+    ///
+    /// Args:
+    ///     source_branch: Name of the branch to merge from
+    ///     conflict_resolution: Strategy for resolving conflicts (default: IgnoreAll)
+    ///
+    /// Returns:
+    ///     str: The commit ID of the merge commit
+    ///
+    /// Raises:
+    ///     ValueError: If merge fails or has unresolved conflicts
+    #[pyo3(signature = (source_branch, conflict_resolution=None))]
+    fn merge(
+        &self,
+        source_branch: String,
+        conflict_resolution: Option<PyConflictResolution>,
+    ) -> PyResult<String> {
+        let mut store = self.inner.lock().unwrap();
+
+        let resolution = conflict_resolution.unwrap_or(PyConflictResolution::IgnoreAll);
+
+        let commit_id = match resolution {
+            PyConflictResolution::IgnoreAll => store
+                .merge_ignore_conflicts(&source_branch)
+                .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?,
+            PyConflictResolution::TakeSource => {
+                let resolver = crate::diff::TakeSourceResolver;
+                store
+                    .merge(&source_branch, &resolver)
+                    .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+            }
+            PyConflictResolution::TakeDestination => {
+                let resolver = crate::diff::TakeDestinationResolver;
+                store
+                    .merge(&source_branch, &resolver)
+                    .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+            }
+        };
+
+        Ok(commit_id.to_hex().to_string())
+    }
+
+    /// Attempt to merge another branch and return any conflicts
+    ///
+    /// Args:
+    ///     source_branch: Name of the branch to merge from
+    ///
+    /// Returns:
+    ///     tuple: (success: bool, conflicts: List[MergeConflict])
+    ///            If success is True, conflicts will be empty and merge was applied
+    ///            If success is False, conflicts contains unresolved conflicts and merge was not applied
+    fn try_merge(&self, source_branch: String) -> PyResult<(bool, Vec<PyMergeConflict>)> {
+        let mut store = self.inner.lock().unwrap();
+
+        // Try to merge with a no-op resolver that leaves all conflicts unresolved
+        struct NoOpResolver;
+        impl crate::diff::ConflictResolver for NoOpResolver {
+            fn resolve_conflict(
+                &self,
+                _conflict: &crate::diff::MergeConflict,
+            ) -> Option<crate::diff::MergeResult> {
+                None // Leave all conflicts unresolved
+            }
+        }
+
+        match store.merge(&source_branch, &NoOpResolver) {
+            Ok(_commit_id) => {
+                // Merge succeeded with no conflicts
+                Ok((true, Vec::new()))
+            }
+            Err(crate::git::types::GitKvError::MergeConflictError(conflicts)) => {
+                // Convert conflicts to Python format
+                let py_conflicts: Vec<PyMergeConflict> = conflicts
+                    .into_iter()
+                    .map(|c| PyMergeConflict {
+                        key: c.key,
+                        base_value: c.base_value,
+                        source_value: c.source_value,
+                        destination_value: c.destination_value,
+                    })
+                    .collect();
+                Ok((false, py_conflicts))
+            }
+            Err(e) => Err(PyValueError::new_err(format!("Merge failed: {}", e))),
+        }
     }
 
     fn storage_backend(&self) -> PyResult<PyStorageBackend> {
@@ -1599,6 +1753,8 @@ fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemoryType>()?;
     m.add_class::<PyAgentMemorySystem>()?;
     m.add_class::<PyStorageBackend>()?;
+    m.add_class::<PyMergeConflict>()?;
+    m.add_class::<PyConflictResolution>()?;
     m.add_class::<PyVersionedKvStore>()?;
     #[cfg(feature = "git")]
     m.add_class::<PyWorktreeManager>()?;

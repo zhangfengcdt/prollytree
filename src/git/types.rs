@@ -41,6 +41,9 @@ pub enum GitKvError {
     #[error("Merge conflict: {0}")]
     MergeConflict(String),
 
+    #[error("Merge conflicts: {0:?}")]
+    MergeConflictError(Vec<crate::diff::MergeConflict>),
+
     #[error("Invalid commit: {0}")]
     InvalidCommit(String),
 
