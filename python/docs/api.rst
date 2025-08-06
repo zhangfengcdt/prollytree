@@ -46,6 +46,25 @@ StorageBackend
    :undoc-members:
    :show-inheritance:
 
+Merge Operations
+----------------
+
+MergeConflict
+~~~~~~~~~~~~~
+
+.. autoclass:: prollytree.MergeConflict
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+ConflictResolution
+~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: prollytree.ConflictResolution
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 SQL Support
 -----------
 
