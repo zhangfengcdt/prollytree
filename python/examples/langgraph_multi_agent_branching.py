@@ -69,7 +69,7 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.store.base import BaseStore
 
 # ProllyTree imports
-from prollytree import VersionedKvStore, ConflictResolution
+from prollytree import VersionedKvStore, ConflictResolution, WorktreeManager, WorktreeVersionedKvStore
 
 # ============================================================================
 # Agent Types and Data Models
@@ -139,11 +139,11 @@ class MultiAgentState(MessagesState):
 # ============================================================================
 
 class ProllyVersionedMemoryStore(BaseStore):
-    """VersionedKvStore-backed memory store with branch isolation for multi-agent systems.
+    """WorktreeManager-backed memory store with true parallel execution for multi-agent systems.
 
     This store provides:
     1. Standard BaseStore interface for LangGraph integration
-    2. Git-like branching for agent isolation using VersionedKvStore
+    2. Git worktree isolation for true parallel agent execution
     3. Intelligent conflict resolution during merge operations
     4. Complete audit trail of all agent operations
     """
@@ -175,11 +175,16 @@ class ProllyVersionedMemoryStore(BaseStore):
 
         # Agent branch tracking
         self.main_branch = "main"
-        self.agent_stores = {}  # agent_name -> VersionedKvStore (on their branch)
+        # For WorktreeManager compatibility
+        self.agent_worktrees = {}  # agent_name -> WorktreeVersionedKvStore
+        self.agent_stores = {}  # agent_name -> VersionedKvStore (for backwards compatibility)
         self.agent_branches = {}  # agent_name -> branch_name
+
+        # Initialize WorktreeManager for parallel execution
+        self.worktree_manager = WorktreeManager(store_path)
         self.branch_metadata = {}
 
-        print(f"✅ Initialized VersionedKvStore-backed store at {store_path}")
+        print(f"✅ Initialized WorktreeManager-backed store at {store_path}")
 
     def _encode_value(self, value: Any) -> bytes:
         """Encode any value to bytes for storage."""
@@ -296,16 +301,24 @@ class ProllyVersionedMemoryStore(BaseStore):
         print(f"   ❌ Deleted: {full_key}")
 
     # Branch management methods
-    def create_agent_branch(self, agent_name: str, session_id: str) -> str:
-        """Create an isolated Git branch with dedicated VersionedKvStore for a specific agent"""
+    def create_agent_worktree(self, agent_name: str, session_id: str) -> str:
+        """Create an isolated Git worktree with dedicated WorktreeVersionedKvStore for parallel execution"""
         branch_name = f"{session_id}-{agent_name}-{uuid.uuid4().hex[:8]}"
 
-        # Create Git branch using main VersionedKvStore
-        self.main_store.create_branch(branch_name)
+        # Create Git worktree using WorktreeManager
+        worktree_path = os.path.join(self.store_path, f"{agent_name}_workspace")
+        self.worktree_manager.add_worktree(str(worktree_path), branch_name, True)
 
-        # Create dedicated VersionedKvStore instance for the agent
-        agent_store = VersionedKvStore(self.data_dir)
-        agent_store.checkout(branch_name)
+        # Create WorktreeVersionedKvStore for the agent
+        agent_data_path = os.path.join(worktree_path, "data")
+        os.makedirs(agent_data_path, exist_ok=True)
+
+        agent_worktree_store = WorktreeVersionedKvStore.from_worktree(
+            str(worktree_path),
+            f"worktree-{agent_name}",
+            branch_name,
+            self.worktree_manager
+        )
 
         # Store branch metadata
         self.branch_metadata[branch_name] = {
@@ -316,17 +329,18 @@ class ProllyVersionedMemoryStore(BaseStore):
         }
 
         # Track agent mappings
-        self.agent_stores[agent_name] = agent_store
+        self.agent_worktrees[agent_name] = agent_worktree_store
         self.agent_branches[agent_name] = branch_name
 
-        # Store metadata in the agent's branch
+        # Store metadata in the agent's worktree
         metadata_key = f"metadata:agent:{agent_name}".encode('utf-8')
         metadata_value = self._encode_value(self.branch_metadata[branch_name])
-        agent_store.insert(metadata_key, metadata_value)
-        agent_store.commit(f"Initialize {agent_name} agent branch with metadata")
+        agent_worktree_store.insert(metadata_key, metadata_value)
+        agent_worktree_store.commit(f"Initialize {agent_name} agent worktree with metadata")
 
-        print(f"🌿 Created Git branch '{branch_name}' with VersionedKvStore for {agent_name}")
-        print(f"   📊 Agent store branch: {agent_store.current_branch()}")
+        print(f"🌿 Created Git worktree '{branch_name}' with WorktreeVersionedKvStore for {agent_name}")
+        print(f"   📁 Worktree path: {worktree_path}")
+        print(f"   📊 Agent worktree branch: {agent_worktree_store.current_branch()}")
         return branch_name
 
     def get_agent_store(self, agent_name: str) -> Optional[VersionedKvStore]:
@@ -339,11 +353,11 @@ class ProllyVersionedMemoryStore(BaseStore):
 
     def store_agent_analysis(self, agent_name: str, analysis_type: str, data: Dict[str, Any]):
         """Store agent analysis data using their dedicated VersionedKvStore"""
-        if agent_name not in self.agent_stores:
-            raise ValueError(f"No dedicated store exists for agent {agent_name}")
+        if agent_name not in self.agent_worktrees:
+            raise ValueError(f"No dedicated worktree exists for agent {agent_name}")
 
-        # Get the agent's VersionedKvStore instance
-        agent_store = self.agent_stores[agent_name]
+        # Get the agent's WorktreeVersionedKvStore instance
+        agent_worktree = self.agent_worktrees[agent_name]
 
         # Store analysis data directly in the agent's store
         full_key = f"analysis:{analysis_type}"
@@ -351,17 +365,17 @@ class ProllyVersionedMemoryStore(BaseStore):
         value_bytes = self._encode_value(data)
 
         # Check if key exists to decide between insert/update
-        existing = agent_store.get(key_bytes)
+        existing = agent_worktree.get(key_bytes)
         if existing:
-            agent_store.update(key_bytes, value_bytes)
-            print(f"   📝 {agent_name} updated: {full_key} using dedicated store")
+            agent_worktree.update(key_bytes, value_bytes)
+            print(f"   📝 {agent_name} updated: {full_key} using dedicated worktree")
         else:
-            agent_store.insert(key_bytes, value_bytes)
-            print(f"   ➕ {agent_name} inserted: {full_key} using dedicated store")
+            agent_worktree.insert(key_bytes, value_bytes)
+            print(f"   ➕ {agent_name} inserted: {full_key} using dedicated worktree")
 
-        # Commit using the agent's store
-        agent_store.commit(f"{agent_name}: Stored {analysis_type}")
-        print(f"   💾 {agent_name} committed: {analysis_type} on branch {agent_store.current_branch()}")
+        # Commit using the agent's worktree
+        agent_worktree.commit(f"{agent_name}: Stored {analysis_type}")
+        print(f"   💾 {agent_name} committed: {analysis_type} on worktree {agent_worktree.current_branch()}")
 
     def get_agent_analysis(self, agent_name: str, analysis_type: str) -> Optional[Dict[str, Any]]:
         """Get agent analysis data using their dedicated VersionedKvStore"""
@@ -568,7 +582,7 @@ def troubleshooting_agent_node(state, store: ProllyVersionedMemoryStore):
     agent_name = "troubleshooting"
 
     # Create isolated worktree if not exists
-    if agent_name not in store.agent_stores:
+    if agent_name not in store.agent_worktrees:
         branch_name = store.create_agent_worktree(agent_name, state["session_id"])
 
     # Simulate agent analysis
@@ -611,7 +625,7 @@ def billing_agent_node(state, store: ProllyVersionedMemoryStore):
     agent_name = "billing"
 
     # Create isolated worktree if not exists
-    if agent_name not in store.agent_stores:
+    if agent_name not in store.agent_worktrees:
         branch_name = store.create_agent_worktree(agent_name, state["session_id"])
 
     customer = state["customer_context"]
@@ -670,7 +684,7 @@ def customer_history_agent_node(state, store: ProllyVersionedMemoryStore):
     agent_name = "customer_history"
 
     # Create isolated worktree if not exists
-    if agent_name not in store.agent_stores:
+    if agent_name not in store.agent_worktrees:
         branch_name = store.create_agent_worktree(agent_name, state["session_id"])
 
     customer = state["customer_context"]
@@ -1070,21 +1084,22 @@ def demonstrate_supervisor_pattern():
         print(f"\n✅ LangGraph Supervisor Pattern:")
         print(f"   • Function-based nodes with proper state management")
         print(f"   • Conditional routing based on issue classification")
-        print(f"   • VersionedKvStore-based ProllyVersionedMemoryStore as external long-term store")
+        print(f"   • WorktreeManager-based ProllyVersionedMemoryStore as external long-term store")
         print(f"   • Supervisor validates and routes intelligently")
 
-        print(f"\n✅ VersionedKvStore Integration:")
+        print(f"\n✅ WorktreeManager Integration:")
         print(f"   • Proper LangGraph external store interface")
-        print(f"   • Git-like branching for complete agent isolation")
+        print(f"   • Git worktree isolation for true parallel agent execution")
+        print(f"   • WorktreeVersionedKvStore instances for independent operation")
         print(f"   • Intelligent conflict resolution with multiple strategies")
-        print(f"   • merge_ignore_conflicts and try_merge capabilities")
         print(f"   • Complete audit trail with versioned commits")
 
         print(f"\n✅ Context Bleeding Prevention:")
-        print(f"   • Each agent operates in isolated branch with dedicated VersionedKvStore")
+        print(f"   • Each agent operates in isolated worktree with dedicated WorktreeVersionedKvStore")
+        print(f"   • True parallel execution without conflicts or race conditions")
         print(f"   • No cross-contamination between agent domains")
         print(f"   • Domain validation prevents inappropriate recommendations")
-        print(f"   • Shared long-term memory with complete branch-level isolation")
+        print(f"   • Shared long-term memory with complete worktree-level isolation")
 
 def main():
     """Run the LangGraph supervisor demonstration"""
@@ -1095,11 +1110,11 @@ def main():
     print("="*80)
 
     print("\n🎯 Key Features Demonstrated:")
-    print("  • LangGraph supervisor pattern with VersionedKvStore-backed storage")
-    print("  • Complete branch isolation using dedicated VersionedKvStore instances")
+    print("  • LangGraph supervisor pattern with WorktreeManager-backed storage")
+    print("  • Complete worktree isolation using WorktreeVersionedKvStore instances")
+    print("  • True parallel execution capability for multi-agent systems")
     print("  • Intelligent conflict resolution with multiple strategies")
     print("  • ConflictResolution enum for merge strategy selection")
-    print("  • merge_ignore_conflicts and try_merge for conflict handling")
     print("  • Domain validation preventing context bleeding")
     print("  • Complete Git audit trail of all agent activities")
 
@@ -1110,12 +1125,12 @@ def main():
         print("✅ LangGraph Supervisor Demonstration Complete!")
         print("="*80)
         print("\nKey Architectural Patterns Shown:")
-        print("  1. LangGraph supervisor with VersionedKvStore for intelligent delegation")
-        print("  2. Complete branch isolation prevents context bleeding")
-        print("  3. Multi-strategy conflict resolution (ignore_conflicts, try_merge)")
-        print("  4. Dedicated VersionedKvStore instances for agent-specific operations")
+        print("  1. LangGraph supervisor with WorktreeManager for intelligent delegation")
+        print("  2. Complete worktree isolation prevents context bleeding and enables parallelism")
+        print("  3. WorktreeVersionedKvStore instances for true parallel agent execution")
+        print("  4. Multi-strategy conflict resolution (ignore_conflicts, try_merge)")
         print("  5. Domain validation ensures appropriate recommendations")
-        print("  6. Git branch history provides complete audit trail")
+        print("  6. Git worktree history provides complete audit trail")
         print("  7. Intelligent merge operations with conflict detection")
 
     except ImportError as e:
