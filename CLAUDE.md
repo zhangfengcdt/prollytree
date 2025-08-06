@@ -66,6 +66,12 @@ cargo test --lib tree::tests
 # Run with specific features
 cargo test --features "git sql"
 
+# Run worktree tests specifically
+cargo test --features git worktree
+
+# Run Python integration tests (requires Python bindings built)
+python tests/test_worktree_integration.py
+
 # Test merge functionality specifically
 cargo test test_versioned_kv_store_merge --lib -- --nocapture
 ```
@@ -109,6 +115,8 @@ python -m pytest python/tests/
 python python/tests/test_prollytree.py
 python python/tests/test_sql.py
 python python/tests/test_agent.py
+
+python python/tests/test_worktree_integration.py
 python python/tests/test_merge.py  # Merge functionality tests
 
 # Run Python examples
@@ -287,6 +295,7 @@ The codebase implements a layered architecture where each layer builds on the pr
 
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.
+Please FIX all errors and warnings for changed rust code: cargo before finishing, i.e., cargo build --all, cargo fmt --all, cargo clippy --all
 NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.

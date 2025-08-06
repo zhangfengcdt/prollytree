@@ -16,6 +16,7 @@ pub mod operations;
 pub mod storage;
 pub mod types;
 pub mod versioned_store;
+pub mod worktree;
 
 // Re-export commonly used types
 pub use operations::GitOperations;
@@ -28,3 +29,4 @@ pub use versioned_store::{
     GitVersionedKvStore, ThreadSafeFileVersionedKvStore, ThreadSafeGitVersionedKvStore,
     ThreadSafeInMemoryVersionedKvStore, ThreadSafeVersionedKvStore, VersionedKvStore,
 };
+pub use worktree::{WorktreeInfo, WorktreeManager, WorktreeVersionedKvStore};
