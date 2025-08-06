@@ -18,3 +18,19 @@ pub enum DiffResult {
     Removed(Vec<u8>, Vec<u8>),
     Modified(Vec<u8>, Vec<u8>, Vec<u8>),
 }
+
+#[derive(Debug, PartialEq)]
+pub enum MergeResult {
+    Added(Vec<u8>, Vec<u8>),
+    Removed(Vec<u8>),
+    Modified(Vec<u8>, Vec<u8>),
+    Conflict(MergeConflict),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct MergeConflict {
+    pub key: Vec<u8>,
+    pub base_value: Option<Vec<u8>>,
+    pub source_value: Option<Vec<u8>>,
+    pub destination_value: Option<Vec<u8>>,
+}
