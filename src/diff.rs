@@ -19,7 +19,7 @@ pub enum DiffResult {
     Modified(Vec<u8>, Vec<u8>, Vec<u8>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum MergeResult {
     Added(Vec<u8>, Vec<u8>),
     Removed(Vec<u8>),
@@ -27,10 +27,58 @@ pub enum MergeResult {
     Conflict(MergeConflict),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct MergeConflict {
     pub key: Vec<u8>,
     pub base_value: Option<Vec<u8>>,
     pub source_value: Option<Vec<u8>>,
     pub destination_value: Option<Vec<u8>>,
+}
+
+/// Trait for resolving merge conflicts
+pub trait ConflictResolver {
+    /// Resolve a conflict by returning the desired MergeResult
+    /// Returns None if the conflict cannot be resolved and should remain as a conflict
+    fn resolve_conflict(&self, conflict: &MergeConflict) -> Option<MergeResult>;
+}
+
+/// Default conflict resolver that ignores all conflicts (treats them as no-ops)
+#[derive(Debug, Clone, Default)]
+pub struct IgnoreConflictsResolver;
+
+impl ConflictResolver for IgnoreConflictsResolver {
+    fn resolve_conflict(&self, conflict: &MergeConflict) -> Option<MergeResult> {
+        // Ignore conflicts by keeping the destination value (no change applied)
+        // This effectively means "do nothing" for this key
+        match &conflict.destination_value {
+            Some(value) => Some(MergeResult::Modified(conflict.key.clone(), value.clone())),
+            None => Some(MergeResult::Removed(conflict.key.clone())),
+        }
+    }
+}
+
+/// Conflict resolver that always takes the source value
+#[derive(Debug, Clone, Default)]
+pub struct TakeSourceResolver;
+
+impl ConflictResolver for TakeSourceResolver {
+    fn resolve_conflict(&self, conflict: &MergeConflict) -> Option<MergeResult> {
+        match &conflict.source_value {
+            Some(value) => Some(MergeResult::Modified(conflict.key.clone(), value.clone())),
+            None => Some(MergeResult::Removed(conflict.key.clone())),
+        }
+    }
+}
+
+/// Conflict resolver that always takes the destination value
+#[derive(Debug, Clone, Default)]
+pub struct TakeDestinationResolver;
+
+impl ConflictResolver for TakeDestinationResolver {
+    fn resolve_conflict(&self, conflict: &MergeConflict) -> Option<MergeResult> {
+        match &conflict.destination_value {
+            Some(value) => Some(MergeResult::Modified(conflict.key.clone(), value.clone())),
+            None => Some(MergeResult::Removed(conflict.key.clone())),
+        }
+    }
 }

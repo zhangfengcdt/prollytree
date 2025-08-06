@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 /// This storage implementation uses Git blobs to store serialized ProllyNode instances.
 /// Each node is stored as a Git blob object, with the blob's SHA-1 hash serving as the
 /// node's content-addressable identifier.
+#[derive(Debug)]
 pub struct GitNodeStorage<const N: usize> {
     _repository: Arc<Mutex<gix::Repository>>,
     cache: Mutex<LruCache<ValueDigest<N>, ProllyNode<N>>>,
