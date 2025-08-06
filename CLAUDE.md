@@ -65,6 +65,12 @@ cargo test --lib tree::tests
 
 # Run with specific features
 cargo test --features "git sql"
+
+# Run worktree tests specifically
+cargo test --features git worktree
+
+# Run Python integration tests (requires Python bindings built)
+python tests/test_worktree_integration.py
 ```
 
 ### Code Quality
@@ -106,6 +112,7 @@ python -m pytest python/tests/
 python python/tests/test_prollytree.py
 python python/tests/test_sql.py
 python python/tests/test_agent.py
+python python/tests/test_worktree_integration.py
 
 # Run Python examples
 cd python/examples && ./run_examples.sh

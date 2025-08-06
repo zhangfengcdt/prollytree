@@ -971,6 +971,204 @@ impl PyVersionedKvStore {
     }
 }
 
+#[cfg(feature = "git")]
+#[pyclass(name = "WorktreeManager")]
+struct PyWorktreeManager {
+    inner: Arc<Mutex<crate::git::worktree::WorktreeManager>>,
+}
+
+#[cfg(feature = "git")]
+#[pymethods]
+impl PyWorktreeManager {
+    #[new]
+    fn new(repo_path: String) -> PyResult<Self> {
+        let manager = crate::git::worktree::WorktreeManager::new(repo_path).map_err(|e| {
+            PyValueError::new_err(format!("Failed to create worktree manager: {}", e))
+        })?;
+
+        Ok(PyWorktreeManager {
+            inner: Arc::new(Mutex::new(manager)),
+        })
+    }
+
+    fn add_worktree(
+        &self,
+        path: String,
+        branch: String,
+        create_branch: bool,
+    ) -> PyResult<HashMap<String, Py<PyAny>>> {
+        let mut manager = self.inner.lock().unwrap();
+        let info = manager
+            .add_worktree(path, &branch, create_branch)
+            .map_err(|e| PyValueError::new_err(format!("Failed to add worktree: {}", e)))?;
+
+        Python::with_gil(|py| {
+            let mut map = HashMap::new();
+            map.insert("id".to_string(), info.id.into_py(py));
+            map.insert("path".to_string(), info.path.to_string_lossy().into_py(py));
+            map.insert("branch".to_string(), info.branch.into_py(py));
+            map.insert("is_linked".to_string(), info.is_linked.into_py(py));
+            Ok(map)
+        })
+    }
+
+    fn remove_worktree(&self, worktree_id: String) -> PyResult<()> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .remove_worktree(&worktree_id)
+            .map_err(|e| PyValueError::new_err(format!("Failed to remove worktree: {}", e)))?;
+        Ok(())
+    }
+
+    fn lock_worktree(&self, worktree_id: String, reason: String) -> PyResult<()> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .lock_worktree(&worktree_id, &reason)
+            .map_err(|e| PyValueError::new_err(format!("Failed to lock worktree: {}", e)))?;
+        Ok(())
+    }
+
+    fn unlock_worktree(&self, worktree_id: String) -> PyResult<()> {
+        let mut manager = self.inner.lock().unwrap();
+        manager
+            .unlock_worktree(&worktree_id)
+            .map_err(|e| PyValueError::new_err(format!("Failed to unlock worktree: {}", e)))?;
+        Ok(())
+    }
+
+    fn list_worktrees(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+        let manager = self.inner.lock().unwrap();
+        let worktrees = manager.list_worktrees();
+
+        Python::with_gil(|py| {
+            let results: Vec<HashMap<String, Py<PyAny>>> = worktrees
+                .iter()
+                .map(|info| {
+                    let mut map = HashMap::new();
+                    map.insert("id".to_string(), info.id.clone().into_py(py));
+                    map.insert("path".to_string(), info.path.to_string_lossy().into_py(py));
+                    map.insert("branch".to_string(), info.branch.clone().into_py(py));
+                    map.insert("is_linked".to_string(), info.is_linked.into_py(py));
+                    map
+                })
+                .collect();
+            Ok(results)
+        })
+    }
+
+    fn is_locked(&self, worktree_id: String) -> PyResult<bool> {
+        let manager = self.inner.lock().unwrap();
+        Ok(manager.is_locked(&worktree_id))
+    }
+}
+
+#[cfg(feature = "git")]
+#[pyclass(name = "WorktreeVersionedKvStore")]
+struct PyWorktreeVersionedKvStore {
+    inner: Arc<Mutex<crate::git::worktree::WorktreeVersionedKvStore<32>>>,
+}
+
+#[cfg(feature = "git")]
+#[pymethods]
+impl PyWorktreeVersionedKvStore {
+    #[staticmethod]
+    fn from_worktree(
+        worktree_path: String,
+        worktree_id: String,
+        branch: String,
+        manager: &PyWorktreeManager,
+    ) -> PyResult<Self> {
+        use std::path::PathBuf;
+
+        let worktree_info = crate::git::worktree::WorktreeInfo {
+            id: worktree_id,
+            path: PathBuf::from(worktree_path),
+            branch,
+            is_linked: true,
+            lock_file: None,
+        };
+
+        let store = crate::git::worktree::WorktreeVersionedKvStore::from_worktree(
+            worktree_info,
+            Arc::clone(&manager.inner),
+        )
+        .map_err(|e| PyValueError::new_err(format!("Failed to create worktree store: {}", e)))?;
+
+        Ok(PyWorktreeVersionedKvStore {
+            inner: Arc::new(Mutex::new(store)),
+        })
+    }
+
+    fn worktree_id(&self) -> PyResult<String> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.worktree_id().to_string())
+    }
+
+    fn current_branch(&self) -> PyResult<String> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.current_branch().to_string())
+    }
+
+    fn is_locked(&self) -> PyResult<bool> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.is_locked())
+    }
+
+    fn lock(&self, reason: String) -> PyResult<()> {
+        let store = self.inner.lock().unwrap();
+        store
+            .lock(&reason)
+            .map_err(|e| PyValueError::new_err(format!("Failed to lock worktree: {}", e)))?;
+        Ok(())
+    }
+
+    fn unlock(&self) -> PyResult<()> {
+        let store = self.inner.lock().unwrap();
+        store
+            .unlock()
+            .map_err(|e| PyValueError::new_err(format!("Failed to unlock worktree: {}", e)))?;
+        Ok(())
+    }
+
+    // Delegate key-value operations to the underlying store
+    fn insert(&self, key: Vec<u8>, value: Vec<u8>) -> PyResult<()> {
+        let mut store = self.inner.lock().unwrap();
+        store
+            .store_mut()
+            .insert(key, value)
+            .map_err(|e| PyValueError::new_err(format!("Failed to insert: {}", e)))?;
+        Ok(())
+    }
+
+    fn get(&self, key: Vec<u8>) -> PyResult<Option<Vec<u8>>> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.store().get(&key))
+    }
+
+    fn delete(&self, key: Vec<u8>) -> PyResult<bool> {
+        let mut store = self.inner.lock().unwrap();
+        let result = store
+            .store_mut()
+            .delete(&key)
+            .map_err(|e| PyValueError::new_err(format!("Failed to delete: {}", e)))?;
+        Ok(result)
+    }
+
+    fn commit(&self, message: String) -> PyResult<String> {
+        let mut store = self.inner.lock().unwrap();
+        let commit_id = store
+            .store_mut()
+            .commit(&message)
+            .map_err(|e| PyValueError::new_err(format!("Failed to commit: {}", e)))?;
+        Ok(commit_id.to_hex().to_string())
+    }
+
+    fn list_keys(&self) -> PyResult<Vec<Vec<u8>>> {
+        let store = self.inner.lock().unwrap();
+        Ok(store.store().list_keys())
+    }
+}
+
 #[cfg(feature = "sql")]
 #[pyclass(name = "ProllySQLStore")]
 struct PyProllySQLStore {
@@ -1365,6 +1563,10 @@ fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAgentMemorySystem>()?;
     m.add_class::<PyStorageBackend>()?;
     m.add_class::<PyVersionedKvStore>()?;
+    #[cfg(feature = "git")]
+    m.add_class::<PyWorktreeManager>()?;
+    #[cfg(feature = "git")]
+    m.add_class::<PyWorktreeVersionedKvStore>()?;
     #[cfg(feature = "sql")]
     m.add_class::<PyProllySQLStore>()?;
     Ok(())
