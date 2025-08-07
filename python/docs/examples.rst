@@ -305,6 +305,109 @@ Performance Examples
 
        return tree
 
+LangMem Integration for AI Agent Memory
+----------------------------------------
+
+.. code-block:: python
+
+   from prollytree import VersionedKvStore
+   from langgraph.store.base import BaseStore, Item
+   from langmem import create_manage_memory_tool, create_search_memory_tool
+   import json
+   import time
+
+   class ProllyTreeLangMemStore(BaseStore):
+       """LangMem-compatible BaseStore using ProllyTree backend"""
+
+       def __init__(self, repo_path: str):
+           self.store = VersionedKvStore(f"{repo_path}/data")
+
+       def put(self, namespace, key, value):
+           """Store memory with namespace and key"""
+           prolly_key = f"{'/'.join(namespace)}#{key}"
+           self.store.insert(prolly_key.encode(), json.dumps(value).encode())
+           self.store.commit(f"Store memory: {key}")
+
+       def get(self, namespace, key):
+           """Retrieve memory by namespace and key"""
+           prolly_key = f"{'/'.join(namespace)}#{key}"
+           value = self.store.get(prolly_key.encode())
+           if value:
+               return Item(
+                   value=json.loads(value.decode()),
+                   key=key,
+                   namespace=namespace,
+                   created_at=time.time(),
+                   updated_at=time.time()
+               )
+           return None
+
+   def example_langmem_integration():
+       """Example using ProllyTree as backend for LangMem AI agent memory"""
+
+       # Create ProllyTree store with branching support
+       store = ProllyTreeLangMemStore("./langmem_store")
+
+       # Create LangMem memory tools for AI agents
+       manage_tool = create_manage_memory_tool(
+           namespace=("memories", "user_001"),
+           store=store,
+           instructions="Store important user preferences and context"
+       )
+
+       search_tool = create_search_memory_tool(
+           namespace=("memories", "user_001"),
+           store=store
+       )
+
+       print("=== LangMem + ProllyTree Integration ===")
+
+       # Simulate agent storing memories
+       memories = [
+           {
+               "content": "User prefers dark mode interfaces",
+               "memory_type": "preference"
+           },
+           {
+               "content": "User is learning machine learning with Python",
+               "memory_type": "context"
+           },
+           {
+               "content": "User works best in the morning hours",
+               "memory_type": "behavioral"
+           }
+       ]
+
+       for memory in memories:
+           result = manage_tool.invoke(memory)
+           print(f"Stored: {memory['content'][:40]}...")
+
+       # Search for relevant memories
+       search_result = search_tool.invoke({"query": "user preferences"})
+       print(f"\\nFound {len(search_result)} relevant memories")
+
+       # Create experimental branch for testing
+       store.store.create_branch("experiment")
+
+       # Store experimental memory in branch
+       store.store.checkout("experiment")
+       experimental_memory = {
+           "content": "Testing new AI assistant features",
+           "memory_type": "experimental"
+       }
+       manage_tool.invoke(experimental_memory)
+
+       # Switch back to main - experimental memory isolated
+       store.store.checkout("main")
+
+       print("\\nFeatures demonstrated:")
+       print("✅ LangMem tool integration")
+       print("✅ Git-like versioning for memories")
+       print("✅ Branch-based memory isolation")
+       print("✅ Persistent storage across sessions")
+
+       return store
+
 Branch Merging and Conflict Resolution
 ---------------------------------------
 
@@ -434,6 +537,9 @@ Running Examples
 
        print("\\n=== AI Agent Memory ===")
        example_ai_agent_memory()
+
+       print("\\n=== LangMem Integration ===")
+       example_langmem_integration()
 
        print("\\n=== Branch Merging ===")
        example_merge_operations()
