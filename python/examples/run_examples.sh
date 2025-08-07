@@ -14,6 +14,7 @@ get_example_file() {
         "chronological") echo "langgraph_chronological.py" ;;
         "multi-agent") echo "langgraph_multi_agent_branching.py" ;;
         "merge") echo "merge_example.py" ;;
+        "langmem") echo "langmem_integration.py" ;;
         *) echo "" ;;
     esac
 }
@@ -32,6 +33,7 @@ show_usage() {
     echo "  chronological - LangGraph chronological memory example"
     echo "  multi-agent   - Multi-agent system with branch isolation"
     echo "  merge         - Branch merging with conflict resolution example"
+    echo "  langmem       - LangMem integration with ProllyTree backend"
     echo ""
     echo "If no example name is provided, all examples will be run."
 }
@@ -96,6 +98,7 @@ if ./python/build_python.sh --all-features --install; then
         run_example "LangGraph chronological memory" "langgraph_chronological.py"
         run_example "Multi-agent branching" "langgraph_multi_agent_branching.py"
         run_example "merge with conflict resolution" "merge_example.py"
+        run_example "LangMem integration" "langmem_integration.py"
     else
         # Run only the requested example
         EXAMPLE_FILE=$(get_example_file "$REQUESTED_EXAMPLE")
