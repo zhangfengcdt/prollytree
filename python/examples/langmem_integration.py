@@ -214,12 +214,22 @@ class ProllyTreeLangMemStore(BaseStore):
 
     def _create_item(self, namespace: Tuple[str, ...], key: str, value: Dict[str, Any]) -> Item:
         """Create Item object from stored data."""
+        # Ensure timestamps are floats, not other types
+        created_at = value.get("created_at", time.time())
+        updated_at = value.get("updated_at", time.time())
+
+        # Convert to float if needed
+        if not isinstance(created_at, (int, float)):
+            created_at = time.time()
+        if not isinstance(updated_at, (int, float)):
+            updated_at = time.time()
+
         return Item(
             value=value,
             key=key,
             namespace=namespace,
-            created_at=value.get("created_at", time.time()),
-            updated_at=value.get("updated_at", time.time())
+            created_at=float(created_at),
+            updated_at=float(updated_at)
         )
 
     def get(self, namespace: Tuple[str, ...], key: str) -> Optional[Item]:
@@ -686,7 +696,7 @@ async def demo_langmem_with_prollytree():
 
         print("\n🧠 Setting up LangMem with ProllyTree backend...")
 
-        # Create memory manager with ProllyTree store
+        # Create memory manager with ProllyTree store for background memory extraction
         memory_manager = create_memory_store_manager(
             "openai:gpt-4o-mini",
             schemas=[UserPreference, ConversationMemory],
@@ -694,11 +704,12 @@ async def demo_langmem_with_prollytree():
             store=store
         )
 
-        # Create memory tools
+        # Create LangMem memory tools that agents can use during conversations
         manage_tool = create_manage_memory_tool(
             namespace=("memories", "user_001"),
             schema=str,  # Allow flexible memory content
-            store=store
+            store=store,
+            instructions="Store important user preferences, context, and conversation details in ProllyTree backend"
         )
 
         search_tool = create_search_memory_tool(
@@ -706,9 +717,36 @@ async def demo_langmem_with_prollytree():
             store=store
         )
 
-        print("\n📝 Demonstrating memory storage operations...")
+        print("✅ LangMem tools configured with ProllyTree backend")
+        print("   - Memory Manager: Extracts memories from conversations")
+        print("   - Manage Tool: Stores memories during agent interactions")
+        print("   - Search Tool: Retrieves relevant memories for context")
 
-        # Simulate storing different types of memories
+        print("\n📝 Demonstrating LangMem-style memory operations...")
+
+        # Demonstrate how LangMem tools would be used by an AI agent
+        namespace = ("memories", "user_001")
+
+        print("🤖 Simulating agent using LangMem manage_memory_tool...")
+        try:
+            # Simulate agent storing memories using LangMem tool
+            manage_result1 = manage_tool.invoke({
+                "content": "User prefers dark mode in all applications and finds it easier on the eyes",
+                "memory_type": "preference"
+            })
+            print(f"   📝 Stored user preference via LangMem: {manage_result1 if manage_result1 else 'Success'}")
+
+            manage_result2 = manage_tool.invoke({
+                "content": "User is working on machine learning projects and uses Python extensively",
+                "memory_type": "context"
+            })
+            print(f"   📝 Stored user context via LangMem: {manage_result2 if manage_result2 else 'Success'}")
+
+        except Exception as e:
+            print(f"   ⚠️ LangMem tool demo limited: {e}")
+            print("   📦 Falling back to direct ProllyTree storage...")
+
+        # Simulate storing different types of memories (fallback demonstration)
         memories_to_store = [
             {
                 "key": "user_pref_1",
@@ -743,16 +781,27 @@ async def demo_langmem_with_prollytree():
             store.put(namespace, memory["key"], memory["value"])
             print(f"✅ Stored memory: {memory['key']}")
 
-        print("\n🔍 Demonstrating memory search operations...")
+        print("\n🔍 Demonstrating LangMem memory search operations...")
 
-        # Search memories
+        # Demonstrate LangMem search tool usage
+        print("🤖 Simulating agent using LangMem search_memory_tool...")
+        try:
+            # Agent searches for relevant memories using LangMem tool
+            search_result = search_tool.invoke({"query": "user preferences and interests"})
+            print(f"   🔍 LangMem search result: {search_result}")
+
+        except Exception as e:
+            print(f"   ⚠️ LangMem search limited: {e}")
+            print("   📦 Falling back to direct ProllyTree search...")
+
+        # Fallback: direct ProllyTree search
         search_results = store.search(
             namespace,
             query="user preferences",
             limit=5
         )
 
-        print(f"Found {len(search_results)} memories matching 'user preferences':")
+        print(f"📊 Found {len(search_results)} memories matching 'user preferences':")
         for result in search_results:
             content = result.value.get("content", "No content")
             category = result.value.get("category", "uncategorized")
@@ -842,34 +891,113 @@ async def demo_langmem_with_prollytree():
         print("  ✅ Branch-based memory isolation")
         print("  ✅ WorktreeManager integration for parallel contexts")
 
-        # Demonstrate LangMem memory manager usage
-        print("\n🤖 Testing LangMem memory manager with ProllyTree...")
+        # Demonstrate actual LangMem memory tools with ProllyTree backend
+        print("\n🤖 Testing LangMem memory tools with ProllyTree backend...")
 
+        if LANGMEM_AVAILABLE:
+            try:
+                from langgraph.prebuilt import create_react_agent
+                from langchain_core.messages import HumanMessage
+
+                # Create a LangGraph agent with LangMem tools that use our ProllyTree store
+                agent = create_react_agent(
+                    "openai:gpt-4o-mini",
+                    tools=[manage_tool, search_tool],
+                    store=store
+                )
+
+                print("\n📚 Testing LangMem memory extraction...")
+
+                # Test conversation that should trigger memory extraction
+                test_messages = [HumanMessage(content="Remember that I prefer working with dark themes and I'm really interested in machine learning applications")]
+
+                # Process with LangMem-enabled agent (will fail gracefully with dummy API)
+                try:
+                    response = agent.invoke(
+                        {"messages": test_messages},
+                        config={"configurable": {"thread_id": "user_001"}}
+                    )
+                    print(f"✅ LangMem memory extraction completed: {response}")
+                except Exception as inner_e:
+                    print(f"⚠️  LangMem tools limited due to: {inner_e}")
+                    print("   (Expected with dummy API keys)")
+
+                # Demonstrate manual memory tool usage
+                print("\n🔧 Testing LangMem memory tools directly...")
+
+                # Test the manage memory tool
+                manage_result = manage_tool.invoke({
+                    "content": "User strongly prefers dark mode interfaces",
+                    "importance": "high"
+                })
+                print(f"📝 Memory management result: {manage_result}")
+
+                # Test the search memory tool
+                search_result = search_tool.invoke({"query": "user preferences"})
+                print(f"🔍 Memory search result: {search_result}")
+
+                print("✅ LangMem tools integration with ProllyTree successful!")
+
+            except Exception as e:
+                print(f"⚠️  LangMem integration limited: {e}")
+                print("   Set OPENAI_API_KEY for full functionality")
+        else:
+            print("⚠️  LangMem not available - showing ProllyTree-only functionality")
+
+        # Demonstrate the memory store manager for background processing
+        print("\n🧠 Testing LangMem memory store manager...")
         try:
-            # Simulate a conversation for memory extraction
-            conversation = [
-                {"role": "user", "content": "I really love using Python for data science projects"},
-                {"role": "assistant", "content": "That's great! Python has excellent libraries for data science"}
+            # Simulate conversation processing for memory extraction
+            conversation_messages = [
+                {"role": "user", "content": "I'm working on a machine learning project with Python and I prefer using Jupyter notebooks"},
+                {"role": "assistant", "content": "That's great! Jupyter notebooks are excellent for ML experimentation. What kind of ML project are you working on?"},
+                {"role": "user", "content": "I'm building a recommendation system using collaborative filtering"},
+                {"role": "assistant", "content": "Interesting! Are you using pandas and scikit-learn for that?"}
             ]
 
-            # Process conversation with memory manager
+            # Process conversation through LangMem memory manager (extracts important info)
             result = await memory_manager.ainvoke(
-                {"messages": conversation},
+                {"messages": conversation_messages},
                 config={"configurable": {"user_id": "user_001"}}
             )
 
-            print("✅ Successfully processed conversation with LangMem memory manager")
+            print("✅ LangMem conversation processing completed")
+            print("📊 Extracted memories now stored in ProllyTree backend")
+
+            # Show that memories were extracted and stored
+            extracted_memories = list(store.list(("memories", "user_001")))
+            print(f"📈 Total memories after LangMem processing: {len(extracted_memories)}")
 
         except Exception as e:
             print(f"⚠️  Memory manager demo limited due to: {e}")
-            print("   (This is expected with dummy API keys)")
+            print("   (This is expected with dummy API keys - LangMem needs real LLM)")
 
         print("\n🎉 Demo completed successfully!")
-        print("\nNext Steps:")
-        print("1. Set OPENAI_API_KEY to enable full functionality")
-        print("2. Integrate with your LangGraph agents")
-        print("3. Explore branch-based memory contexts")
-        print("4. Scale to production with persistent storage")
+
+        # Show final integration summary
+        print(f"\n📊 Integration Summary:")
+        final_memories = list(store.list(("memories", "user_001")))
+        langmem_memories = [m for m in final_memories if len(m.key) > 20]  # LangMem UUIDs are longer
+        manual_memories = [m for m in final_memories if len(m.key) <= 20]
+
+        print(f"   📝 Total memories in ProllyTree: {len(final_memories)}")
+        print(f"   🤖 LangMem-created memories: {len(langmem_memories)}")
+        print(f"   📦 Manual memories: {len(manual_memories)}")
+        print(f"   🌿 Available branches: {store.list_branches()}")
+
+        if langmem_memories:
+            print(f"\n✅ LangMem Integration Working:")
+            print(f"   - LangMem tools successfully stored memories in ProllyTree")
+            print(f"   - Memory UUIDs: {[m.key[:8] + '...' for m in langmem_memories[:3]]}")
+            print(f"   - All memories searchable via vector embeddings")
+            print(f"   - Complete Git-like versioning and audit trail")
+
+        print("\n📋 Next Steps:")
+        print("1. Set OPENAI_API_KEY to enable full LangMem functionality")
+        print("2. Integrate with your LangGraph agents using these memory tools")
+        print("3. Explore branch-based memory contexts for multi-user scenarios")
+        print("4. Scale to production with persistent ProllyTree storage")
+        print("5. Use LangMem memory extraction for automatic conversation analysis")
 
 
 if __name__ == "__main__":
