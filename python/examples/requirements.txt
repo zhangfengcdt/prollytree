@@ -8,5 +8,12 @@ langgraph>=0.2.0
 langchain-core>=0.2.0
 langchain-openai>=0.1.0
 
+# LangMem integration dependencies
+langmem>=0.0.29
+langchain>=0.3.15
+langchain-anthropic>=0.3.3
+trustcall>=0.0.39
+
 # Additional dependencies
 typing-extensions>=4.0.0
+numpy>=1.20.0
