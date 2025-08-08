@@ -309,6 +309,27 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             padding: 24px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
             border: 1px solid #e5e5e5;
+            max-height: 80vh;
+            overflow-y: auto;
+            position: relative;
+        }}
+
+        .graph-panel::-webkit-scrollbar {{
+            width: 8px;
+        }}
+
+        .graph-panel::-webkit-scrollbar-track {{
+            background: #f1f1f1;
+            border-radius: 4px;
+        }}
+
+        .graph-panel::-webkit-scrollbar-thumb {{
+            background: #c1c1c1;
+            border-radius: 4px;
+        }}
+
+        .graph-panel::-webkit-scrollbar-thumb:hover {{
+            background: #a8a8a8;
         }}
 
         .details-panel {{
@@ -319,6 +340,8 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             border: 1px solid #e5e5e5;
             max-height: 80vh;
             overflow-y: auto;
+            position: sticky;
+            top: 0;
         }}
 
         .branch {{
@@ -360,11 +383,12 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         .commits::before {{
             content: '';
             position: absolute;
-            left: -20px;
+            left: -21px;
             top: 12px;
             bottom: 12px;
             width: 2px;
             background: #d1d5db;
+            z-index: 0;
         }}
 
         .commit {{
@@ -383,13 +407,27 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         .commit::before {{
             content: '';
             position: absolute;
-            left: -26px;
-            width: 10px;
-            height: 10px;
+            left: -27px;
+            width: 12px;
+            height: 12px;
             background: #3b82f6;
             border: 2px solid white;
             border-radius: 50%;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(0, 0, 0, 0.1);
+            z-index: 2;
+        }}
+
+        .commit::after {{
+            content: '';
+            position: absolute;
+            left: -25px;
+            top: 50%;
+            width: 8px;
+            height: 2px;
+            background: #3b82f6;
+            transform: translateY(-50%);
+            z-index: 1;
+            border-radius: 1px;
         }}
 
         .commit:hover {{
