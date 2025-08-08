@@ -1,1 +1,1 @@
-{"base":257,"modulus":1000000007,"min_chunk_size":2,"max_chunk_size":16384,"pattern":3,"root_hash":[124,152,12,67,217,183,253,2,137,236,112,12,24,21,241,207,110,172,77,106,186,180,208,32,67,6,212,158,26,21,204,249],"key_schema":null,"value_schema":null,"encode_types":[]}
+{"base":257,"modulus":1000000007,"min_chunk_size":2,"max_chunk_size":16384,"pattern":3,"root_hash":[38,134,10,238,209,250,166,148,94,213,219,22,208,13,1,68,202,115,43,95,186,69,65,242,101,61,93,159,160,2,69,208],"key_schema":null,"value_schema":null,"encode_types":[]}
