@@ -71,6 +71,11 @@ name = "git-prolly"
 path = "src/git/git-prolly.rs"
 required-features = ["git", "sql"]
 
+[[bin]]
+name = "prolly-ui"
+path = "src/bin/prolly-ui.rs"
+required-features = ["git"]
+
 [[bench]]
 name = "tree"
 harness = false
