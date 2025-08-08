@@ -199,6 +199,119 @@ cd python/docs/_build/html && python -m http.server 8000
 - Use pytest framework
 - Ensure Python bindings are built before running tests
 
+### Prolly-UI Testing
+
+The `prolly-ui` tool generates HTML visualizations for git-prolly repositories. Always test in `/tmp` directory to avoid cluttering the project.
+
+#### Basic Testing Setup
+```bash
+# Build prolly-ui tool (run from project root)
+cargo build --features "git sql" --bin prolly-ui
+
+# Create output directory
+mkdir -p /tmp/html
+```
+
+#### Single Dataset Test
+```bash
+# Create test directory structure
+mkdir -p /tmp/test-dataset
+git -C /tmp/test-dataset init
+git -C /tmp/test-dataset config user.name "Test User"
+git -C /tmp/test-dataset config user.email "test@example.com"
+mkdir /tmp/test-dataset/data
+
+# Initialize prolly repository (use relative path to binary)
+./target/debug/git-prolly init /tmp/test-dataset/data
+git -C /tmp/test-dataset/data config user.name "Test User"
+git -C /tmp/test-dataset/data config user.email "test@example.com"
+
+# Add test data and commits
+cd /tmp/test-dataset/data
+$(pwd | sed 's|/tmp.*||')/target/debug/git-prolly set "key1" "value1"
+$(pwd | sed 's|/tmp.*||')/target/debug/git-prolly commit -m "Initial commit"
+
+# Create branches for testing
+git checkout -b feature-branch
+$(pwd | sed 's|/tmp.*||')/target/debug/git-prolly set "key2" "value2"
+$(pwd | sed 's|/tmp.*||')/target/debug/git-prolly commit -m "Add feature"
+
+# Generate HTML (return to project root first)
+cd - && ./target/debug/prolly-ui /tmp/test-dataset/data -o /tmp/html/test.html
+```
+
+#### Multiple Dataset Test
+```bash
+# Create additional datasets
+mkdir -p /tmp/dataset2 && git -C /tmp/dataset2 init
+git -C /tmp/dataset2 config user.name "Test" && git -C /tmp/dataset2 config user.email "test@test.com"
+mkdir /tmp/dataset2/data && ./target/debug/git-prolly init /tmp/dataset2/data
+git -C /tmp/dataset2/data config user.name "Test" && git -C /tmp/dataset2/data config user.email "test@test.com"
+
+# Add data to second dataset
+cd /tmp/dataset2/data
+$(pwd | sed 's|/tmp.*||')/target/debug/git-prolly set "product:laptop" "MacBook"
+$(pwd | sed 's|/tmp.*||')/target/debug/git-prolly commit -m "Add product"
+
+# Generate multi-dataset HTML (return to project root)
+cd - && ./target/debug/prolly-ui /tmp/test-dataset/data \
+  --dataset "Products:/tmp/dataset2/data" \
+  -o /tmp/html/multi-dataset.html
+```
+
+#### Large Dataset Test (25+ Commits)
+Use the script pattern for generating many commits:
+```bash
+# Create script to generate large dataset
+cat > /tmp/create_large_test.sh << 'EOF'
+#!/bin/bash
+# Get project root path dynamically
+PROJECT_ROOT=$(pwd)
+if [[ ! -f "Cargo.toml" ]]; then
+    echo "Error: Run this from the project root directory"
+    exit 1
+fi
+
+mkdir -p /tmp/large-test && git -C /tmp/large-test init
+git -C /tmp/large-test config user.name "Test" && git -C /tmp/large-test config user.email "test@test.com"
+mkdir /tmp/large-test/data && $PROJECT_ROOT/target/debug/git-prolly init /tmp/large-test/data
+git -C /tmp/large-test/data config user.name "Test" && git -C /tmp/large-test/data config user.email "test@test.com"
+
+cd /tmp/large-test/data
+# Generate 25+ commits with realistic data progression
+for i in {1..25}; do
+    $PROJECT_ROOT/target/debug/git-prolly set "item:$i" "Item Number $i"
+    $PROJECT_ROOT/target/debug/git-prolly set "price:$i" "$((i * 10))"
+    $PROJECT_ROOT/target/debug/git-prolly commit -m "Add item $i to catalog"
+done
+
+# Create feature branches for testing branch switching
+git checkout -b feature/improvements
+$PROJECT_ROOT/target/debug/git-prolly set "feature:new" "enabled"
+$PROJECT_ROOT/target/debug/git-prolly commit -m "Enable new features"
+git checkout main
+
+# Generate HTML
+cd $PROJECT_ROOT
+./target/debug/prolly-ui /tmp/large-test/data -o /tmp/html/large-test.html
+EOF
+
+chmod +x /tmp/create_large_test.sh && bash /tmp/create_large_test.sh
+```
+
+#### Verification Steps
+1. **Check Dataset Tags**: Verify tags appear at top of page, not as dropdown
+2. **Branch Dropdown**: Confirm branch selector shows all branches for selected dataset
+3. **Commit Details**: Verify dataset tag appears in "Commit Details" section
+4. **Interactive Features**: Test dataset switching and branch filtering
+5. **Performance**: Ensure smooth scrolling with 25+ commits
+
+#### Common Issues and Solutions
+- **Git Config Missing**: Always set user.name and user.email for each git repo
+- **Working Directory**: Use absolute paths and avoid `cd` commands in scripts
+- **Prolly Init**: Must create subdirectory structure (repo/data) to avoid git root conflicts
+- **Branch Creation**: Use `git checkout -b` for creating branches, not prolly commands
+
 ## Important Implementation Details
 
 ### Multi-Layer Architecture
