@@ -201,9 +201,10 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
 
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #fafafa;
             min-height: 100vh;
             padding: 20px;
+            color: #1a1a1a;
         }}
 
         .container {{
@@ -212,16 +213,18 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         }}
 
         .header {{
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 16px;
+            background: #ffffff;
+            border-radius: 12px;
             padding: 24px;
             margin-bottom: 24px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e5e5;
         }}
 
         .header h1 {{
-            color: #2d3748;
-            font-size: 32px;
+            color: #1a1a1a;
+            font-size: 28px;
+            font-weight: 600;
             margin-bottom: 16px;
         }}
 
@@ -232,23 +235,29 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         }}
 
         .dataset-selector label {{
-            color: #4a5568;
+            color: #6b7280;
             font-weight: 500;
         }}
 
         .dataset-selector select {{
-            padding: 8px 16px;
-            border-radius: 8px;
-            border: 2px solid #e2e8f0;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #d1d5db;
             background: white;
-            color: #2d3748;
-            font-size: 16px;
+            color: #1a1a1a;
+            font-size: 14px;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
         }}
 
         .dataset-selector select:hover {{
-            border-color: #667eea;
+            border-color: #3b82f6;
+        }}
+
+        .dataset-selector select:focus {{
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }}
 
         .main-content {{
@@ -258,17 +267,19 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         }}
 
         .graph-panel {{
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 16px;
+            background: #ffffff;
+            border-radius: 12px;
             padding: 24px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e5e5;
         }}
 
         .details-panel {{
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 16px;
+            background: #ffffff;
+            border-radius: 12px;
             padding: 24px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e5e5;
             max-height: 80vh;
             overflow-y: auto;
         }}
@@ -285,16 +296,16 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         }}
 
         .branch-name {{
-            background: linear-gradient(135deg, #667eea, #764ba2);
+            background: #3b82f6;
             color: white;
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 14px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 13px;
         }}
 
         .branch-current {{
-            background: linear-gradient(135deg, #48bb78, #38a169);
+            background: #10b981;
         }}
 
         .commits {{
@@ -312,7 +323,7 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             top: 12px;
             bottom: 12px;
             width: 2px;
-            background: linear-gradient(180deg, #667eea, #764ba2);
+            background: #d1d5db;
         }}
 
         .commit {{
@@ -320,48 +331,52 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             align-items: center;
             gap: 12px;
             padding: 12px;
-            background: #f7fafc;
-            border-radius: 8px;
+            background: #f9fafb;
+            border-radius: 6px;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
             position: relative;
+            border: 1px solid transparent;
         }}
 
         .commit::before {{
             content: '';
             position: absolute;
             left: -26px;
-            width: 12px;
-            height: 12px;
-            background: #667eea;
-            border: 3px solid white;
+            width: 10px;
+            height: 10px;
+            background: #3b82f6;
+            border: 2px solid white;
             border-radius: 50%;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
         }}
 
         .commit:hover {{
-            background: #edf2f7;
-            transform: translateX(4px);
+            background: #f3f4f6;
+            transform: translateX(2px);
+            border-color: #e5e7eb;
         }}
 
         .commit.selected {{
-            background: linear-gradient(135deg, #e6f3ff, #d4e8ff);
-            border: 2px solid #667eea;
+            background: #eff6ff;
+            border-color: #3b82f6;
         }}
 
         .commit-hash {{
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-            color: #718096;
-            background: white;
-            padding: 2px 8px;
-            border-radius: 4px;
+            font-family: ui-monospace, 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+            font-size: 11px;
+            color: #6b7280;
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            border: 1px solid #e5e7eb;
         }}
 
         .commit-message {{
             flex: 1;
-            color: #2d3748;
+            color: #1f2937;
             font-size: 14px;
+            font-weight: 500;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -369,23 +384,24 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
 
         .commit-time {{
             font-size: 12px;
-            color: #a0aec0;
+            color: #9ca3af;
         }}
 
         .details-header {{
-            color: #2d3748;
-            font-size: 20px;
+            color: #1f2937;
+            font-size: 18px;
             font-weight: 600;
             margin-bottom: 20px;
             padding-bottom: 12px;
-            border-bottom: 2px solid #e2e8f0;
+            border-bottom: 1px solid #e5e7eb;
         }}
 
         .commit-info {{
-            background: #f7fafc;
+            background: #f9fafb;
             padding: 16px;
-            border-radius: 8px;
+            border-radius: 6px;
             margin-bottom: 20px;
+            border: 1px solid #f3f4f6;
         }}
 
         .commit-info-row {{
@@ -394,13 +410,13 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         }}
 
         .commit-info-label {{
-            font-weight: 600;
-            color: #4a5568;
+            font-weight: 500;
+            color: #6b7280;
             width: 100px;
         }}
 
         .commit-info-value {{
-            color: #2d3748;
+            color: #1f2937;
             flex: 1;
             word-break: break-all;
         }}
@@ -410,7 +426,7 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         }}
 
         .changes-header {{
-            color: #2d3748;
+            color: #1f2937;
             font-size: 16px;
             font-weight: 600;
             margin-bottom: 12px;
@@ -418,64 +434,66 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
 
         .change-item {{
             background: white;
-            border-left: 4px solid #48bb78;
+            border-left: 3px solid #10b981;
             padding: 12px;
             margin-bottom: 8px;
-            border-radius: 4px;
+            border-radius: 6px;
+            border: 1px solid #f3f4f6;
         }}
 
         .change-item.removed {{
-            border-left-color: #f56565;
+            border-left-color: #ef4444;
         }}
 
         .change-item.modified {{
-            border-left-color: #ed8936;
+            border-left-color: #f59e0b;
         }}
 
         .change-type {{
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
             color: white;
-            padding: 2px 8px;
-            border-radius: 4px;
+            padding: 2px 6px;
+            border-radius: 3px;
             display: inline-block;
             margin-bottom: 8px;
         }}
 
         .change-type.added {{
-            background: #48bb78;
+            background: #10b981;
         }}
 
         .change-type.removed {{
-            background: #f56565;
+            background: #ef4444;
         }}
 
         .change-type.modified {{
-            background: #ed8936;
+            background: #f59e0b;
         }}
 
         .change-key {{
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            color: #2d3748;
+            font-family: ui-monospace, 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+            font-size: 13px;
+            color: #1f2937;
             margin-bottom: 4px;
             font-weight: 600;
         }}
 
         .change-value {{
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-            color: #4a5568;
-            background: #f7fafc;
+            font-family: ui-monospace, 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+            font-size: 12px;
+            color: #6b7280;
+            background: #f9fafb;
             padding: 8px;
             border-radius: 4px;
             margin-top: 4px;
             word-break: break-all;
+            border: 1px solid #f3f4f6;
         }}
 
         .empty-state {{
             text-align: center;
-            color: #718096;
+            color: #9ca3af;
             padding: 40px;
         }}
 
