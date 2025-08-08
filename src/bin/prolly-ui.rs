@@ -435,6 +435,18 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             margin-bottom: 20px;
             padding-bottom: 12px;
             border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }}
+
+        .details-dataset-tag {{
+            background: #3b82f6;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 500;
         }}
 
         .commit-info {{
@@ -677,8 +689,14 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             // Add selection to current commit
             element.classList.add('selected');
 
+            // Get the display name for the dataset
+            const datasetDisplayName = getDatasetDisplayName(dataset);
+
             const detailsHtml = `
-                <div class="details-header">Commit Details</div>
+                <div class="details-header">
+                    Commit Details
+                    <span class="details-dataset-tag">` + datasetDisplayName + `</span>
+                </div>
                 <div class="commit-info">
                     <div class="commit-info-row">
                         <span class="commit-info-label">Hash:</span>
@@ -763,6 +781,13 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             }}
         }}
 
+        function getDatasetDisplayName(sanitizedName) {{
+            // Map sanitized names back to display names
+            const datasetNames = {{}};
+            {dataset_name_mapping}
+            return datasetNames[sanitizedName] || sanitizedName;
+        }}
+
         // Initialize the interface
         document.addEventListener('DOMContentLoaded', function() {{
             switchDataset(currentDataset);
@@ -773,6 +798,7 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         dataset_tags = generate_dataset_tags(repositories),
         datasets = generate_datasets_html_no_js(repositories),
         repository_data = generate_repository_data_with_branches(repositories),
+        dataset_name_mapping = generate_dataset_name_mapping(repositories),
         first_dataset = repositories
             .first()
             .map(|r| sanitize_name(&r.name))
@@ -797,6 +823,20 @@ fn generate_dataset_tags(repositories: &[RepositoryData]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n                ")
+}
+
+fn generate_dataset_name_mapping(repositories: &[RepositoryData]) -> String {
+    repositories
+        .iter()
+        .map(|repo| {
+            format!(
+                r#"datasetNames["{}"] = "{}";"#,
+                sanitize_name(&repo.name),
+                escape_js_string(&repo.name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n            ")
 }
 
 fn serialize_changes(changes: &[KvDiff]) -> String {
