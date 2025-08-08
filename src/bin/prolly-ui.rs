@@ -46,7 +46,6 @@ struct BranchInfo {
 #[derive(Debug, Clone)]
 struct RepositoryData {
     name: String,
-    path: PathBuf,
     branches: Vec<BranchInfo>,
     commit_details: HashMap<String, CommitDiff>,
 }
@@ -178,7 +177,6 @@ fn process_repository(
 
     Ok(RepositoryData {
         name,
-        path: path.to_path_buf(),
         branches: branch_infos,
         commit_details,
     })
@@ -228,18 +226,56 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             margin-bottom: 16px;
         }}
 
-        .dataset-selector {{
+        .dataset-tags {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
         }}
 
-        .dataset-selector label {{
+        .dataset-tag {{
+            background: #f3f4f6;
+            color: #374151;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 2px solid transparent;
+        }}
+
+        .dataset-tag:hover {{
+            background: #e5e7eb;
+            transform: translateY(-1px);
+        }}
+
+        .dataset-tag.active {{
+            background: #3b82f6;
+            color: white;
+            border-color: #2563eb;
+        }}
+
+        .controls {{
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }}
+
+        .branch-selector {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+
+        .branch-selector label {{
             color: #6b7280;
             font-weight: 500;
+            font-size: 14px;
         }}
 
-        .dataset-selector select {{
+        .branch-selector select {{
             padding: 8px 12px;
             border-radius: 6px;
             border: 1px solid #d1d5db;
@@ -248,13 +284,14 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             font-size: 14px;
             cursor: pointer;
             transition: all 0.2s ease;
+            min-width: 120px;
         }}
 
-        .dataset-selector select:hover {{
+        .branch-selector select:hover {{
             border-color: #3b82f6;
         }}
 
-        .dataset-selector select:focus {{
+        .branch-selector select:focus {{
             outline: none;
             border-color: #3b82f6;
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
@@ -286,6 +323,10 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
 
         .branch {{
             margin-bottom: 32px;
+        }}
+
+        .branch.branch-hidden {{
+            display: none;
         }}
 
         .branch-header {{
@@ -513,11 +554,15 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
     <div class="container">
         <div class="header">
             <h1>🌳 ProllyTree Repository Visualization</h1>
-            <div class="dataset-selector">
-                <label for="dataset-select">Dataset:</label>
-                <select id="dataset-select" onchange="switchDataset(this.value)">
-                    {options}
-                </select>
+            <div class="dataset-tags">
+                {dataset_tags}
+            </div>
+            <div class="controls">
+                <div class="branch-selector">
+                    <label for="branch-select">Branch:</label>
+                    <select id="branch-select" onchange="switchBranch(this.value)">
+                    </select>
+                </div>
             </div>
         </div>
 
@@ -544,11 +589,69 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         const repositories = {{}};
         {repository_data}
 
+        let currentDataset = '{first_dataset}';
+
         function switchDataset(name) {{
+            // Update dataset tags
+            document.querySelectorAll('.dataset-tag').forEach(tag => {{
+                tag.classList.remove('active');
+            }});
+            document.querySelector(`[data-dataset="${{name}}"]`).classList.add('active');
+
+            // Update content
             document.querySelectorAll('.dataset-content').forEach(el => {{
                 el.classList.add('dataset-hidden');
             }});
             document.getElementById('dataset-' + name).classList.remove('dataset-hidden');
+
+            // Update branch selector
+            updateBranchSelector(name);
+
+            // Clear commit details
+            clearCommitDetails();
+
+            currentDataset = name;
+        }}
+
+        function updateBranchSelector(dataset) {{
+            const branchSelect = document.getElementById('branch-select');
+            const repo = repositories[dataset];
+
+            branchSelect.innerHTML = '';
+
+            if (repo && repo.branches) {{
+                repo.branches.forEach((branch, index) => {{
+                    const option = document.createElement('option');
+                    option.value = branch.name;
+                    option.textContent = branch.name + (branch.current ? ' (current)' : '');
+                    if (index === 0) option.selected = true;
+                    branchSelect.appendChild(option);
+                }});
+
+                // Show first branch by default
+                if (repo.branches.length > 0) {{
+                    switchBranch(repo.branches[0].name);
+                }}
+            }}
+        }}
+
+        function switchBranch(branchName) {{
+            // Hide all branches in current dataset
+            document.querySelectorAll(`#dataset-${{currentDataset}} .branch`).forEach(branch => {{
+                branch.classList.add('branch-hidden');
+            }});
+
+            // Show selected branch
+            const targetBranch = document.querySelector(`#dataset-${{currentDataset}} .branch[data-branch="${{branchName}}"]`);
+            if (targetBranch) {{
+                targetBranch.classList.remove('branch-hidden');
+            }}
+
+            // Clear commit details
+            clearCommitDetails();
+        }}
+
+        function clearCommitDetails() {{
             document.getElementById('commit-details').innerHTML = `
                 <div class="empty-state">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -659,32 +762,41 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
                 return Math.floor(diff / 86400000) + ' days ago';
             }}
         }}
+
+        // Initialize the interface
+        document.addEventListener('DOMContentLoaded', function() {{
+            switchDataset(currentDataset);
+        }});
     </script>
 </body>
 </html>"#,
-        options = generate_dataset_options(repositories),
+        dataset_tags = generate_dataset_tags(repositories),
         datasets = generate_datasets_html_no_js(repositories),
-        repository_data = generate_repository_data(repositories)
+        repository_data = generate_repository_data_with_branches(repositories),
+        first_dataset = repositories
+            .first()
+            .map(|r| sanitize_name(&r.name))
+            .unwrap_or_default()
     );
 
     Ok(html)
 }
 
-fn generate_dataset_options(repositories: &[RepositoryData]) -> String {
+fn generate_dataset_tags(repositories: &[RepositoryData]) -> String {
     repositories
         .iter()
         .enumerate()
         .map(|(i, repo)| {
             format!(
-                r#"<option value="{}"{}>{} ({})</option>"#,
+                r#"<span class="dataset-tag{}" data-dataset="{}" onclick="switchDataset('{}')">{}</span>"#,
+                if i == 0 { " active" } else { "" },
                 sanitize_name(&repo.name),
-                if i == 0 { " selected" } else { "" },
-                repo.name,
-                repo.path.display()
+                sanitize_name(&repo.name),
+                repo.name
             )
         })
         .collect::<Vec<_>>()
-        .join("\n                    ")
+        .join("\n                ")
 }
 
 fn serialize_changes(changes: &[KvDiff]) -> String {
@@ -790,11 +902,28 @@ fn format_relative_time(timestamp: i64) -> String {
     format!("{timestamp}")
 }
 
-fn generate_repository_data(repositories: &[RepositoryData]) -> String {
+fn generate_repository_data_with_branches(repositories: &[RepositoryData]) -> String {
     repositories
         .iter()
         .map(|repo| {
             let dataset_name = sanitize_name(&repo.name);
+
+            // Generate branches array
+            let js_branches = repo
+                .branches
+                .iter()
+                .map(|branch| {
+                    format!(
+                        r#"{{
+                            name: "{}",
+                            current: {}
+                        }}"#,
+                        escape_js_string(&branch.name),
+                        branch.current
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",\n            ");
 
             // Generate JavaScript object for this repository
             let js_commits = repo
@@ -823,6 +952,9 @@ fn generate_repository_data(repositories: &[RepositoryData]) -> String {
 
             format!(
                 r#"repositories["{dataset_name}"] = {{
+    branches: [
+        {js_branches}
+    ],
     commits: {{
         {js_commits}
     }}
@@ -873,7 +1005,7 @@ fn generate_datasets_html_no_js(repositories: &[RepositoryData]) -> String {
                         .join("\n                    ");
 
                     format!(
-                        r#"<div class="branch">
+                        r#"<div class="branch{}" data-branch="{}">
                     <div class="branch-header">
                         <span class="{}">{}{}</span>
                     </div>
@@ -881,6 +1013,8 @@ fn generate_datasets_html_no_js(repositories: &[RepositoryData]) -> String {
                         {}
                     </div>
                 </div>"#,
+                        if branch.current { "" } else { " branch-hidden" },
+                        branch.name,
                         branch_class,
                         branch.name,
                         if branch.current { " (current)" } else { "" },
