@@ -300,6 +300,8 @@ NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 NEVER perform `git push` or `git commit` operations without explicit instructions from the User.
+NEVER use current directory to test code. You should use /tmp or /var/tmp instead.
+NEVER do git commit or git push operations without explicit instructions from the User.
 ALWAYS add Apache 2.0 license headers to new files (Rust, Python, etc.). Format:
 ```
 # Licensed under the Apache License, Version 2.0 (the "License");
