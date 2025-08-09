@@ -176,6 +176,9 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
     }
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
+        // Check if this node already exists in our mappings
+        let already_exists = self.hash_to_object_id.lock().unwrap().contains_key(&hash);
+
         // Store in cache
         self.cache.lock().unwrap().put(hash.clone(), node.clone());
 
@@ -188,8 +191,11 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
                     .unwrap()
                     .insert(hash.clone(), blob_id);
 
-                // Persist the mapping to filesystem
-                self.save_hash_mapping(&hash, &blob_id);
+                // Only persist the mapping to filesystem if it's a new node
+                // This prevents duplicate entries when reloading trees for read-only operations
+                if !already_exists {
+                    self.save_hash_mapping(&hash, &blob_id);
+                }
 
                 Some(())
             }

@@ -13,6 +13,7 @@ limitations under the License.
 */
 
 use clap::Parser;
+use prollytree::git::versioned_store::HistoricalAccess;
 use prollytree::git::{CommitInfo, DiffOperation, GitVersionedKvStore, KvDiff};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -108,7 +109,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Process each dataset subdirectory
     let mut datasets = Vec::new();
     for dataset_name in dataset_names {
-        let dataset_path = repo_path.join(&dataset_name);
+        // Parse dataset name which can be either:
+        // 1. Simple name (subdirectory of repo_path)
+        // 2. "Tag:Path" format where Path is absolute
+        let (tag, dataset_path) = if dataset_name.contains(':') {
+            let parts: Vec<&str> = dataset_name.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                (parts[0].to_string(), PathBuf::from(parts[1]))
+            } else {
+                (dataset_name.clone(), repo_path.join(&dataset_name))
+            }
+        } else {
+            (dataset_name.clone(), repo_path.join(&dataset_name))
+        };
 
         if !dataset_path.exists() {
             eprintln!(
@@ -120,12 +133,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!(
             "  📊 Processing dataset '{}': {}",
-            dataset_name,
+            tag,
             dataset_path.display()
         );
-        match process_dataset(dataset_name.clone(), &dataset_path) {
+        match process_dataset(tag.clone(), &dataset_path) {
             Ok(dataset) => datasets.push(dataset),
-            Err(e) => eprintln!("  ⚠️  Failed to process dataset '{dataset_name}': {e}"),
+            Err(e) => eprintln!("  ⚠️  Failed to process dataset '{tag}': {e}"),
         }
     }
 
@@ -613,8 +626,122 @@ fn get_actual_prolly_changes(
     Ok(diffs)
 }
 
+/// Get commit history for a specific branch without checking out
+fn get_branch_commits(
+    store: &GitVersionedKvStore<32>,
+    branch_name: &str,
+) -> Result<Vec<CommitInfo>, Box<dyn std::error::Error>> {
+    // Use git rev-list to get commits for this specific branch
+    let git_repo = store.git_repo();
+    let repo_path = git_repo
+        .path()
+        .parent()
+        .ok_or("Failed to get parent directory")?;
+
+    let output = std::process::Command::new("git")
+        .args([
+            "rev-list",
+            "--format=format:%H|%an|%cn|%s|%at",
+            &format!("refs/heads/{branch_name}"),
+        ])
+        .current_dir(repo_path)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to get commits for branch {}: {}",
+            branch_name,
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let mut commits = Vec::new();
+
+    for line in stdout.lines() {
+        if line.starts_with("commit ") {
+            continue; // Skip the "commit <hash>" lines
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split('|').collect();
+        if parts.len() >= 5 {
+            let commit_id = gix::ObjectId::from_hex(parts[0].as_bytes())?;
+            let author = parts[1].to_string();
+            let committer = parts[2].to_string();
+            let message = parts[3].to_string();
+            let timestamp = parts[4].parse::<i64>().unwrap_or(0);
+
+            commits.push(CommitInfo {
+                id: commit_id,
+                author,
+                committer,
+                message,
+                timestamp,
+            });
+        }
+    }
+
+    Ok(commits)
+}
+
+/// Get diff between two commits using read-only historical access
+fn get_diff_between_commits(
+    store: &GitVersionedKvStore<32>,
+    from_commit: &str,
+    to_commit: &str,
+) -> Result<Vec<KvDiff>, Box<dyn std::error::Error>> {
+    // Get key-value state at both commits using read-only access
+    let from_state = store.get_keys_at_ref(from_commit)?;
+    let to_state = store.get_keys_at_ref(to_commit)?;
+
+    let mut diffs = Vec::new();
+
+    // Find added and modified keys
+    for (key, to_value) in &to_state {
+        match from_state.get(key) {
+            Some(from_value) if from_value != to_value => {
+                // Modified
+                diffs.push(KvDiff {
+                    key: key.clone(),
+                    operation: DiffOperation::Modified {
+                        old: from_value.clone(),
+                        new: to_value.clone(),
+                    },
+                });
+            }
+            None => {
+                // Added
+                diffs.push(KvDiff {
+                    key: key.clone(),
+                    operation: DiffOperation::Added(to_value.clone()),
+                });
+            }
+            _ => {} // Unchanged
+        }
+    }
+
+    // Find removed keys
+    for (key, from_value) in &from_state {
+        if !to_state.contains_key(key) {
+            diffs.push(KvDiff {
+                key: key.clone(),
+                operation: DiffOperation::Removed(from_value.clone()),
+            });
+        }
+    }
+
+    // Sort diffs by key for consistent output
+    diffs.sort_by(|a, b| a.key.cmp(&b.key));
+
+    Ok(diffs)
+}
+
 fn process_dataset(name: String, path: &Path) -> Result<DatasetInfo, Box<dyn std::error::Error>> {
-    let mut store = GitVersionedKvStore::<32>::open(path)?;
+    let store = GitVersionedKvStore::<32>::open(path)?;
 
     // Get all branches
     let branches = store.list_branches()?;
@@ -625,9 +752,9 @@ fn process_dataset(name: String, path: &Path) -> Result<DatasetInfo, Box<dyn std
     let mut processed_commits = HashSet::new();
 
     for branch_name in branches {
-        // Checkout branch to get its commits
-        store.checkout(&branch_name)?;
-        let commits = store.log()?;
+        // Get commits for this branch without checking out
+        // We'll use git commands directly to get the commit history for each branch
+        let commits = get_branch_commits(&store, &branch_name)?;
 
         // Process each commit
         for (i, commit) in commits.iter().enumerate() {
@@ -636,31 +763,20 @@ fn process_dataset(name: String, path: &Path) -> Result<DatasetInfo, Box<dyn std
             if !processed_commits.contains(&commit_id) {
                 processed_commits.insert(commit_id.clone());
 
-                // Get changes for this commit
+                // Get changes for this commit using read-only historical access
                 let changes = if i < commits.len() - 1 {
                     let parent = &commits[i + 1].id.to_string();
-                    store.diff(parent, &commit_id).unwrap_or_default()
+                    get_diff_between_commits(&store, parent, &commit_id).unwrap_or_default()
                 } else {
-                    // For initial commit, show all keys as added
-                    // Temporarily checkout this commit to get its state
-                    let original_branch = store.current_branch().to_string();
-                    if store.checkout(&commit_id).is_ok() {
-                        let keys = store.list_keys();
-                        let changes: Vec<KvDiff> = keys
-                            .into_iter()
-                            .filter_map(|key| {
-                                store.get(&key).map(|value| KvDiff {
-                                    key: key.clone(),
-                                    operation: DiffOperation::Added(value),
-                                })
-                            })
-                            .collect();
-                        // Restore original branch
-                        let _ = store.checkout(&original_branch);
-                        changes
-                    } else {
-                        Vec::new()
-                    }
+                    // For initial commit, show all keys as added using historical access
+                    let keys_at_commit = store.get_keys_at_ref(&commit_id).unwrap_or_default();
+                    keys_at_commit
+                        .into_iter()
+                        .map(|(key, value)| KvDiff {
+                            key,
+                            operation: DiffOperation::Added(value),
+                        })
+                        .collect()
                 };
 
                 commit_details.insert(
@@ -679,9 +795,6 @@ fn process_dataset(name: String, path: &Path) -> Result<DatasetInfo, Box<dyn std
             current: branch_name == current_branch,
         });
     }
-
-    // Restore original branch
-    store.checkout(&current_branch)?;
 
     Ok(DatasetInfo {
         name,

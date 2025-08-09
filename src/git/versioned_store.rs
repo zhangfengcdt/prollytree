@@ -1135,17 +1135,25 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         let keys_at_head = self.collect_keys_at_commit(&head_object_id)?;
 
         // Clear the current tree and rebuild it with the data from HEAD
-        self.tree = ProllyTree::new(self.tree.storage.clone(), self.tree.config.clone());
+        // Important: Create tree with config that already has the correct root hash to avoid triggering persist_root
+        let mut config = self.tree.config.clone();
+
+        // Get the config from the commit to get the correct root hash
+        if let Ok(commit_config) = self.read_tree_config_from_commit(&head_object_id) {
+            config.root_hash = commit_config.root_hash;
+        }
+
+        self.tree = ProllyTree::new(self.tree.storage.clone(), config);
 
         // Insert all the key-value pairs from the HEAD commit
+        // Note: These insertions may still trigger auto-save in the tree
         for (key, value) in keys_at_head {
             self.tree.insert(key, value);
         }
 
-        // Save the tree state
-        self.tree
-            .save_config()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
+        // Note: We don't save_config() or persist_root() here because this is a read operation.
+        // The config files should only be saved during write operations (commit).
+        // Saving here would overwrite the existing files with potentially stale data.
 
         Ok(())
     }
