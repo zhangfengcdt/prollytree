@@ -224,7 +224,62 @@ fn process_git_repository(repo_path: &Path) -> GitRepositoryResult {
     // Store original branch to restore later
     let original_branch = current_branch.clone();
 
-    // Get commits for each branch
+    // First, get all commits from all branches to build a complete picture
+    let all_log_output = Command::new("git")
+        .args([
+            "-C",
+            &repo_path.to_string_lossy(),
+            "log",
+            "--all",
+            "--format=%H|%an|%s|%ct",
+            // Get ALL commits, no limit
+        ])
+        .output()?;
+
+    if !all_log_output.status.success() {
+        return Err("Failed to get git log --all".into());
+    }
+
+    let all_log_text = String::from_utf8(all_log_output.stdout)?;
+    let all_commit_lines: Vec<&str> = all_log_text.lines().collect();
+
+    // Parse all commits into a map
+    for (i, line) in all_commit_lines.iter().enumerate() {
+        if let Some((id, rest)) = line.split_once('|') {
+            if let Some((author, rest)) = rest.split_once('|') {
+                if let Some((message, timestamp_str)) = rest.split_once('|') {
+                    if let Ok(timestamp) = timestamp_str.parse::<i64>() {
+                        // Extract data for ALL commits now that git-prolly show is faster
+                        let should_extract_data = true; // Extract data for ALL commits
+                        let dataset_changes = calculate_commit_changes(
+                            repo_path,
+                            id,
+                            if i + 1 < all_commit_lines.len() {
+                                Some(all_commit_lines[i + 1].split('|').next().unwrap_or(""))
+                            } else {
+                                None
+                            },
+                            &datasets,
+                            should_extract_data,
+                        )
+                        .unwrap_or_default();
+
+                        let commit = GitCommitInfo {
+                            id: id.to_string(),
+                            author: author.to_string(),
+                            message: message.to_string(),
+                            timestamp,
+                            dataset_changes,
+                        };
+
+                        all_commits.insert(id.to_string(), commit);
+                    }
+                }
+            }
+        }
+    }
+
+    // Now process each branch to get its specific commit ordering
     for branch_name in branch_names {
         println!("🔍 Processing branch: {branch_name}");
         let is_current = branch_name == current_branch;
@@ -234,62 +289,44 @@ fn process_git_repository(repo_path: &Path) -> GitRepositoryResult {
             .args(["-C", &repo_path.to_string_lossy(), "checkout", &branch_name])
             .output()?;
 
-        // Get commits for this branch
-        let log_output = Command::new("git")
+        // Get commits for this specific branch, showing most recent first
+        // This approach shows the commits in reverse chronological order for this branch
+        let branch_log_output = Command::new("git")
             .args([
                 "-C",
                 &repo_path.to_string_lossy(),
                 "log",
-                "--format=%H|%an|%s|%ct",
-                "--max-count=10", // Limit to recent commits for performance
+                &branch_name, // Specify the branch explicitly
+                "--format=%H",
+                // Show ALL commits for this branch, no limit
             ])
             .output()?;
 
-        if !log_output.status.success() {
+        if !branch_log_output.status.success() {
             continue; // Skip branches we can't read
         }
 
-        let log_text = String::from_utf8(log_output.stdout)?;
+        let branch_log_text = String::from_utf8(branch_log_output.stdout)?;
         let mut branch_commits = Vec::new();
-        let commit_lines: Vec<&str> = log_text.lines().collect();
 
-        for (i, line) in commit_lines.iter().enumerate() {
-            if let Some((id, rest)) = line.split_once('|') {
-                if let Some((author, rest)) = rest.split_once('|') {
-                    if let Some((message, timestamp_str)) = rest.split_once('|') {
-                        if let Ok(timestamp) = timestamp_str.parse::<i64>() {
-                            // Calculate dataset changes for this commit
-                            // Extract data for first commit of any branch to ensure we see some data
-                            let should_extract_data = branch_name == "main" && i < 2; // Extract data for first 2 commits on main branch only
-                            println!("    🎯 Branch: {}, Commit index: {}, ID: {}, i==0? {}, Should extract: {}", branch_name, i, &id[..8], i == 0, should_extract_data);
-                            let dataset_changes = calculate_commit_changes(
-                                repo_path,
-                                id,
-                                if i + 1 < commit_lines.len() {
-                                    Some(commit_lines[i + 1].split('|').next().unwrap_or(""))
-                                } else {
-                                    None
-                                },
-                                &datasets,
-                                should_extract_data,
-                            )
-                            .unwrap_or_default();
-
-                            let commit = GitCommitInfo {
-                                id: id.to_string(),
-                                author: author.to_string(),
-                                message: message.to_string(),
-                                timestamp,
-                                dataset_changes,
-                            };
-
-                            branch_commits.push(commit.clone());
-                            all_commits.insert(id.to_string(), commit);
-                        }
-                    }
-                }
+        // Build commits for this branch using the pre-parsed commit data
+        for line in branch_log_text.lines() {
+            let commit_id = line.trim();
+            if let Some(commit) = all_commits.get(commit_id) {
+                branch_commits.push(commit.clone());
+                println!(
+                    "    ✓ Branch {}: Added commit {}",
+                    branch_name,
+                    &commit_id[..8]
+                );
             }
         }
+
+        println!(
+            "    📊 Branch {} has {} commits",
+            branch_name,
+            branch_commits.len()
+        );
 
         git_branches.push(GitBranchInfo {
             name: branch_name,
@@ -1318,6 +1355,11 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
             createUnifiedBranchTimeline(selectedBranch);
         }}
 
+        function filterCommitsForBranch(commits, branchName) {{
+            // Return ALL commits for this branch, sorted by timestamp descending (most recent first)
+            return [...commits].sort((a, b) => b.timestamp - a.timestamp);
+        }}
+
         function createUnifiedBranchTimeline(branchName) {{
             const graphPanel = document.querySelector('.graph-panel');
 
@@ -1343,20 +1385,23 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
                 return;
             }}
 
-            // Get commits from this git branch (already sorted by git log)
-            const commits = gitBranch.commits;
+            // Get commits from this git branch and sort by timestamp descending (most recent first)
+            const commits = [...gitBranch.commits].sort((a, b) => b.timestamp - a.timestamp);
+
+            // Filter commits to show branch-relevant ones
+            const relevantCommits = filterCommitsForBranch(commits, branchName);
 
             // Generate unified timeline HTML
             let timelineHtml = `
                 <div class="branch-timeline">
                     <div class="branch-timeline-header">
                         <h2>📊 Branch: ${{branchName}}</h2>
-                        <p class="timeline-description">Git commit timeline (${{commits.length}} commits)</p>
+                        <p class="timeline-description">All commits for this branch (${{relevantCommits.length}} commits)</p>
                     </div>
                     <div class="commits">
             `;
 
-            if (commits.length === 0) {{
+            if (relevantCommits.length === 0) {{
                 timelineHtml += `
                     <div class="empty-state">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1367,12 +1412,17 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
                     </div>
                 `;
             }} else {{
-                commits.forEach(commit => {{
+                relevantCommits.forEach(commit => {{
                     const shortHash = commit.id.substring(0, 8);
+
+                    // Check if this commit has dataset changes (indicates branch activity)
+                    const hasDatasetChanges = commit.datasetChanges && Object.keys(commit.datasetChanges).length > 0;
+                    const branchActivityIndicator = hasDatasetChanges ? "🔥 " : "";
+
                     timelineHtml += `
                         <div class="commit unified-commit" onclick="showGitCommitDetails('${{commit.id}}', this)">
                             <span class="commit-hash">${{shortHash}}</span>
-                            <span class="commit-message">${{escapeHtml(commit.message)}}</span>
+                            <span class="commit-message">${{branchActivityIndicator}}${{escapeHtml(commit.message)}}</span>
                             <span class="commit-time">${{formatTime(commit.timestamp)}}</span>
                         </div>
                     `;
