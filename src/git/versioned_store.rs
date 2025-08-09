@@ -694,31 +694,9 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, GitNodeStorage<N
 impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     /// Save both tree config and hash mappings to git for GitNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // Get the current tree config
-        let config = &self.tree.config;
-
-        // Serialize the config to JSON
-        let config_json = serde_json::to_vec_pretty(&config)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
-
-        // Get the git root directory to save the config file
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
-
-        // Write the config file to the git root
-        let config_path = git_root.join("prolly_config_tree_config");
-        std::fs::write(&config_path, &config_json)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
-
-        // For GitNodeStorage, also save the hash mappings to git
-        let mappings_path = self.tree.storage.dataset_dir().join("prolly_hash_mappings");
-        if mappings_path.exists() {
-            let git_mappings_path = git_root.join("prolly_hash_mappings");
-            std::fs::copy(&mappings_path, &git_mappings_path).map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to copy hash mappings: {e}"))
-            })?;
-        }
-
+        // For GitNodeStorage, the config and hash mappings are already saved
+        // in the dataset directory by the storage backend itself.
+        // No need to duplicate them at the git root level.
         Ok(())
     }
 
@@ -1235,8 +1213,10 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         // Load staging area from file if it exists
         store.load_staging_area()?;
 
-        // Reload the tree from the current HEAD
-        store.reload_tree_from_head()?;
+        // Note: We intentionally do NOT call reload_tree_from_head() here
+        // because git-prolly commands should read from the current directory's
+        // prolly_config_tree_config and mapping files, not from git HEAD.
+        // The tree was already loaded from local storage by load_from_storage() above.
 
         Ok(store)
     }
@@ -2023,22 +2003,8 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, InMemoryNodeStor
 impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
     /// Save tree config to git for InMemoryNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // Get the current tree config
-        let config = &self.tree.config;
-
-        // Serialize the config to JSON
-        let config_json = serde_json::to_vec_pretty(&config)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
-
-        // Get the git root directory to save the config file
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
-
-        // Write the config file to the git root
-        let config_path = git_root.join("prolly_config_tree_config");
-        std::fs::write(&config_path, &config_json)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
-
+        // For InMemoryNodeStorage, the config is transient and doesn't need
+        // to be duplicated at the git root level.
         Ok(())
     }
 }
@@ -2054,22 +2020,8 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, FileNodeStorage<
 impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     /// Save tree config to git for FileNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // Get the current tree config
-        let config = &self.tree.config;
-
-        // Serialize the config to JSON
-        let config_json = serde_json::to_vec_pretty(&config)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
-
-        // Get the git root directory to save the config file
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
-
-        // Write the config file to the git root
-        let config_path = git_root.join("prolly_config_tree_config");
-        std::fs::write(&config_path, &config_json)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
-
+        // For FileNodeStorage, the config is already saved to disk in the dataset directory.
+        // No need to duplicate it at the git root level.
         Ok(())
     }
 }
@@ -2087,24 +2039,8 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, RocksDBNodeStora
 impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     /// Save tree config to git for RocksDBNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // Get the current tree config
-        let config = &self.tree.config;
-
-        // Serialize the config to JSON
-        let config_json = serde_json::to_vec_pretty(&config).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to serialize config: {}", e))
-        })?;
-
-        // Get the git root directory to save the config file
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
-
-        // Write the config file to the git root
-        let config_path = git_root.join("prolly_config_tree_config");
-        std::fs::write(&config_path, &config_json).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write config file: {}", e))
-        })?;
-
+        // For RocksDBNodeStorage, the config is already persisted in the dataset directory.
+        // No need to duplicate it at the git root level.
         Ok(())
     }
 }
