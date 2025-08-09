@@ -697,7 +697,7 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ProllyTree Repository Visualization</title>
+    <title>Git-Prolly Visualization (beta)</title>
     <style>
         * {{
             margin: 0;
@@ -912,11 +912,36 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
             left: -27px;
             width: 12px;
             height: 12px;
-            background: #3b82f6;
+            background: #3b82f6; /* Default blue for main */
             border: 2px solid white;
             border-radius: 50%;
             box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(0, 0, 0, 0.1);
             z-index: 2;
+        }}
+
+        /* Branch-specific dot colors */
+        .commit.branch-main::before {{
+            background: #3b82f6; /* Blue for main */
+        }}
+
+        .commit.branch-feature-bulk-orders::before {{
+            background: #f59e0b; /* Orange for bulk-orders */
+        }}
+
+        .commit.branch-feature-new-products::before {{
+            background: #f59e0b; /* Orange for new-products */
+        }}
+
+        .commit.branch-feature-user-management::before {{
+            background: #f59e0b; /* Orange for user-management */
+        }}
+
+        .commit.branch-hotfix-user-validation::before {{
+            background: #f59e0b; /* Orange for user-validation (hotfix) */
+        }}
+
+        .commit.branch-other::before {{
+            background: #f59e0b; /* Orange for other branches */
         }}
 
         .commit::after {{
@@ -1193,7 +1218,7 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
 <body>
     <div class="container">
         <div class="header">
-            <h1>🌳 ProllyTree Repository Visualization</h1>
+            <h1>🌳 Git-Prolly Visualization (beta)</h1>
             <div class="repository-path">Repository: {repo_path}</div>
             <div class="dataset-tags">
                 {dataset_tags}
@@ -1360,6 +1385,21 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
             return [...commits].sort((a, b) => b.timestamp - a.timestamp);
         }}
 
+        function getBranchCssClass(branchName) {{
+            // Convert branch name to CSS class
+            const cleanBranchName = branchName.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase();
+            return `branch-${{cleanBranchName}}`;
+        }}
+
+        function isCommitInMainBranch(commitId) {{
+            // Check if this commit exists in main branch
+            const mainBranch = gitRepository.branches.find(branch => branch.name === 'main');
+            if (mainBranch) {{
+                return mainBranch.commits.some(commit => commit.id === commitId);
+            }}
+            return false;
+        }}
+
         function createUnifiedBranchTimeline(branchName) {{
             const graphPanel = document.querySelector('.graph-panel');
 
@@ -1369,16 +1409,12 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
             if (!gitBranch) {{
                 graphPanel.innerHTML = `
                     <div class="branch-timeline">
-                        <div class="branch-timeline-header">
-                            <h2>📊 Branch: ${{branchName}}</h2>
-                            <p class="timeline-description">Branch not found</p>
-                        </div>
                         <div class="empty-state">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="12" cy="12" r="10"></circle>
                                 <path d="M12 6v6l4 2"></path>
                             </svg>
-                            <p>Branch "${{branchName}}" not found</p>
+                            <p>Branch not found</p>
                         </div>
                     </div>
                 `;
@@ -1391,13 +1427,9 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
             // Filter commits to show branch-relevant ones
             const relevantCommits = filterCommitsForBranch(commits, branchName);
 
-            // Generate unified timeline HTML
+            // Generate unified timeline HTML without branch header
             let timelineHtml = `
                 <div class="branch-timeline">
-                    <div class="branch-timeline-header">
-                        <h2>📊 Branch: ${{branchName}}</h2>
-                        <p class="timeline-description">All commits for this branch (${{relevantCommits.length}} commits)</p>
-                    </div>
                     <div class="commits">
             `;
 
@@ -1408,19 +1440,22 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
                             <circle cx="12" cy="12" r="10"></circle>
                             <path d="M8 12l2 2 4-4"></path>
                         </svg>
-                        <p>No commits found for branch "${{branchName}}"</p>
+                        <p>No commits found</p>
                     </div>
                 `;
             }} else {{
                 relevantCommits.forEach(commit => {{
                     const shortHash = commit.id.substring(0, 8);
 
-                    // Check if this commit has dataset changes (indicates branch activity)
-                    const hasDatasetChanges = commit.datasetChanges && Object.keys(commit.datasetChanges).length > 0;
-                    const branchActivityIndicator = hasDatasetChanges ? "🔥 " : "";
+                    // No activity indicator needed - keep commit messages clean
+                    const branchActivityIndicator = "";
+
+                    // Determine dot color: if commit exists in main, use main color, otherwise use current branch color
+                    const isInMain = isCommitInMainBranch(commit.id);
+                    const branchCssClass = isInMain ? 'branch-main' : getBranchCssClass(branchName);
 
                     timelineHtml += `
-                        <div class="commit unified-commit" onclick="showGitCommitDetails('${{commit.id}}', this)">
+                        <div class="commit unified-commit ${{branchCssClass}}" onclick="showGitCommitDetails('${{commit.id}}', this)">
                             <span class="commit-hash">${{shortHash}}</span>
                             <span class="commit-message">${{branchActivityIndicator}}${{escapeHtml(commit.message)}}</span>
                             <span class="commit-time">${{formatTime(commit.timestamp)}}</span>
