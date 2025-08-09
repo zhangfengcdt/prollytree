@@ -61,6 +61,11 @@ impl<const N: usize> GitNodeStorage<N> {
         &self.dataset_dir
     }
 
+    /// Get a copy of the current hash mappings
+    pub fn get_hash_mappings(&self) -> HashMap<ValueDigest<N>, gix::ObjectId> {
+        self.hash_to_object_id.lock().unwrap().clone()
+    }
+
     /// Create a new GitNodeStorage instance
     pub fn new(
         repository: gix::Repository,

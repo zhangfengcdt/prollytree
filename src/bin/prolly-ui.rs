@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 #[command(about = "Generate static HTML visualization for git-prolly repositories")]
 #[command(version = "0.1.0")]
 struct Cli {
-    /// Path to the git-prolly repository
+    /// Path to the main git repository containing datasets as subdirectories
     #[arg(help = "Repository path (defaults to current directory)")]
     repo_path: Option<PathBuf>,
 
@@ -31,8 +31,8 @@ struct Cli {
     #[arg(short, long, default_value = "prolly-ui.html")]
     output: PathBuf,
 
-    /// Include additional repositories for dataset switching
-    #[arg(short = 'd', long = "dataset", value_name = "NAME:PATH")]
+    /// Specify which subdirectories are datasets (if not specified, all subdirectories with prolly data will be used)
+    #[arg(short = 'd', long = "dataset", value_name = "NAME")]
     datasets: Vec<String>,
 }
 
@@ -44,10 +44,34 @@ struct BranchInfo {
 }
 
 #[derive(Debug, Clone)]
-struct RepositoryData {
+struct DatasetInfo {
     name: String,
     branches: Vec<BranchInfo>,
     commit_details: HashMap<String, CommitDiff>,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryData {
+    path: PathBuf,
+    datasets: Vec<DatasetInfo>,
+    git_branches: Vec<GitBranchInfo>,
+    _git_commits: HashMap<String, GitCommitInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct GitBranchInfo {
+    name: String,
+    commits: Vec<GitCommitInfo>,
+    current: bool,
+}
+
+#[derive(Debug, Clone)]
+struct GitCommitInfo {
+    id: String,
+    author: String,
+    message: String,
+    timestamp: i64,
+    dataset_changes: HashMap<String, Vec<KvDiff>>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,41 +83,70 @@ struct CommitDiff {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    let mut repositories = Vec::new();
-
     // Process main repository
-    let main_path = cli.repo_path.unwrap_or_else(|| PathBuf::from("."));
-    let main_name = main_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("main")
-        .to_string();
+    let repo_path = cli.repo_path.unwrap_or_else(|| PathBuf::from("."));
 
-    println!("📊 Processing main repository: {}", main_path.display());
-    let main_repo = process_repository(main_name, &main_path)?;
-    repositories.push(main_repo);
+    println!("📊 Processing repository: {}", repo_path.display());
 
-    // Process additional datasets
-    for dataset in cli.datasets {
-        let parts: Vec<&str> = dataset.splitn(2, ':').collect();
-        if parts.len() != 2 {
-            eprintln!("⚠️  Invalid dataset format: {dataset} (expected NAME:PATH)");
+    // Discover or use specified datasets
+    let dataset_names = if cli.datasets.is_empty() {
+        discover_datasets(&repo_path)?
+    } else {
+        cli.datasets
+    };
+
+    if dataset_names.is_empty() {
+        return Err("No datasets found in the repository".into());
+    }
+
+    println!(
+        "📁 Found {} dataset(s): {:?}",
+        dataset_names.len(),
+        dataset_names
+    );
+
+    // Process each dataset subdirectory
+    let mut datasets = Vec::new();
+    for dataset_name in dataset_names {
+        let dataset_path = repo_path.join(&dataset_name);
+
+        if !dataset_path.exists() {
+            eprintln!(
+                "⚠️  Dataset directory does not exist: {}",
+                dataset_path.display()
+            );
             continue;
         }
 
-        let name = parts[0].to_string();
-        let path = PathBuf::from(parts[1]);
-
-        println!("📊 Processing dataset '{}': {}", name, path.display());
-        match process_repository(name, &path) {
-            Ok(repo) => repositories.push(repo),
-            Err(e) => eprintln!("⚠️  Failed to process dataset: {e}"),
+        println!(
+            "  📊 Processing dataset '{}': {}",
+            dataset_name,
+            dataset_path.display()
+        );
+        match process_dataset(dataset_name.clone(), &dataset_path) {
+            Ok(dataset) => datasets.push(dataset),
+            Err(e) => eprintln!("  ⚠️  Failed to process dataset '{dataset_name}': {e}"),
         }
     }
 
+    if datasets.is_empty() {
+        return Err("No valid datasets could be processed".into());
+    }
+
+    // Process actual git repository
+    println!("🔍 Processing git repository structure...");
+    let (git_branches, git_commits) = process_git_repository(&repo_path)?;
+
+    let repository_data = RepositoryData {
+        path: repo_path,
+        datasets,
+        git_branches,
+        _git_commits: git_commits,
+    };
+
     // Generate HTML
     println!("🎨 Generating HTML visualization...");
-    let html = generate_html(&repositories)?;
+    let html = generate_html(&repository_data)?;
 
     // Write to file
     fs::write(&cli.output, html)?;
@@ -102,10 +155,465 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn process_repository(
-    name: String,
-    path: &Path,
-) -> Result<RepositoryData, Box<dyn std::error::Error>> {
+fn discover_datasets(repo_path: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut datasets = Vec::new();
+
+    for entry in fs::read_dir(repo_path)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            // Check if this directory contains prolly data files
+            let has_prolly_config = path.join("prolly_config_tree_config").exists();
+            let has_hash_mappings = path.join("prolly_hash_mappings").exists();
+
+            if has_prolly_config || has_hash_mappings {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    // Skip hidden directories and git directory
+                    if !name.starts_with('.') {
+                        datasets.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    datasets.sort();
+    Ok(datasets)
+}
+
+type GitRepositoryResult =
+    Result<(Vec<GitBranchInfo>, HashMap<String, GitCommitInfo>), Box<dyn std::error::Error>>;
+
+fn process_git_repository(repo_path: &Path) -> GitRepositoryResult {
+    use std::process::Command;
+
+    // Get available datasets first
+    let datasets = discover_datasets(repo_path)?;
+
+    // Get all branches
+    let branch_output = Command::new("git")
+        .args(["-C", &repo_path.to_string_lossy(), "branch", "-a"])
+        .output()?;
+
+    if !branch_output.status.success() {
+        return Err("Failed to list git branches".into());
+    }
+
+    let branch_list = String::from_utf8(branch_output.stdout)?;
+    let mut git_branches = Vec::new();
+    let mut all_commits = HashMap::new();
+    let mut current_branch = String::new();
+
+    // Parse branches
+    let branch_names: Vec<String> = branch_list
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('*') {
+                current_branch = trimmed[2..].to_string();
+                Some(current_branch.clone())
+            } else if !trimmed.is_empty() && !trimmed.contains("remotes/") {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Store original branch to restore later
+    let original_branch = current_branch.clone();
+
+    // First, get all commits from all branches to build a complete picture
+    let all_log_output = Command::new("git")
+        .args([
+            "-C",
+            &repo_path.to_string_lossy(),
+            "log",
+            "--all",
+            "--format=%H|%an|%s|%ct",
+            // Get ALL commits, no limit
+        ])
+        .output()?;
+
+    if !all_log_output.status.success() {
+        return Err("Failed to get git log --all".into());
+    }
+
+    let all_log_text = String::from_utf8(all_log_output.stdout)?;
+    let all_commit_lines: Vec<&str> = all_log_text.lines().collect();
+
+    // Parse all commits into a map
+    for (i, line) in all_commit_lines.iter().enumerate() {
+        if let Some((id, rest)) = line.split_once('|') {
+            if let Some((author, rest)) = rest.split_once('|') {
+                if let Some((message, timestamp_str)) = rest.split_once('|') {
+                    if let Ok(timestamp) = timestamp_str.parse::<i64>() {
+                        // Extract data for ALL commits now that git-prolly show is faster
+                        let should_extract_data = true; // Extract data for ALL commits
+                        let dataset_changes = calculate_commit_changes(
+                            repo_path,
+                            id,
+                            if i + 1 < all_commit_lines.len() {
+                                Some(all_commit_lines[i + 1].split('|').next().unwrap_or(""))
+                            } else {
+                                None
+                            },
+                            &datasets,
+                            should_extract_data,
+                        )
+                        .unwrap_or_default();
+
+                        let commit = GitCommitInfo {
+                            id: id.to_string(),
+                            author: author.to_string(),
+                            message: message.to_string(),
+                            timestamp,
+                            dataset_changes,
+                        };
+
+                        all_commits.insert(id.to_string(), commit);
+                    }
+                }
+            }
+        }
+    }
+
+    // Now process each branch to get its specific commit ordering
+    for branch_name in branch_names {
+        println!("🔍 Processing branch: {branch_name}");
+        let is_current = branch_name == current_branch;
+
+        // Checkout the branch
+        Command::new("git")
+            .args(["-C", &repo_path.to_string_lossy(), "checkout", &branch_name])
+            .output()?;
+
+        // Get commits for this specific branch, showing most recent first
+        // This approach shows the commits in reverse chronological order for this branch
+        let branch_log_output = Command::new("git")
+            .args([
+                "-C",
+                &repo_path.to_string_lossy(),
+                "log",
+                &branch_name, // Specify the branch explicitly
+                "--format=%H",
+                // Show ALL commits for this branch, no limit
+            ])
+            .output()?;
+
+        if !branch_log_output.status.success() {
+            continue; // Skip branches we can't read
+        }
+
+        let branch_log_text = String::from_utf8(branch_log_output.stdout)?;
+        let mut branch_commits = Vec::new();
+
+        // Build commits for this branch using the pre-parsed commit data
+        for line in branch_log_text.lines() {
+            let commit_id = line.trim();
+            if let Some(commit) = all_commits.get(commit_id) {
+                branch_commits.push(commit.clone());
+                println!(
+                    "    ✓ Branch {}: Added commit {}",
+                    branch_name,
+                    &commit_id[..8]
+                );
+            }
+        }
+
+        println!(
+            "    📊 Branch {} has {} commits",
+            branch_name,
+            branch_commits.len()
+        );
+
+        git_branches.push(GitBranchInfo {
+            name: branch_name,
+            commits: branch_commits,
+            current: is_current,
+        });
+    }
+
+    // Restore original branch
+    Command::new("git")
+        .args([
+            "-C",
+            &repo_path.to_string_lossy(),
+            "checkout",
+            &original_branch,
+        ])
+        .output()?;
+
+    Ok((git_branches, all_commits))
+}
+
+fn calculate_commit_changes(
+    repo_path: &Path,
+    commit_id: &str,
+    parent_commit_id: Option<&str>,
+    datasets: &[String],
+    should_extract_data: bool,
+) -> Result<HashMap<String, Vec<KvDiff>>, Box<dyn std::error::Error>> {
+    use std::process::Command;
+
+    let mut dataset_changes = HashMap::new();
+
+    // Use git show to see what files changed in this commit
+    let show_output = if let Some(parent_id) = parent_commit_id {
+        Command::new("git")
+            .args([
+                "-C",
+                &repo_path.to_string_lossy(),
+                "diff",
+                "--name-only",
+                parent_id,
+                commit_id,
+            ])
+            .output()?
+    } else {
+        Command::new("git")
+            .args([
+                "-C",
+                &repo_path.to_string_lossy(),
+                "show",
+                "--name-only",
+                "--format=",
+                commit_id,
+            ])
+            .output()?
+    };
+
+    if !show_output.status.success() {
+        return Ok(HashMap::new());
+    }
+
+    let changed_files = String::from_utf8(show_output.stdout)?;
+    println!(
+        "  📋 Changed files in commit {}: {:?}",
+        &commit_id[..8],
+        changed_files.lines().collect::<Vec<_>>()
+    );
+
+    let affected_datasets: HashSet<String> = changed_files
+        .lines()
+        .filter_map(|file_path| {
+            // Check if this file belongs to a dataset
+            for dataset in datasets {
+                if file_path.starts_with(&format!("{dataset}/")) {
+                    return Some(dataset.clone());
+                }
+            }
+            None
+        })
+        .collect();
+
+    println!("  📊 Affected datasets: {affected_datasets:?}");
+
+    // For each affected dataset, get the actual prolly data changes
+    for dataset_name in affected_datasets {
+        // Quick optimization: only process if prolly config files changed
+        let has_prolly_changes = changed_files
+            .lines()
+            .any(|line| line.starts_with(&format!("{dataset_name}/prolly")));
+
+        println!("    🔍 Dataset '{dataset_name}': has_prolly_changes = {has_prolly_changes}");
+
+        if has_prolly_changes {
+            if should_extract_data {
+                // Extract actual prolly-tree data changes
+                if let Ok(changes) =
+                    get_actual_prolly_changes(repo_path, commit_id, parent_commit_id, &dataset_name)
+                {
+                    println!(
+                        "    📈 Found {} real changes for dataset '{}'",
+                        changes.len(),
+                        dataset_name
+                    );
+                    if !changes.is_empty() {
+                        dataset_changes.insert(dataset_name.clone(), changes);
+                    } else {
+                        // Even if no changes, show that the dataset was involved
+                        let indicator = vec![KvDiff {
+                            key: b"[no_changes_detected]".to_vec(),
+                            operation: DiffOperation::Modified {
+                                old: format!("Dataset {dataset_name} was processed but no key-value changes detected").into_bytes(),
+                                new: b"This may be due to internal prolly-tree restructuring".to_vec(),
+                            },
+                        }];
+                        dataset_changes.insert(dataset_name.clone(), indicator);
+                    }
+                } else {
+                    println!("    ❌ Failed to get changes for dataset '{dataset_name}'");
+                }
+            } else {
+                // Just show that the dataset was affected, without extracting data
+                let indicator = vec![KvDiff {
+                    key: b"[dataset_affected]".to_vec(),
+                    operation: DiffOperation::Modified {
+                        old: format!("Dataset {dataset_name} was modified").into_bytes(),
+                        new: "Prolly-tree data extraction limited to main branch recent commits"
+                            .to_string()
+                            .into_bytes(),
+                    },
+                }];
+                dataset_changes.insert(dataset_name.clone(), indicator);
+                println!("    📋 Dataset '{dataset_name}' affected (data extraction skipped)");
+            }
+        } else {
+            // If no prolly files changed, create a simple indicator
+            println!("    📄 Non-prolly files changed in dataset '{dataset_name}'");
+            let simple_change = vec![KvDiff {
+                key: b"[dataset_files_changed]".to_vec(),
+                operation: DiffOperation::Modified {
+                    old: format!("Files in dataset {dataset_name} were modified").into_bytes(),
+                    new: b"Non-prolly files changed (no key-value changes)".to_vec(),
+                },
+            }];
+            dataset_changes.insert(dataset_name.clone(), simple_change);
+        }
+    }
+
+    Ok(dataset_changes)
+}
+
+fn get_prolly_changes_from_commit(
+    dataset_path: &Path,
+    commit_id: &str,
+) -> Result<Vec<KvDiff>, Box<dyn std::error::Error>> {
+    use std::process::Command;
+
+    let git_prolly_path = std::env::current_exe()
+        .map(|p| p.parent().unwrap().join("git-prolly"))
+        .unwrap_or_else(|_| PathBuf::from("git-prolly"));
+
+    // Get changes directly from git-prolly show
+    let output = Command::new(&git_prolly_path)
+        .args(["show", commit_id])
+        .current_dir(dataset_path)
+        .output()?;
+
+    if !output.status.success() {
+        // If commit doesn't exist in git-prolly, return empty
+        return Ok(Vec::new());
+    }
+
+    let show_output = String::from_utf8_lossy(&output.stdout);
+    let mut diffs = Vec::new();
+    let mut in_changes_section = false;
+
+    for line in show_output.lines() {
+        let line = line.trim();
+
+        if line == "Key-Value Changes:" {
+            in_changes_section = true;
+            continue;
+        }
+
+        if !in_changes_section {
+            continue;
+        }
+
+        // Parse lines with ANSI color codes: "+ key = value", "- key = value", "M key: old -> new"
+        if line.contains("[32m+ ") && line.contains(" = ") {
+            // Added key (green) - extract between [32m+ and [0m
+            if let Some(start) = line.find("[32m+ ") {
+                if let Some(end) = line.find("[0m") {
+                    let content = &line[start + 6..end]; // Skip "[32m+ "
+                    if let Some(eq_pos) = content.find(" = ") {
+                        let key = content[..eq_pos].to_string();
+                        let mut value = content[eq_pos + 3..].to_string();
+                        // Remove any trailing ANSI escape sequences
+                        if let Some(esc_pos) = value.find('\u{1b}') {
+                            value = value[..esc_pos].to_string();
+                        }
+                        // Clean up quotes properly
+                        value = value.trim_matches('"').to_string();
+                        diffs.push(KvDiff {
+                            key: key.into_bytes(),
+                            operation: DiffOperation::Added(value.into_bytes()),
+                        });
+                    }
+                }
+            }
+        } else if line.contains("[31m- ") && line.contains(" = ") {
+            // Removed key (red)
+            if let Some(start) = line.find("[31m- ") {
+                if let Some(end) = line.find("[0m") {
+                    let content = &line[start + 6..end]; // Skip "[31m- "
+                    if let Some(eq_pos) = content.find(" = ") {
+                        let key = content[..eq_pos].to_string();
+                        let mut value = content[eq_pos + 3..].to_string();
+                        // Remove any trailing ANSI escape sequences
+                        if let Some(esc_pos) = value.find('\u{1b}') {
+                            value = value[..esc_pos].to_string();
+                        }
+                        // Clean up quotes properly
+                        value = value.trim_matches('"').to_string();
+                        diffs.push(KvDiff {
+                            key: key.into_bytes(),
+                            operation: DiffOperation::Removed(value.into_bytes()),
+                        });
+                    }
+                }
+            }
+        } else if line.contains("[33mM ") && line.contains(": ") && line.contains(" -> ") {
+            // Modified key (yellow)
+            if let Some(start) = line.find("[33mM ") {
+                if let Some(end) = line.find("[0m") {
+                    let content = &line[start + 6..end]; // Skip "[33mM "
+                    if let Some(colon_pos) = content.find(": ") {
+                        let key = content[..colon_pos].to_string();
+                        let change_part = &content[colon_pos + 2..];
+                        if let Some(arrow_pos) = change_part.find(" -> ") {
+                            let mut old_value = change_part[..arrow_pos].to_string();
+                            let mut new_value = change_part[arrow_pos + 4..].to_string();
+                            // Remove any trailing ANSI escape sequences
+                            if let Some(esc_pos) = old_value.find('\u{1b}') {
+                                old_value = old_value[..esc_pos].to_string();
+                            }
+                            if let Some(esc_pos) = new_value.find('\u{1b}') {
+                                new_value = new_value[..esc_pos].to_string();
+                            }
+                            // Clean up quotes properly
+                            old_value = old_value.trim_matches('"').to_string();
+                            new_value = new_value.trim_matches('"').to_string();
+                            diffs.push(KvDiff {
+                                key: key.into_bytes(),
+                                operation: DiffOperation::Modified {
+                                    old: old_value.into_bytes(),
+                                    new: new_value.into_bytes(),
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(diffs)
+}
+
+fn get_actual_prolly_changes(
+    repo_path: &Path,
+    commit_id: &str,
+    _parent_commit_id: Option<&str>,
+    dataset_name: &str,
+) -> Result<Vec<KvDiff>, Box<dyn std::error::Error>> {
+    let dataset_path = repo_path.join(dataset_name);
+
+    // Get prolly changes for commit
+
+    // Use git-prolly show to get the actual changes for this commit
+    let diffs = get_prolly_changes_from_commit(&dataset_path, commit_id)?;
+
+    println!("      🎯 Found {} prolly changes", diffs.len());
+
+    Ok(diffs)
+}
+
+fn process_dataset(name: String, path: &Path) -> Result<DatasetInfo, Box<dyn std::error::Error>> {
     let mut store = GitVersionedKvStore::<32>::open(path)?;
 
     // Get all branches
@@ -175,21 +683,21 @@ fn process_repository(
     // Restore original branch
     store.checkout(&current_branch)?;
 
-    Ok(RepositoryData {
+    Ok(DatasetInfo {
         name,
         branches: branch_infos,
         commit_details,
     })
 }
 
-fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std::error::Error>> {
+fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::error::Error>> {
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ProllyTree Repository Visualization</title>
+    <title>Git-Prolly Visualization (beta)</title>
     <style>
         * {{
             margin: 0;
@@ -226,6 +734,13 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             margin-bottom: 16px;
         }}
 
+        .repository-path {{
+            color: #6b7280;
+            font-size: 14px;
+            margin-bottom: 16px;
+            font-family: ui-monospace, 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+        }}
+
         .dataset-tags {{
             display: flex;
             align-items: center;
@@ -235,26 +750,13 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
         }}
 
         .dataset-tag {{
-            background: #f3f4f6;
-            color: #374151;
+            background: #3b82f6;
+            color: white;
             padding: 6px 12px;
             border-radius: 20px;
             font-size: 13px;
             font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            border: 2px solid transparent;
-        }}
-
-        .dataset-tag:hover {{
-            background: #e5e7eb;
-            transform: translateY(-1px);
-        }}
-
-        .dataset-tag.active {{
-            background: #3b82f6;
-            color: white;
-            border-color: #2563eb;
+            border: 2px solid #2563eb;
         }}
 
         .controls {{
@@ -410,11 +912,36 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             left: -27px;
             width: 12px;
             height: 12px;
-            background: #3b82f6;
+            background: #3b82f6; /* Default blue for main */
             border: 2px solid white;
             border-radius: 50%;
             box-shadow: 0 0 0 1px #e5e7eb, 0 1px 3px rgba(0, 0, 0, 0.1);
             z-index: 2;
+        }}
+
+        /* Branch-specific dot colors */
+        .commit.branch-main::before {{
+            background: #3b82f6; /* Blue for main */
+        }}
+
+        .commit.branch-feature-bulk-orders::before {{
+            background: #f59e0b; /* Orange for bulk-orders */
+        }}
+
+        .commit.branch-feature-new-products::before {{
+            background: #f59e0b; /* Orange for new-products */
+        }}
+
+        .commit.branch-feature-user-management::before {{
+            background: #f59e0b; /* Orange for user-management */
+        }}
+
+        .commit.branch-hotfix-user-validation::before {{
+            background: #f59e0b; /* Orange for user-validation (hotfix) */
+        }}
+
+        .commit.branch-other::before {{
+            background: #f59e0b; /* Orange for other branches */
         }}
 
         .commit::after {{
@@ -595,22 +1122,112 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             opacity: 0.5;
         }}
 
-        .dataset-hidden {{
-            display: none;
+        .dataset-header {{
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+            margin-top: 20px;
+        }}
+
+        .dataset-header h3 {{
+            color: #1f2937;
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0;
+        }}
+
+        .dataset-content {{
+            margin-bottom: 40px;
+        }}
+
+        .dataset-content:last-child {{
+            margin-bottom: 0;
+        }}
+
+        .branch-timeline {{
+            padding: 20px 0;
+        }}
+
+        .branch-timeline-header {{
+            margin-bottom: 24px;
+            text-align: center;
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            color: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }}
+
+        .branch-timeline-header h2 {{
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }}
+
+        .timeline-description {{
+            font-size: 14px;
+            opacity: 0.9;
+            margin: 0;
+        }}
+
+        .unified-commit {{
+            background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+            border-left: 4px solid #3b82f6;
+            margin-bottom: 12px;
+            position: relative;
+            transition: all 0.3s ease;
+        }}
+
+        .unified-commit:hover {{
+            background: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+            transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }}
+
+        .commit-dataset-tag {{
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-right: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+        }}
+
+        .dataset-changes {{
+            margin-bottom: 20px;
+        }}
+
+        .dataset-changes-header {{
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
         }}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🌳 ProllyTree Repository Visualization</h1>
+            <h1>🌳 Git-Prolly Visualization (beta)</h1>
+            <div class="repository-path">Repository: {repo_path}</div>
             <div class="dataset-tags">
                 {dataset_tags}
             </div>
             <div class="controls">
                 <div class="branch-selector">
                     <label for="branch-select">Branch:</label>
-                    <select id="branch-select" onchange="switchBranch(this.value)">
+                    <select id="branch-select" onchange="filterByBranch(this.value)">
+                        {branch_options}
                     </select>
                 </div>
             </div>
@@ -636,70 +1253,11 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
     </div>
 
     <script>
-        const repositories = {{}};
-        {repository_data}
+        const datasets = {{}};
+        {dataset_data}
 
-        let currentDataset = '{first_dataset}';
-
-        function switchDataset(name) {{
-            // Update dataset tags
-            document.querySelectorAll('.dataset-tag').forEach(tag => {{
-                tag.classList.remove('active');
-            }});
-            document.querySelector(`[data-dataset="${{name}}"]`).classList.add('active');
-
-            // Update content
-            document.querySelectorAll('.dataset-content').forEach(el => {{
-                el.classList.add('dataset-hidden');
-            }});
-            document.getElementById('dataset-' + name).classList.remove('dataset-hidden');
-
-            // Update branch selector
-            updateBranchSelector(name);
-
-            // Clear commit details
-            clearCommitDetails();
-
-            currentDataset = name;
-        }}
-
-        function updateBranchSelector(dataset) {{
-            const branchSelect = document.getElementById('branch-select');
-            const repo = repositories[dataset];
-
-            branchSelect.innerHTML = '';
-
-            if (repo && repo.branches) {{
-                repo.branches.forEach((branch, index) => {{
-                    const option = document.createElement('option');
-                    option.value = branch.name;
-                    option.textContent = branch.name + (branch.current ? ' (current)' : '');
-                    if (index === 0) option.selected = true;
-                    branchSelect.appendChild(option);
-                }});
-
-                // Show first branch by default
-                if (repo.branches.length > 0) {{
-                    switchBranch(repo.branches[0].name);
-                }}
-            }}
-        }}
-
-        function switchBranch(branchName) {{
-            // Hide all branches in current dataset
-            document.querySelectorAll(`#dataset-${{currentDataset}} .branch`).forEach(branch => {{
-                branch.classList.add('branch-hidden');
-            }});
-
-            // Show selected branch
-            const targetBranch = document.querySelector(`#dataset-${{currentDataset}} .branch[data-branch="${{branchName}}"]`);
-            if (targetBranch) {{
-                targetBranch.classList.remove('branch-hidden');
-            }}
-
-            // Clear commit details
-            clearCommitDetails();
-        }}
+        const gitRepository = {{}};
+        {git_data}
 
         function clearCommitDetails() {{
             document.getElementById('commit-details').innerHTML = `
@@ -713,9 +1271,9 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             `;
         }}
 
-        function showCommitDetails(dataset, commitId, element) {{
-            const repo = repositories[dataset];
-            const commit = repo.commits[commitId];
+        function showCommitDetails(datasetName, commitId, element) {{
+            const dataset = datasets[datasetName];
+            const commit = dataset.commits[commitId];
 
             if (!commit) return;
 
@@ -727,13 +1285,10 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             // Add selection to current commit
             element.classList.add('selected');
 
-            // Get the display name for the dataset
-            const datasetDisplayName = getDatasetDisplayName(dataset);
-
             const detailsHtml = `
                 <div class="details-header">
                     Commit Details
-                    <span class="details-dataset-tag">` + datasetDisplayName + `</span>
+                    <span class="details-dataset-tag">` + datasetName + `</span>
                 </div>
                 <div class="commit-info">
                     <div class="commit-info-row">
@@ -819,62 +1374,324 @@ fn generate_html(repositories: &[RepositoryData]) -> Result<String, Box<dyn std:
             }}
         }}
 
-        function getDatasetDisplayName(sanitizedName) {{
-            // Map sanitized names back to display names
-            const datasetNames = {{}};
-            {dataset_name_mapping}
-            return datasetNames[sanitizedName] || sanitizedName;
+        function filterByBranch(selectedBranch) {{
+            clearCommitDetails();
+            // Always create unified timeline for the selected branch
+            createUnifiedBranchTimeline(selectedBranch);
         }}
 
-        // Initialize the interface
+        function filterCommitsForBranch(commits, branchName) {{
+            // Return ALL commits for this branch, sorted by timestamp descending (most recent first)
+            return [...commits].sort((a, b) => b.timestamp - a.timestamp);
+        }}
+
+        function getBranchCssClass(branchName) {{
+            // Convert branch name to CSS class
+            const cleanBranchName = branchName.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase();
+            return `branch-${{cleanBranchName}}`;
+        }}
+
+        function isCommitInMainBranch(commitId) {{
+            // Check if this commit exists in main branch
+            const mainBranch = gitRepository.branches.find(branch => branch.name === 'main');
+            if (mainBranch) {{
+                return mainBranch.commits.some(commit => commit.id === commitId);
+            }}
+            return false;
+        }}
+
+        function createUnifiedBranchTimeline(branchName) {{
+            const graphPanel = document.querySelector('.graph-panel');
+
+            // Find the git branch
+            const gitBranch = gitRepository.branches.find(branch => branch.name === branchName);
+
+            if (!gitBranch) {{
+                graphPanel.innerHTML = `
+                    <div class="branch-timeline">
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 6v6l4 2"></path>
+                            </svg>
+                            <p>Branch not found</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }}
+
+            // Get commits from this git branch and sort by timestamp descending (most recent first)
+            const commits = [...gitBranch.commits].sort((a, b) => b.timestamp - a.timestamp);
+
+            // Filter commits to show branch-relevant ones
+            const relevantCommits = filterCommitsForBranch(commits, branchName);
+
+            // Generate unified timeline HTML without branch header
+            let timelineHtml = `
+                <div class="branch-timeline">
+                    <div class="commits">
+            `;
+
+            if (relevantCommits.length === 0) {{
+                timelineHtml += `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M8 12l2 2 4-4"></path>
+                        </svg>
+                        <p>No commits found</p>
+                    </div>
+                `;
+            }} else {{
+                relevantCommits.forEach(commit => {{
+                    const shortHash = commit.id.substring(0, 8);
+
+                    // No activity indicator needed - keep commit messages clean
+                    const branchActivityIndicator = "";
+
+                    // Determine dot color: if commit exists in main, use main color, otherwise use current branch color
+                    const isInMain = isCommitInMainBranch(commit.id);
+                    const branchCssClass = isInMain ? 'branch-main' : getBranchCssClass(branchName);
+
+                    timelineHtml += `
+                        <div class="commit unified-commit ${{branchCssClass}}" onclick="showGitCommitDetails('${{commit.id}}', this)">
+                            <span class="commit-hash">${{shortHash}}</span>
+                            <span class="commit-message">${{branchActivityIndicator}}${{escapeHtml(commit.message)}}</span>
+                            <span class="commit-time">${{formatTime(commit.timestamp)}}</span>
+                        </div>
+                    `;
+                }});
+            }}
+
+            timelineHtml += `
+                    </div>
+                </div>
+            `;
+
+            graphPanel.innerHTML = timelineHtml;
+        }}
+
+        function showGitCommitDetails(commitId, element) {{
+            // Remove previous selection
+            document.querySelectorAll('.commit').forEach(el => {{
+                el.classList.remove('selected');
+            }});
+
+            // Add selection to current commit
+            element.classList.add('selected');
+
+            // Find the commit, prioritizing main branch for shared commits
+            let commit = null;
+            // First try to find the commit in main branch (which has real data extraction)
+            const mainBranch = gitRepository.branches.find(b => b.name === 'main');
+            if (mainBranch) {{
+                commit = mainBranch.commits.find(c => c.id === commitId);
+            }}
+            // If not found in main branch, search other branches
+            if (!commit) {{
+                for (const branch of gitRepository.branches) {{
+                    commit = branch.commits.find(c => c.id === commitId);
+                    if (commit) break;
+                }}
+            }}
+
+            if (!commit) return;
+
+            // Generate dataset changes HTML
+            let datasetChangesHtml = '';
+            let totalChanges = 0;
+
+            if (commit.datasetChanges) {{
+                Object.keys(commit.datasetChanges).forEach(datasetName => {{
+                    const changes = commit.datasetChanges[datasetName];
+                    if (changes && changes.length > 0) {{
+                        totalChanges += changes.length;
+                        datasetChangesHtml += `
+                            <div class="dataset-changes">
+                                <h4 class="dataset-changes-header">📁 ${{datasetName}} (${{changes.length}} changes)</h4>
+                                ${{changes.map(change => {{
+                                    let changeType = '';
+                                    let changeClass = '';
+                                    let valueHtml = '';
+
+                                    if (change.operation.Added) {{
+                                        changeType = 'ADDED';
+                                        changeClass = 'added';
+                                        valueHtml = '<div class="change-value">' + escapeHtml(arrayToString(change.operation.Added)) + '</div>';
+                                    }} else if (change.operation.Removed) {{
+                                        changeType = 'REMOVED';
+                                        changeClass = 'removed';
+                                        valueHtml = '<div class="change-value">' + escapeHtml(arrayToString(change.operation.Removed)) + '</div>';
+                                    }} else if (change.operation.Modified) {{
+                                        changeType = 'MODIFIED';
+                                        changeClass = 'modified';
+                                        valueHtml = '<div class="change-value">Old: ' + escapeHtml(arrayToString(change.operation.Modified.old)) + '</div>' +
+                                                   '<div class="change-value">New: ' + escapeHtml(arrayToString(change.operation.Modified.new)) + '</div>';
+                                    }}
+
+                                    return '<div class="change-item ' + changeClass + '">' +
+                                           '<span class="change-type ' + changeClass + '">' + changeType + '</span>' +
+                                           '<div class="change-key">' + escapeHtml(arrayToString(change.key)) + '</div>' +
+                                           valueHtml +
+                                           '</div>';
+                                }}).join('')}}
+                            </div>
+                        `;
+                    }}
+                }});
+            }}
+
+            if (datasetChangesHtml === '') {{
+                datasetChangesHtml = `
+                    <div class="empty-state">
+                        <p style="color: #6b7280; font-style: italic;">No prolly-tree changes detected in this commit.</p>
+                    </div>
+                `;
+            }}
+
+            const detailsHtml = `
+                <div class="details-header">
+                    Git Commit Details
+                </div>
+                <div class="commit-info">
+                    <div class="commit-info-row">
+                        <span class="commit-info-label">Hash:</span>
+                        <span class="commit-info-value">${{commit.id}}</span>
+                    </div>
+                    <div class="commit-info-row">
+                        <span class="commit-info-label">Author:</span>
+                        <span class="commit-info-value">${{commit.author}}</span>
+                    </div>
+                    <div class="commit-info-row">
+                        <span class="commit-info-label">Message:</span>
+                        <span class="commit-info-value">${{commit.message}}</span>
+                    </div>
+                    <div class="commit-info-row">
+                        <span class="commit-info-label">Timestamp:</span>
+                        <span class="commit-info-value">${{new Date(commit.timestamp * 1000).toLocaleString()}}</span>
+                    </div>
+                </div>
+                <div class="changes-section">
+                    <div class="changes-header">Prolly-Tree Data Changes (${{totalChanges}} total)</div>
+                    ${{datasetChangesHtml}}
+                </div>
+            `;
+
+            document.getElementById('commit-details').innerHTML = detailsHtml;
+        }}
+
+        // Initialize the page with main branch selected
         document.addEventListener('DOMContentLoaded', function() {{
-            switchDataset(currentDataset);
+            const branchSelect = document.getElementById('branch-select');
+            if (branchSelect && branchSelect.value) {{
+                filterByBranch(branchSelect.value);
+            }}
         }});
+
     </script>
 </body>
 </html>"#,
-        dataset_tags = generate_dataset_tags(repositories),
-        datasets = generate_datasets_html_no_js(repositories),
-        repository_data = generate_repository_data_with_branches(repositories),
-        dataset_name_mapping = generate_dataset_name_mapping(repositories),
-        first_dataset = repositories
-            .first()
-            .map(|r| sanitize_name(&r.name))
-            .unwrap_or_default()
+        repo_path = repository.path.display(),
+        dataset_tags = generate_dataset_tags(&repository.datasets),
+        branch_options = generate_branch_options(repository),
+        datasets = "", // No longer used since we always show branch timeline
+        dataset_data = generate_dataset_data(&repository.datasets),
+        git_data = generate_git_data(repository)
     );
 
     Ok(html)
 }
 
-fn generate_dataset_tags(repositories: &[RepositoryData]) -> String {
-    repositories
+fn generate_dataset_tags(datasets: &[DatasetInfo]) -> String {
+    datasets
         .iter()
-        .enumerate()
-        .map(|(i, repo)| {
-            format!(
-                r#"<span class="dataset-tag{}" data-dataset="{}" onclick="switchDataset('{}')">{}</span>"#,
-                if i == 0 { " active" } else { "" },
-                sanitize_name(&repo.name),
-                sanitize_name(&repo.name),
-                repo.name
-            )
-        })
+        .map(|dataset| format!(r#"<span class="dataset-tag">{}</span>"#, dataset.name))
         .collect::<Vec<_>>()
         .join("\n                ")
 }
 
-fn generate_dataset_name_mapping(repositories: &[RepositoryData]) -> String {
-    repositories
+fn generate_branch_options(repository: &RepositoryData) -> String {
+    repository
+        .git_branches
         .iter()
-        .map(|repo| {
+        .map(|branch| {
+            let selected = if branch.name == "main" {
+                r#" selected"#
+            } else {
+                ""
+            };
             format!(
-                r#"datasetNames["{}"] = "{}";"#,
-                sanitize_name(&repo.name),
-                escape_js_string(&repo.name)
+                r#"<option value="{}"{selected}>{}</option>"#,
+                escape_html(&branch.name),
+                escape_html(&branch.name)
             )
         })
         .collect::<Vec<_>>()
-        .join("\n            ")
+        .join("\n                        ")
+}
+
+fn generate_git_data(repository: &RepositoryData) -> String {
+    let branches_js = repository
+        .git_branches
+        .iter()
+        .map(|branch| {
+            let commits_js = branch
+                .commits
+                .iter()
+                .map(|commit| {
+                    // Generate dataset changes JSON
+                    let dataset_changes_js = commit
+                        .dataset_changes
+                        .iter()
+                        .map(|(dataset_name, changes)| {
+                            let changes_json = serialize_changes(changes);
+                            format!(r#""{dataset_name}": {changes_json}"#)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",\n                ");
+
+                    format!(
+                        r#"{{
+                            id: "{}",
+                            author: "{}",
+                            message: "{}",
+                            timestamp: {},
+                            datasetChanges: {{
+                                {}
+                            }}
+                        }}"#,
+                        escape_js_string(&commit.id),
+                        escape_js_string(&commit.author),
+                        escape_js_string(&commit.message),
+                        commit.timestamp,
+                        dataset_changes_js
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",\n            ");
+
+            format!(
+                r#"{{
+                    name: "{}",
+                    current: {},
+                    commits: [
+                        {}
+                    ]
+                }}"#,
+                escape_js_string(&branch.name),
+                branch.current,
+                commits_js
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n        ");
+
+    format!(
+        r#"gitRepository.branches = [
+        {branches_js}
+    ];"#
+    )
 }
 
 fn serialize_changes(changes: &[KvDiff]) -> String {
@@ -954,40 +1771,14 @@ fn escape_js_string(text: &str) -> String {
         .collect()
 }
 
-fn format_relative_time(timestamp: i64) -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let commit_time = UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64);
-    let now = SystemTime::now();
-
-    if let Ok(duration) = now.duration_since(commit_time) {
-        let seconds = duration.as_secs();
-        if seconds < 60 {
-            return format!("{seconds} sec ago");
-        } else if seconds < 3600 {
-            return format!("{} min ago", seconds / 60);
-        } else if seconds < 86400 {
-            return format!("{} hours ago", seconds / 3600);
-        } else if seconds < 2592000 {
-            return format!("{} days ago", seconds / 86400);
-        } else if seconds < 31536000 {
-            return format!("{} months ago", seconds / 2592000);
-        } else {
-            return format!("{} years ago", seconds / 31536000);
-        }
-    }
-
-    format!("{timestamp}")
-}
-
-fn generate_repository_data_with_branches(repositories: &[RepositoryData]) -> String {
-    repositories
+fn generate_dataset_data(datasets: &[DatasetInfo]) -> String {
+    datasets
         .iter()
-        .map(|repo| {
-            let dataset_name = sanitize_name(&repo.name);
+        .map(|dataset| {
+            let dataset_name = sanitize_name(&dataset.name);
 
             // Generate branches array
-            let js_branches = repo
+            let js_branches = dataset
                 .branches
                 .iter()
                 .map(|branch| {
@@ -1003,11 +1794,34 @@ fn generate_repository_data_with_branches(repositories: &[RepositoryData]) -> St
                 .collect::<Vec<_>>()
                 .join(",\n            ");
 
-            // Generate JavaScript object for this repository
-            let js_commits = repo
+            // Generate JavaScript object for this dataset with branch associations
+            let js_commits = dataset
                 .commit_details
                 .iter()
                 .map(|(id, details)| {
+                    // Find which branches contain this commit
+                    let containing_branches: Vec<String> = dataset
+                        .branches
+                        .iter()
+                        .filter_map(|branch| {
+                            if branch
+                                .commits
+                                .iter()
+                                .any(|commit| commit.id.to_string() == *id)
+                            {
+                                Some(branch.name.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    let branches_json = containing_branches
+                        .iter()
+                        .map(|b| format!(r#""{}""#, escape_js_string(b)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
                     format!(
                         r#""{id}": {{
                             info: {{
@@ -1016,20 +1830,22 @@ fn generate_repository_data_with_branches(repositories: &[RepositoryData]) -> St
                                 message: "{}",
                                 timestamp: {}
                             }},
-                            changes: {}
+                            changes: {},
+                            branches: [{}]
                         }}"#,
                         details.info.id,
                         escape_js_string(&details.info.author),
                         escape_js_string(&details.info.message),
                         details.info.timestamp,
-                        serialize_changes(&details.changes)
+                        serialize_changes(&details.changes),
+                        branches_json
                     )
                 })
                 .collect::<Vec<_>>()
                 .join(",\n        ");
 
             format!(
-                r#"repositories["{dataset_name}"] = {{
+                r#"datasets["{dataset_name}"] = {{
     branches: [
         {js_branches}
     ],
@@ -1041,73 +1857,4 @@ fn generate_repository_data_with_branches(repositories: &[RepositoryData]) -> St
         })
         .collect::<Vec<_>>()
         .join("\n        ")
-}
-
-fn generate_datasets_html_no_js(repositories: &[RepositoryData]) -> String {
-    repositories
-        .iter()
-        .enumerate()
-        .map(|(i, repo)| {
-            let dataset_name = sanitize_name(&repo.name);
-            let is_hidden = if i == 0 { "" } else { " dataset-hidden" };
-
-            let branches_html = repo
-                .branches
-                .iter()
-                .map(|branch| {
-                    let branch_class = if branch.current {
-                        "branch-name branch-current"
-                    } else {
-                        "branch-name"
-                    };
-
-                    let commits_html = branch
-                        .commits
-                        .iter()
-                        .map(|commit| {
-                            let short_hash = &commit.id.to_string()[..8];
-                            format!(
-                                r#"<div class="commit" onclick="showCommitDetails('{}', '{}', this)">
-                                    <span class="commit-hash">{}</span>
-                                    <span class="commit-message">{}</span>
-                                    <span class="commit-time">{}</span>
-                                </div>"#,
-                                dataset_name,
-                                commit.id,
-                                short_hash,
-                                escape_html(&commit.message),
-                                format_relative_time(commit.timestamp)
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n                    ");
-
-                    format!(
-                        r#"<div class="branch{}" data-branch="{}">
-                    <div class="branch-header">
-                        <span class="{}">{}{}</span>
-                    </div>
-                    <div class="commits">
-                        {}
-                    </div>
-                </div>"#,
-                        if branch.current { "" } else { " branch-hidden" },
-                        branch.name,
-                        branch_class,
-                        branch.name,
-                        if branch.current { " (current)" } else { "" },
-                        commits_html
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n                ");
-
-            format!(
-                r#"<div id="dataset-{dataset_name}" class="dataset-content{is_hidden}">
-                {branches_html}
-            </div>"#
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n            ")
 }
