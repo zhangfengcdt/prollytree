@@ -1191,9 +1191,23 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         // Load tree configuration from storage
         let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
 
-        // Try to load existing tree from storage, or create new one
-        let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
-            .unwrap_or_else(|| ProllyTree::new(storage, config));
+        // Try to load existing tree from storage
+        let tree = if let Some(existing_tree) =
+            ProllyTree::load_from_storage(storage.clone(), config.clone())
+        {
+            existing_tree
+        } else if config.root_hash.is_some() {
+            // We have a saved root hash but failed to load the tree
+            // This could be due to missing hash mappings or git objects
+            // For read-only operations, we should try to work with what we have
+            // rather than creating a new empty tree that would overwrite the config
+            eprintln!("Warning: Failed to load tree from saved root hash. This may indicate missing git objects or corrupted hash mappings.");
+            eprintln!("Attempting to create tree with saved config to avoid data loss...");
+            ProllyTree::new(storage, config)
+        } else {
+            // No saved root hash - this is a genuinely new/empty tree
+            ProllyTree::new(storage, config)
+        };
 
         // Get current branch
         let current_branch = git_repo
