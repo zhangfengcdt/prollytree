@@ -73,3 +73,4 @@ python/docs/_templates/
 .buildinfo
 *.inv
 searchindex.js
+tests/test-data/

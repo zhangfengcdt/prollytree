@@ -116,3 +116,8 @@ required-features = ["rocksdb_storage"]
 name = "agent"
 path = "examples/agent.rs"
 required-features = ["git", "sql", "rig", "tui"]
+
+[[example]]
+name = "worktree"
+path = "examples/worktree.rs"
+required-features = ["git", "sql", "rig", "tui"]
