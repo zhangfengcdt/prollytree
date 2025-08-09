@@ -55,7 +55,7 @@ struct RepositoryData {
     path: PathBuf,
     datasets: Vec<DatasetInfo>,
     git_branches: Vec<GitBranchInfo>,
-    git_commits: HashMap<String, GitCommitInfo>,
+    _git_commits: HashMap<String, GitCommitInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         path: repo_path,
         datasets,
         git_branches,
-        git_commits,
+        _git_commits: git_commits,
     };
 
     // Generate HTML
@@ -182,9 +182,10 @@ fn discover_datasets(repo_path: &Path) -> Result<Vec<String>, Box<dyn std::error
     Ok(datasets)
 }
 
-fn process_git_repository(
-    repo_path: &Path,
-) -> Result<(Vec<GitBranchInfo>, HashMap<String, GitCommitInfo>), Box<dyn std::error::Error>> {
+type GitRepositoryResult =
+    Result<(Vec<GitBranchInfo>, HashMap<String, GitCommitInfo>), Box<dyn std::error::Error>>;
+
+fn process_git_repository(repo_path: &Path) -> GitRepositoryResult {
     use std::process::Command;
 
     // Get available datasets first
@@ -225,7 +226,7 @@ fn process_git_repository(
 
     // Get commits for each branch
     for branch_name in branch_names {
-        println!("🔍 Processing branch: {}", branch_name);
+        println!("🔍 Processing branch: {branch_name}");
         let is_current = branch_name == current_branch;
 
         // Checkout the branch
@@ -370,7 +371,7 @@ fn calculate_commit_changes(
         })
         .collect();
 
-    println!("  📊 Affected datasets: {:?}", affected_datasets);
+    println!("  📊 Affected datasets: {affected_datasets:?}");
 
     // For each affected dataset, get the actual prolly data changes
     for dataset_name in affected_datasets {
@@ -379,10 +380,7 @@ fn calculate_commit_changes(
             .lines()
             .any(|line| line.starts_with(&format!("{dataset_name}/prolly")));
 
-        println!(
-            "    🔍 Dataset '{}': has_prolly_changes = {}",
-            dataset_name, has_prolly_changes
-        );
+        println!("    🔍 Dataset '{dataset_name}': has_prolly_changes = {has_prolly_changes}");
 
         if has_prolly_changes {
             if should_extract_data {
@@ -409,10 +407,7 @@ fn calculate_commit_changes(
                         dataset_changes.insert(dataset_name.clone(), indicator);
                     }
                 } else {
-                    println!(
-                        "    ❌ Failed to get changes for dataset '{}'",
-                        dataset_name
-                    );
+                    println!("    ❌ Failed to get changes for dataset '{dataset_name}'");
                 }
             } else {
                 // Just show that the dataset was affected, without extracting data
@@ -420,24 +415,17 @@ fn calculate_commit_changes(
                     key: b"[dataset_affected]".to_vec(),
                     operation: DiffOperation::Modified {
                         old: format!("Dataset {dataset_name} was modified").into_bytes(),
-                        new: format!(
-                            "Prolly-tree data extraction limited to main branch recent commits"
-                        )
-                        .into_bytes(),
+                        new: "Prolly-tree data extraction limited to main branch recent commits"
+                            .to_string()
+                            .into_bytes(),
                     },
                 }];
                 dataset_changes.insert(dataset_name.clone(), indicator);
-                println!(
-                    "    📋 Dataset '{}' affected (data extraction skipped)",
-                    dataset_name
-                );
+                println!("    📋 Dataset '{dataset_name}' affected (data extraction skipped)");
             }
         } else {
             // If no prolly files changed, create a simple indicator
-            println!(
-                "    📄 Non-prolly files changed in dataset '{}'",
-                dataset_name
-            );
+            println!("    📄 Non-prolly files changed in dataset '{dataset_name}'");
             let simple_change = vec![KvDiff {
                 key: b"[dataset_files_changed]".to_vec(),
                 operation: DiffOperation::Modified {
@@ -573,7 +561,7 @@ fn get_prolly_changes_from_commit(
 fn get_actual_prolly_changes(
     repo_path: &Path,
     commit_id: &str,
-    parent_commit_id: Option<&str>,
+    _parent_commit_id: Option<&str>,
     dataset_name: &str,
 ) -> Result<Vec<KvDiff>, Box<dyn std::error::Error>> {
     let dataset_path = repo_path.join(dataset_name);
@@ -1542,8 +1530,7 @@ fn generate_branch_options(repository: &RepositoryData) -> String {
     repository
         .git_branches
         .iter()
-        .enumerate()
-        .map(|(_i, branch)| {
+        .map(|branch| {
             let selected = if branch.name == "main" {
                 r#" selected"#
             } else {
@@ -1699,32 +1686,6 @@ fn escape_js_string(text: &str) -> String {
         .collect()
 }
 
-fn format_relative_time(timestamp: i64) -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let commit_time = UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64);
-    let now = SystemTime::now();
-
-    if let Ok(duration) = now.duration_since(commit_time) {
-        let seconds = duration.as_secs();
-        if seconds < 60 {
-            return format!("{seconds} sec ago");
-        } else if seconds < 3600 {
-            return format!("{} min ago", seconds / 60);
-        } else if seconds < 86400 {
-            return format!("{} hours ago", seconds / 3600);
-        } else if seconds < 2592000 {
-            return format!("{} days ago", seconds / 86400);
-        } else if seconds < 31536000 {
-            return format!("{} months ago", seconds / 2592000);
-        } else {
-            return format!("{} years ago", seconds / 31536000);
-        }
-    }
-
-    format!("{timestamp}")
-}
-
 fn generate_dataset_data(datasets: &[DatasetInfo]) -> String {
     datasets
         .iter()
@@ -1811,79 +1772,4 @@ fn generate_dataset_data(datasets: &[DatasetInfo]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n        ")
-}
-
-fn generate_datasets_html(datasets: &[DatasetInfo]) -> String {
-    datasets
-        .iter()
-        .map(|dataset| {
-            let dataset_name = sanitize_name(&dataset.name);
-
-            // Show dataset header
-            let dataset_header = format!(
-                r#"<div class="dataset-header">
-                    <h3>📁 {}</h3>
-                </div>"#,
-                dataset.name
-            );
-
-            let branches_html = dataset
-                .branches
-                .iter()
-                .map(|branch| {
-                    let branch_class = if branch.current {
-                        "branch-name branch-current"
-                    } else {
-                        "branch-name"
-                    };
-
-                    let commits_html = branch
-                        .commits
-                        .iter()
-                        .map(|commit| {
-                            let short_hash = &commit.id.to_string()[..8];
-                            format!(
-                                r#"<div class="commit" onclick="showCommitDetails('{}', '{}', this)">
-                                    <span class="commit-hash">{}</span>
-                                    <span class="commit-message">{}</span>
-                                    <span class="commit-time">{}</span>
-                                </div>"#,
-                                dataset_name,
-                                commit.id,
-                                short_hash,
-                                escape_html(&commit.message),
-                                format_relative_time(commit.timestamp)
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n                    ");
-
-                    format!(
-                        r#"<div class="branch" data-branch="{}">
-                    <div class="branch-header">
-                        <span class="{}">{}{}</span>
-                    </div>
-                    <div class="commits">
-                        {}
-                    </div>
-                </div>"#,
-                        branch.name,
-                        branch_class,
-                        branch.name,
-                        if branch.current { " (current)" } else { "" },
-                        commits_html
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n                ");
-
-            format!(
-                r#"<div id="dataset-{dataset_name}" class="dataset-content">
-                {dataset_header}
-                {branches_html}
-            </div>"#
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n            ")
 }

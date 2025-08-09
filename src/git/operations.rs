@@ -125,8 +125,12 @@ impl<const N: usize> GitOperations<N> {
 
     /// Generate a diff between two branches or commits
     pub fn diff(&self, from: &str, to: &str) -> Result<Vec<KvDiff>, GitKvError> {
-        let from_state = self.get_kv_state_at_branch(from)?;
-        let to_state = self.get_kv_state_at_branch(to)?;
+        // Optimize by directly resolving to commit IDs and using the optimized path
+        let from_commit_id = self.parse_commit_id(from)?;
+        let to_commit_id = self.parse_commit_id(to)?;
+
+        let from_state = self.get_kv_state_at_commit(&from_commit_id)?;
+        let to_state = self.get_kv_state_at_commit(&to_commit_id)?;
 
         let mut diffs = Vec::new();
         let mut all_keys = std::collections::HashSet::new();
@@ -324,25 +328,19 @@ impl<const N: usize> GitOperations<N> {
         &self,
         commit_id: &gix::ObjectId,
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
-        // For now, fall back to the working but less optimal method
-        // The optimization needs more debugging to handle hex decoding correctly
-        self.checkout_commit_temporarily_isolated(commit_id)
-
-        // TODO: Fix the direct git object approach
-        // The issue seems to be with hex decoding in the hash mappings
-        // Once fixed, uncomment the optimized version below:
-
-        /*
         // Try to read prolly config and hash mappings directly from the commit
         let current_dir = std::env::current_dir()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get current dir: {e}")))?;
 
         // Get the dataset directory name relative to git root
-        let git_root = self.store.git_repo().work_dir()
-            .ok_or_else(|| GitKvError::GitObjectError("Not in a working directory".to_string()))?;
+        let git_root =
+            self.store.git_repo().work_dir().ok_or_else(|| {
+                GitKvError::GitObjectError("Not in a working directory".to_string())
+            })?;
 
-        let relative_path = current_dir.strip_prefix(git_root)
-            .map_err(|_| GitKvError::GitObjectError("Current directory not within git repository".to_string()))?;
+        let relative_path = current_dir.strip_prefix(git_root).map_err(|_| {
+            GitKvError::GitObjectError("Current directory not within git repository".to_string())
+        })?;
 
         let dataset_name = relative_path.to_string_lossy();
 
@@ -367,7 +365,9 @@ impl<const N: usize> GitOperations<N> {
         }
 
         let tree_config = tree_config.ok_or_else(|| {
-            GitKvError::GitObjectError("Could not find prolly_config_tree_config in commit".to_string())
+            GitKvError::GitObjectError(
+                "Could not find prolly_config_tree_config in commit".to_string(),
+            )
         })?;
 
         // Try to read the hash mappings from the commit
@@ -387,8 +387,10 @@ impl<const N: usize> GitOperations<N> {
         let root_hash = tree_config.root_hash.ok_or_else(|| {
             GitKvError::GitObjectError("Tree config has no root hash".to_string())
         })?;
+
+        // Successfully loaded config and mappings using direct git object access
+
         self.collect_keys_from_root_hash(&root_hash, &hash_mappings)
-        */
     }
 
     /// Read prolly config file content from a specific git commit
@@ -416,17 +418,26 @@ impl<const N: usize> GitOperations<N> {
         for line in content.lines() {
             if let Some((hash_str, object_id_str)) = line.split_once(':') {
                 // Parse prolly hash (decode hex string manually)
-                if let Ok(hash_bytes) = self.decode_hex(hash_str) {
-                    if hash_bytes.len() == N {
-                        let mut hash_array = [0u8; N];
-                        hash_array.copy_from_slice(&hash_bytes);
-                        let prolly_hash = ValueDigest::new(&hash_array);
+                match self.decode_hex(hash_str) {
+                    Ok(hash_bytes) => {
+                        if hash_bytes.len() == N {
+                            let prolly_hash = ValueDigest::raw_hash(&hash_bytes);
 
-                        // Parse git object ID
-                        if let Ok(git_object_id) = gix::ObjectId::from_hex(object_id_str.as_bytes())
-                        {
-                            mappings.insert(prolly_hash, git_object_id);
+                            // Parse git object ID
+                            match gix::ObjectId::from_hex(object_id_str.as_bytes()) {
+                                Ok(git_object_id) => {
+                                    mappings.insert(prolly_hash, git_object_id);
+                                }
+                                Err(_e) => {
+                                    // Silently skip invalid git object IDs
+                                }
+                            }
+                        } else {
+                            // Silently skip hashes with wrong length
                         }
+                    }
+                    Err(_e) => {
+                        // Silently skip invalid hex strings
                     }
                 }
             }
@@ -528,8 +539,7 @@ impl<const N: usize> GitOperations<N> {
                         return Ok(blob_ref.data.to_vec());
                     } else {
                         return Err(GitKvError::GitObjectError(format!(
-                            "Expected file but found directory: {}",
-                            current_part
+                            "Expected file but found directory: {current_part}"
                         )));
                     }
                 } else {
@@ -539,8 +549,7 @@ impl<const N: usize> GitOperations<N> {
                         return self.find_file_in_tree(&tree_oid, path_parts, depth + 1);
                     } else {
                         return Err(GitKvError::GitObjectError(format!(
-                            "Expected directory but found file: {}",
-                            current_part
+                            "Expected directory but found file: {current_part}"
                         )));
                     }
                 }
@@ -667,121 +676,6 @@ impl<const N: usize> GitOperations<N> {
         }
 
         Ok(bytes)
-    }
-
-    /// Reconstruct KV state from a commit using an isolated temporary directory
-    /// This method does not modify any files in the working directory
-    fn checkout_commit_temporarily_isolated(
-        &self,
-        commit_id: &gix::ObjectId,
-    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
-        // Create a unique temporary directory
-        let temp_dir = std::env::temp_dir().join(format!("prolly_show_{}", commit_id.to_hex()));
-
-        // Create temporary directory
-        std::fs::create_dir_all(&temp_dir)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to create temp dir: {e}")))?;
-
-        // Get the current git repository path
-        let git_repo_path = self.store.git_repo().path();
-
-        // Clone the repository to temp directory with a subdirectory structure
-        let temp_repo_dir = temp_dir.join("repo");
-        let output = std::process::Command::new("git")
-            .args([
-                "clone",
-                "--quiet",
-                "--no-checkout",
-                git_repo_path.to_str().unwrap_or("."),
-                temp_repo_dir.to_str().unwrap_or("temp"),
-            ])
-            .output()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to clone repo: {e}")))?;
-
-        if !output.status.success() {
-            return Err(GitKvError::GitObjectError(format!(
-                "Git clone failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        // Checkout the specific commit
-        let output = std::process::Command::new("git")
-            .args(["checkout", "--quiet", &commit_id.to_hex().to_string()])
-            .current_dir(&temp_repo_dir)
-            .output()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to checkout commit: {e}")))?;
-
-        if !output.status.success() {
-            return Err(GitKvError::GitObjectError(format!(
-                "Git checkout failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        // Create a subdirectory for the dataset to avoid git root restriction
-        let temp_dataset_dir = temp_repo_dir.join("temp_dataset");
-        std::fs::create_dir_all(&temp_dataset_dir).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to create dataset dir: {e}"))
-        })?;
-
-        // Copy prolly config files to the temp dataset directory
-        let current_dir = std::env::current_dir()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get current dir: {e}")))?;
-
-        // Find prolly config files in the checked out commit
-        if let Ok(config_files) = std::fs::read_dir(&temp_repo_dir) {
-            for entry in config_files.flatten() {
-                let file_name = entry.file_name();
-                if file_name.to_string_lossy().starts_with("prolly_") {
-                    let src = entry.path();
-                    let dst = temp_dataset_dir.join(&file_name);
-                    let _ = std::fs::copy(&src, &dst);
-                }
-            }
-        }
-
-        // Also check for prolly files in any subdirectories that match the current working directory name
-        if let Some(current_dir_name) = current_dir.file_name() {
-            let subdir_path = temp_repo_dir.join(current_dir_name);
-            if let Ok(subdir_files) = std::fs::read_dir(&subdir_path) {
-                for entry in subdir_files.flatten() {
-                    let file_name = entry.file_name();
-                    if file_name.to_string_lossy().starts_with("prolly_") {
-                        let src = entry.path();
-                        let dst = temp_dataset_dir.join(&file_name);
-                        let _ = std::fs::copy(&src, &dst);
-                    }
-                }
-            }
-        }
-
-        // Now create a GitVersionedKvStore in the temporary dataset directory
-        // This won't affect the original working directory
-        let temp_store = GitVersionedKvStore::<N>::open(&temp_dataset_dir)?;
-
-        // Extract all key-value pairs from the temporary store
-        let mut state = HashMap::new();
-        let keys = temp_store.list_keys();
-        for key in keys {
-            if let Some(value) = temp_store.get(&key) {
-                state.insert(key, value);
-            }
-        }
-
-        // Clean up temporary directory
-        let _ = std::fs::remove_dir_all(&temp_dir);
-
-        Ok(state)
-    }
-
-    /// Get KV state at a specific branch
-    fn get_kv_state_at_branch(
-        &self,
-        branch: &str,
-    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
-        let commit_id = self.get_branch_commit(branch)?;
-        self.get_kv_state_at_commit(&commit_id)
     }
 
     /// Get current KV state
