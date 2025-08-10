@@ -14,6 +14,9 @@
 
 set -e  # Exit on any error
 
+# Ensure the script is run from the project root
+cargo build --features "git sql" --bin prolly-ui
+
 # Get project root path dynamically
 if [[ ! -f "Cargo.toml" ]]; then
     echo "❌ Error: Run this script from the ProllyTree project root directory"
@@ -187,21 +190,20 @@ echo "📋 Populating inventory dataset..."
 # Back to main
 (cd "$DEMO_DIR/inventory" && git checkout main)
 
-## Create output directory
-rm -rf /tmp/html
-mkdir -p /tmp/html
-
-# Generate single multi-dataset visualization
+## Generate the HTML output in the expected location
 echo "📊 Generating unified multi-dataset visualization..."
 "$UI_BIN" "$DEMO_DIR/customers" \
   --dataset "Products:$DEMO_DIR/products" \
   --dataset "Orders:$DEMO_DIR/orders" \
   --dataset "Inventory:$DEMO_DIR/inventory" \
-  -o /tmp/html/multi-dataset-demo.html
+  -o "$PROJECT_ROOT/examples/prollytree-ui.html"
 
 echo ""
-echo "✅ Single HTML visualization generated:"
-echo "  📄 Multi-dataset view: /tmp/html/multi-dataset-demo.html"
-echo "  🌐 Open in browser to view all datasets with prolly-tree data changes"
+echo "✅ HTML visualization generated successfully!"
+echo "  📄 Output file: $PROJECT_ROOT/examples/prollytree-ui.html"
+echo "  🌐 Multi-dataset view with comprehensive git commit details"
+echo "  📊 Features: Dataset switching, branch filtering, commit diff details"
 
 cd "$PROJECT_ROOT"
+
+open  "$PROJECT_ROOT/examples/prollytree-ui.html"

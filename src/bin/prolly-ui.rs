@@ -47,6 +47,7 @@ struct BranchInfo {
 #[derive(Debug, Clone)]
 struct DatasetInfo {
     name: String,
+    path: PathBuf,
     branches: Vec<BranchInfo>,
     commit_details: HashMap<String, CommitDiff>,
 }
@@ -148,7 +149,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Process actual git repository
     println!("🔍 Processing git repository structure...");
-    let (git_branches, git_commits) = process_git_repository(&repo_path)?;
+
+    // Create a mapping from dataset tags to directory names for git processing
+    let dataset_mappings: Vec<(String, String)> = datasets
+        .iter()
+        .filter_map(|dataset| {
+            // Extract the directory name from the dataset's actual path
+            if let Some(dir_name) = dataset.path.file_name() {
+                if let Some(dir_str) = dir_name.to_str() {
+                    return Some((dataset.name.clone(), dir_str.to_string()));
+                }
+            }
+            None
+        })
+        .collect();
+
+    let (git_branches, git_commits) =
+        process_git_repository(&repo_path, &dataset_mappings, &datasets)?;
 
     let repository_data = RepositoryData {
         path: repo_path,
@@ -198,11 +215,18 @@ fn discover_datasets(repo_path: &Path) -> Result<Vec<String>, Box<dyn std::error
 type GitRepositoryResult =
     Result<(Vec<GitBranchInfo>, HashMap<String, GitCommitInfo>), Box<dyn std::error::Error>>;
 
-fn process_git_repository(repo_path: &Path) -> GitRepositoryResult {
+fn process_git_repository(
+    repo_path: &Path,
+    dataset_mappings: &[(String, String)],
+    datasets: &[DatasetInfo],
+) -> GitRepositoryResult {
     use std::process::Command;
 
-    // Get available datasets first
-    let datasets = discover_datasets(repo_path)?;
+    // Use the provided dataset mappings instead of discovering them
+    let _datasets: Vec<String> = dataset_mappings
+        .iter()
+        .map(|(_, dir)| dir.clone())
+        .collect();
 
     // Get all branches
     let branch_output = Command::new("git")
@@ -272,7 +296,8 @@ fn process_git_repository(repo_path: &Path) -> GitRepositoryResult {
                             } else {
                                 None
                             },
-                            &datasets,
+                            dataset_mappings,
+                            datasets,
                             should_extract_data,
                         )
                         .unwrap_or_default();
@@ -365,7 +390,8 @@ fn calculate_commit_changes(
     repo_path: &Path,
     commit_id: &str,
     parent_commit_id: Option<&str>,
-    datasets: &[String],
+    dataset_mappings: &[(String, String)],
+    datasets: &[DatasetInfo],
     should_extract_data: bool,
 ) -> Result<HashMap<String, Vec<KvDiff>>, Box<dyn std::error::Error>> {
     use std::process::Command;
@@ -411,79 +437,41 @@ fn calculate_commit_changes(
     let affected_datasets: HashSet<String> = changed_files
         .lines()
         .filter_map(|file_path| {
-            // Check if this file belongs to a dataset
-            for dataset in datasets {
-                if file_path.starts_with(&format!("{dataset}/")) {
-                    return Some(dataset.clone());
+            // Check if this file belongs to a dataset using the mapping
+            for (tag, dir) in dataset_mappings {
+                if file_path.starts_with(&format!("{dir}/")) {
+                    return Some(tag.clone());
                 }
             }
             None
         })
         .collect();
 
-    println!("  📊 Affected datasets: {affected_datasets:?}");
+    println!("  📊 Affected datasets from git files: {affected_datasets:?}");
 
-    // For each affected dataset, get the actual prolly data changes
-    for dataset_name in affected_datasets {
-        // Quick optimization: only process if prolly config files changed
-        let has_prolly_changes = changed_files
-            .lines()
-            .any(|line| line.starts_with(&format!("{dataset_name}/prolly")));
+    // Check ALL datasets for prolly data changes in this commit, not just the ones with file changes
+    for (dataset_tag, dataset_dir) in dataset_mappings {
+        // Check if this dataset had git file changes (for informational purposes)
+        let has_git_changes = affected_datasets.contains(dataset_tag);
 
-        println!("    🔍 Dataset '{dataset_name}': has_prolly_changes = {has_prolly_changes}");
+        // Always try to get prolly data changes for each dataset
 
-        if has_prolly_changes {
-            if should_extract_data {
-                // Extract actual prolly-tree data changes
-                if let Ok(changes) =
-                    get_actual_prolly_changes(repo_path, commit_id, parent_commit_id, &dataset_name)
-                {
-                    println!(
-                        "    📈 Found {} real changes for dataset '{}'",
-                        changes.len(),
-                        dataset_name
-                    );
+        if should_extract_data {
+            // Always try to extract prolly-tree data changes for every dataset
+            // Find the actual dataset path
+            if let Some(dataset_info) = datasets.iter().find(|d| &d.name == dataset_tag) {
+                if let Ok(changes) = get_actual_prolly_changes_with_path(
+                    commit_id,
+                    parent_commit_id,
+                    dataset_tag,
+                    &dataset_info.path,
+                ) {
                     if !changes.is_empty() {
-                        dataset_changes.insert(dataset_name.clone(), changes);
-                    } else {
-                        // Even if no changes, show that the dataset was involved
-                        let indicator = vec![KvDiff {
-                            key: b"[no_changes_detected]".to_vec(),
-                            operation: DiffOperation::Modified {
-                                old: format!("Dataset {dataset_name} was processed but no key-value changes detected").into_bytes(),
-                                new: b"This may be due to internal prolly-tree restructuring".to_vec(),
-                            },
-                        }];
-                        dataset_changes.insert(dataset_name.clone(), indicator);
+                        dataset_changes.insert(dataset_tag.clone(), changes);
                     }
-                } else {
-                    println!("    ❌ Failed to get changes for dataset '{dataset_name}'");
+                    // Don't insert anything if no changes - this is normal
                 }
-            } else {
-                // Just show that the dataset was affected, without extracting data
-                let indicator = vec![KvDiff {
-                    key: b"[dataset_affected]".to_vec(),
-                    operation: DiffOperation::Modified {
-                        old: format!("Dataset {dataset_name} was modified").into_bytes(),
-                        new: "Prolly-tree data extraction limited to main branch recent commits"
-                            .to_string()
-                            .into_bytes(),
-                    },
-                }];
-                dataset_changes.insert(dataset_name.clone(), indicator);
-                println!("    📋 Dataset '{dataset_name}' affected (data extraction skipped)");
             }
-        } else {
-            // If no prolly files changed, create a simple indicator
-            println!("    📄 Non-prolly files changed in dataset '{dataset_name}'");
-            let simple_change = vec![KvDiff {
-                key: b"[dataset_files_changed]".to_vec(),
-                operation: DiffOperation::Modified {
-                    old: format!("Files in dataset {dataset_name} were modified").into_bytes(),
-                    new: b"Non-prolly files changed (no key-value changes)".to_vec(),
-                },
-            }];
-            dataset_changes.insert(dataset_name.clone(), simple_change);
         }
     }
 
@@ -608,21 +596,14 @@ fn get_prolly_changes_from_commit(
     Ok(diffs)
 }
 
-fn get_actual_prolly_changes(
-    repo_path: &Path,
+fn get_actual_prolly_changes_with_path(
     commit_id: &str,
     _parent_commit_id: Option<&str>,
-    dataset_name: &str,
+    _dataset_tag: &str,
+    dataset_path: &Path,
 ) -> Result<Vec<KvDiff>, Box<dyn std::error::Error>> {
-    let dataset_path = repo_path.join(dataset_name);
-
-    // Get prolly changes for commit
-
     // Use git-prolly show to get the actual changes for this commit
-    let diffs = get_prolly_changes_from_commit(&dataset_path, commit_id)?;
-
-    println!("      🎯 Found {} prolly changes", diffs.len());
-
+    let diffs = get_prolly_changes_from_commit(dataset_path, commit_id)?;
     Ok(diffs)
 }
 
@@ -798,6 +779,7 @@ fn process_dataset(name: String, path: &Path) -> Result<DatasetInfo, Box<dyn std
 
     Ok(DatasetInfo {
         name,
+        path: path.to_path_buf(),
         branches: branch_infos,
         commit_details,
     })
@@ -1563,9 +1545,9 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
                     // No activity indicator needed - keep commit messages clean
                     const branchActivityIndicator = "";
 
-                    // Determine dot color: if commit exists in main, use main color, otherwise use current branch color
+                    // Determine dot color: blue for commits in main branch, orange for branch-only commits
                     const isInMain = isCommitInMainBranch(commit.id);
-                    const branchCssClass = isInMain ? 'branch-main' : getBranchCssClass(branchName);
+                    const branchCssClass = isInMain ? 'branch-main' : 'branch-other';
 
                     timelineHtml += `
                         <div class="commit unified-commit ${{branchCssClass}}" onclick="showGitCommitDetails('${{commit.id}}', this)">
