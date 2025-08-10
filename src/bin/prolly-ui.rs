@@ -35,6 +35,10 @@ struct Cli {
     /// Specify which subdirectories are datasets (if not specified, all subdirectories with prolly data will be used)
     #[arg(short = 'd', long = "dataset", value_name = "NAME")]
     datasets: Vec<String>,
+
+    /// Filter to specific branches (if not specified, all branches will be processed)
+    #[arg(short = 'b', long = "branch", value_name = "BRANCH")]
+    branches: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -158,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tag,
             dataset_path.display()
         );
-        match process_dataset(tag.clone(), &dataset_path) {
+        match process_dataset(tag.clone(), &dataset_path, &cli.branches) {
             Ok(dataset) => datasets.push(dataset),
             Err(e) => eprintln!("  ⚠️  Failed to process dataset '{tag}': {e}"),
         }
@@ -186,7 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let (git_branches, git_commits) =
-        process_git_repository(&repo_path, &dataset_mappings, &datasets)?;
+        process_git_repository(&repo_path, &dataset_mappings, &datasets, &cli.branches)?;
 
     let repository_data = RepositoryData {
         path: repo_path,
@@ -240,6 +244,7 @@ fn process_git_repository(
     repo_path: &Path,
     dataset_mappings: &[(String, String)],
     datasets: &[DatasetInfo],
+    branch_filter: &[String],
 ) -> GitRepositoryResult {
     use std::process::Command;
 
@@ -264,7 +269,7 @@ fn process_git_repository(
     let mut current_branch = String::new();
 
     // Parse branches
-    let branch_names: Vec<String> = branch_list
+    let all_branch_names: Vec<String> = branch_list
         .lines()
         .filter_map(|line| {
             let trimmed = line.trim();
@@ -278,6 +283,16 @@ fn process_git_repository(
             }
         })
         .collect();
+
+    // Filter branches if specified
+    let branch_names: Vec<String> = if branch_filter.is_empty() {
+        all_branch_names
+    } else {
+        all_branch_names
+            .into_iter()
+            .filter(|branch| branch_filter.contains(branch))
+            .collect()
+    };
 
     // Store original branch to restore later
     let original_branch = current_branch.clone();
@@ -784,12 +799,26 @@ fn get_diff_between_commits(
     Ok(diffs)
 }
 
-fn process_dataset(name: String, path: &Path) -> Result<DatasetInfo, Box<dyn std::error::Error>> {
+fn process_dataset(
+    name: String,
+    path: &Path,
+    branch_filter: &[String],
+) -> Result<DatasetInfo, Box<dyn std::error::Error>> {
     let store = GitVersionedKvStore::<32>::open(path)?;
 
     // Get all branches
-    let branches = store.list_branches()?;
+    let all_branches = store.list_branches()?;
     let current_branch = store.current_branch().to_string();
+
+    // Filter branches if specified
+    let branches = if branch_filter.is_empty() {
+        all_branches
+    } else {
+        all_branches
+            .into_iter()
+            .filter(|branch| branch_filter.contains(branch))
+            .collect()
+    };
 
     let mut branch_infos = Vec::new();
     let mut commit_details = HashMap::new();
