@@ -525,8 +525,9 @@
     <div class="container">
         <div class="header">
             <h1>🌳 Git-Prolly Visualization (beta)</h1>
-            <div class="repository-path">Repository: /tmp/multi-dataset-demo/customers</div>
+            <div class="repository-path">Repository: /tmp/multi-dataset-demo</div>
             <div class="dataset-tags">
+                <span class="dataset-tag">Customers</span>
                 <span class="dataset-tag">Products</span>
                 <span class="dataset-tag">Orders</span>
                 <span class="dataset-tag">Inventory</span>
@@ -570,6 +571,288 @@
 
     <script>
         const datasets = {};
+        datasets["Customers"] = {
+    branches: [
+        {
+                            name: "audit/quarterly-review",
+                            current: false
+                        },
+            {
+                            name: "develop",
+                            current: false
+                        },
+            {
+                            name: "feature/new-products",
+                            current: false
+                        },
+            {
+                            name: "feature/vip-customers",
+                            current: false
+                        },
+            {
+                            name: "main",
+                            current: true
+                        },
+            {
+                            name: "operations/restock",
+                            current: false
+                        },
+            {
+                            name: "processing/batch-1",
+                            current: false
+                        },
+            {
+                            name: "release/v1.2",
+                            current: false
+                        },
+            {
+                            name: "urgent/priority-orders",
+                            current: false
+                        }
+    ],
+    commits: {
+        "319e01060f62f6272fabd15168d5c7a4a3e1e280": {
+                            info: {
+                                id: "319e01060f62f6272fabd15168d5c7a4a3e1e280",
+                                author: "Demo User",
+                                message: "Add Grace as VIP customer",
+                                timestamp: 1754835259
+                            },
+                            changes: [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,55], "operation": {"Added": [71,114,97,99,101,32,76,101,101,32,40,86,73,80,41]}}],
+                            branches: ["develop", "feature/vip-customers"]
+                        },
+        "42427e154f70057a379b23d0a0aa3b5fb0d9445f": {
+                            info: {
+                                id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "0744a964a71eb36b62e338f9fa7a8e6d2156632c": {
+                            info: {
+                                id: "0744a964a71eb36b62e338f9fa7a8e6d2156632c",
+                                author: "Demo User",
+                                message: "Initial inventory levels",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock"]
+                        },
+        "eea1caa63187c113c3176787f513c2acb9620a83": {
+                            info: {
+                                id: "eea1caa63187c113c3176787f513c2acb9620a83",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "ee6323370a3c32c9066cd39458b8a6d1bc808aa4": {
+                            info: {
+                                id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
+                                author: "Demo User",
+                                message: "Additional orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                        },
+        "162a5c4eb5b5609bc8e33a6225f35321003f9233": {
+                            info: {
+                                id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
+                                author: "Demo User",
+                                message: "Add more customers",
+                                timestamp: 1754835259
+                            },
+                            changes: [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "f928a26fa0a0ffa746b5dd2bf71b02486a960b09": {
+                            info: {
+                                id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
+                                author: "Demo User",
+                                message: "Initial customer data",
+                                timestamp: 1754835259
+                            },
+                            changes: [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "2711fe2bff2f2669034f1bea08c92179a5cadb2f": {
+                            info: {
+                                id: "2711fe2bff2f2669034f1bea08c92179a5cadb2f",
+                                author: "Demo User",
+                                message: "Development customer additions",
+                                timestamp: 1754835259
+                            },
+                            changes: [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,56], "operation": {"Added": [72,101,110,114,121,32,84,97,121,108,111,114]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,57], "operation": {"Added": [73,118,121,32,67,104,101,110]}}],
+                            branches: ["develop"]
+                        },
+        "7d91901aaa6e4df424d16bc549b5cb9d62bcb605": {
+                            info: {
+                                id: "7d91901aaa6e4df424d16bc549b5cb9d62bcb605",
+                                author: "Demo User",
+                                message: "Add tablet to catalog",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["feature/new-products", "release/v1.2"]
+                        },
+        "612c26cdf967d698acaf41dcceb7e349fcd90678": {
+                            info: {
+                                id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "83d04e7986e75c8a10d41b9ff54c9080226af899": {
+                            info: {
+                                id: "83d04e7986e75c8a10d41b9ff54c9080226af899",
+                                author: "Demo User",
+                                message: "Add VIP customer status",
+                                timestamp: 1754835259
+                            },
+                            changes: [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Modified": {"old": [65,108,105,99,101,32,74,111,104,110,115,111,110], "new": [65,108,105,99,101,32,74,111,104,110,115,111,110,32,40,86,73,80,41]}}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,54], "operation": {"Added": [70,114,97,110,107,32,77,105,108,108,101,114,32,40,86,73,80,41]}}],
+                            branches: ["develop", "feature/vip-customers"]
+                        },
+        "286fafc07839fa2f7b3374e44e569068c4344c3c": {
+                            info: {
+                                id: "286fafc07839fa2f7b3374e44e569068c4344c3c",
+                                author: "Demo User",
+                                message: "Order 3003 delivered",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["processing/batch-1", "urgent/priority-orders"]
+                        },
+        "f1e9fc3f5fb4fd74a1904e8030575d002efcc261": {
+                            info: {
+                                id: "f1e9fc3f5fb4fd74a1904e8030575d002efcc261",
+                                author: "Demo User",
+                                message: "Add priority orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["urgent/priority-orders"]
+                        },
+        "bf21311a60bcc732b2bf30729b7eee66a504efab": {
+                            info: {
+                                id: "bf21311a60bcc732b2bf30729b7eee66a504efab",
+                                author: "Demo User",
+                                message: "Restock warehouse inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "operations/restock"]
+                        },
+        "701eab7c9813998ce19a08049803cf7272961bda": {
+                            info: {
+                                id: "701eab7c9813998ce19a08049803cf7272961bda",
+                                author: "Demo User",
+                                message: "Add accessories",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "c61d51114a3c74fb96d152f264a8362b9cab5103": {
+                            info: {
+                                id: "c61d51114a3c74fb96d152f264a8362b9cab5103",
+                                author: "Demo User",
+                                message: "Product updates for v1.2 release",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["release/v1.2"]
+                        },
+        "df84871c306dbcfc429c282291c40f237b4bbe6c": {
+                            info: {
+                                id: "df84871c306dbcfc429c282291c40f237b4bbe6c",
+                                author: "Demo User",
+                                message: "Add new product inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock"]
+                        },
+        "dda183856b9466fcda720b1fbd20a76d33f75f9d": {
+                            info: {
+                                id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
+                                author: "Demo User",
+                                message: "Initial orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                        },
+        "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e": {
+                            info: {
+                                id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "d3bb7b89ed97be4226c1bece12cafc2645817e5f": {
+                            info: {
+                                id: "d3bb7b89ed97be4226c1bece12cafc2645817e5f",
+                                author: "Demo User",
+                                message: "Add gaming and streaming products",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["feature/new-products", "release/v1.2"]
+                        },
+        "dd2032fdc722cbbd79f31456bd94af58a210c144": {
+                            info: {
+                                id: "dd2032fdc722cbbd79f31456bd94af58a210c144",
+                                author: "Demo User",
+                                message: "Add warehouse C inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "operations/restock"]
+                        },
+        "82483feb0ddf5512af3d62edd862ac0619c70463": {
+                            info: {
+                                id: "82483feb0ddf5512af3d62edd862ac0619c70463",
+                                author: "Demo User",
+                                message: "Quarterly inventory audit updates",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review"]
+                        },
+        "1dbca75c520caeec29b1aec11148615a14726df1": {
+                            info: {
+                                id: "1dbca75c520caeec29b1aec11148615a14726df1",
+                                author: "Demo User",
+                                message: "Initial product catalog",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c": {
+                            info: {
+                                id: "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c",
+                                author: "Demo User",
+                                message: "Update order status - batch 1 shipped",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["processing/batch-1", "urgent/priority-orders"]
+                        }
+    }
+};
         datasets["Products"] = {
     branches: [
         {
@@ -610,245 +893,245 @@
                         }
     ],
     commits: {
-        "0f6e679e932f155cbddeeacceec65bd222372afe": {
+        "c61d51114a3c74fb96d152f264a8362b9cab5103": {
                             info: {
-                                id: "0f6e679e932f155cbddeeacceec65bd222372afe",
-                                author: "Demo User",
-                                message: "Add VIP customer status",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["develop", "feature/vip-customers"]
-                        },
-        "a999cf3d2c2c3a1a1e1b5833f568009be24592ec": {
-                            info: {
-                                id: "a999cf3d2c2c3a1a1e1b5833f568009be24592ec",
-                                author: "Demo User",
-                                message: "Initial orders",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
-                        },
-        "bf240556854e03dedd7e001ca22b64c889b8d08a": {
-                            info: {
-                                id: "bf240556854e03dedd7e001ca22b64c889b8d08a",
-                                author: "Demo User",
-                                message: "Add tablet to catalog",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [112,114,111,100,117,99,116,58,50,48,48,56], "operation": {"Added": [84,97,98,108,101,116,32,49,48,32,105,110,99,104]}}],
-                            branches: ["feature/new-products", "release/v1.2"]
-                        },
-        "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca": {
-                            info: {
-                                id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
-                                author: "Demo User",
-                                message: "Initial customer data",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "72d6c9500d056e125a78a7a67c9f65141acbaded": {
-                            info: {
-                                id: "72d6c9500d056e125a78a7a67c9f65141acbaded",
-                                author: "Demo User",
-                                message: "Order 3003 delivered",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["processing/batch-1", "urgent/priority-orders"]
-                        },
-        "ebcc09213eeacf648eb49477ca1efa2f656d6377": {
-                            info: {
-                                id: "ebcc09213eeacf648eb49477ca1efa2f656d6377",
-                                author: "Demo User",
-                                message: "Add gaming and streaming products",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [112,114,111,100,117,99,116,58,50,48,48,54], "operation": {"Added": [71,97,109,105,110,103,32,72,101,97,100,115,101,116]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,55], "operation": {"Added": [87,101,98,99,97,109,32,72,68]}}],
-                            branches: ["feature/new-products", "release/v1.2"]
-                        },
-        "1c2d5c355cd35cd822db2a8f0790b1ce3807c370": {
-                            info: {
-                                id: "1c2d5c355cd35cd822db2a8f0790b1ce3807c370",
+                                id: "c61d51114a3c74fb96d152f264a8362b9cab5103",
                                 author: "Demo User",
                                 message: "Product updates for v1.2 release",
-                                timestamp: 1754805767
+                                timestamp: 1754835260
                             },
                             changes: [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Modified": {"old": [76,97,112,116,111,112,32,80,114,111,32,49,53], "new": [76,97,112,116,111,112,32,80,114,111,32,49,53,32,40,85,112,100,97,116,101,100,41]}}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,57], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,51]}}],
                             branches: ["release/v1.2"]
                         },
-        "c16f8cc0a3dd095edc86a7af7db22ec65a98c624": {
+        "bf21311a60bcc732b2bf30729b7eee66a504efab": {
                             info: {
-                                id: "c16f8cc0a3dd095edc86a7af7db22ec65a98c624",
+                                id: "bf21311a60bcc732b2bf30729b7eee66a504efab",
                                 author: "Demo User",
-                                message: "Update order status - batch 1 shipped",
-                                timestamp: 1754805767
+                                message: "Restock warehouse inventory",
+                                timestamp: 1754835260
                             },
                             changes: [],
-                            branches: ["processing/batch-1", "urgent/priority-orders"]
+                            branches: ["audit/quarterly-review", "operations/restock"]
                         },
-        "5a2cce2798b32016f8c8b5af1c58e0e5fc65b93c": {
+        "42427e154f70057a379b23d0a0aa3b5fb0d9445f": {
                             info: {
-                                id: "5a2cce2798b32016f8c8b5af1c58e0e5fc65b93c",
+                                id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                                 author: "Demo User",
-                                message: "Development customer additions",
-                                timestamp: 1754805766
+                                message: "Initial commit",
+                                timestamp: 1754835259
                             },
                             changes: [],
-                            branches: ["develop"]
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "3bf712d9f10a186e3231173061e7ced35ba2cd65": {
+        "f1e9fc3f5fb4fd74a1904e8030575d002efcc261": {
                             info: {
-                                id: "3bf712d9f10a186e3231173061e7ced35ba2cd65",
+                                id: "f1e9fc3f5fb4fd74a1904e8030575d002efcc261",
                                 author: "Demo User",
                                 message: "Add priority orders",
-                                timestamp: 1754805767
+                                timestamp: 1754835260
                             },
                             changes: [],
                             branches: ["urgent/priority-orders"]
                         },
-        "0d63d6b8a5e95aafbbce930ad363aaa645f8252f": {
+        "701eab7c9813998ce19a08049803cf7272961bda": {
                             info: {
-                                id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "7fd24d164371ad6543663b00d574b2e86384f054": {
-                            info: {
-                                id: "7fd24d164371ad6543663b00d574b2e86384f054",
-                                author: "Demo User",
-                                message: "Add Grace as VIP customer",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["develop", "feature/vip-customers"]
-                        },
-        "5f4f1bc29dc910dd925665a92ca70f88bb631d68": {
-                            info: {
-                                id: "5f4f1bc29dc910dd925665a92ca70f88bb631d68",
-                                author: "Demo User",
-                                message: "Add new product inventory",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "main", "operations/restock"]
-                        },
-        "2e8c934600546752061f8b87f2ab29943612cbe4": {
-                            info: {
-                                id: "2e8c934600546752061f8b87f2ab29943612cbe4",
-                                author: "Demo User",
-                                message: "Initial inventory levels",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "main", "operations/restock"]
-                        },
-        "410c3fb97b84c3cc9676939d8c87750df87b4c48": {
-                            info: {
-                                id: "410c3fb97b84c3cc9676939d8c87750df87b4c48",
-                                author: "Demo User",
-                                message: "Restock warehouse inventory",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "operations/restock"]
-                        },
-        "14a419587113ce256ff23bb5d9f8d0d36b132974": {
-                            info: {
-                                id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c": {
-                            info: {
-                                id: "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c",
-                                author: "Demo User",
-                                message: "Additional orders",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
-                        },
-        "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7": {
-                            info: {
-                                id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "8865a2faf67822063433baec46a0268e18197090": {
-                            info: {
-                                id: "8865a2faf67822063433baec46a0268e18197090",
-                                author: "Demo User",
-                                message: "Initial product catalog",
-                                timestamp: 1754805766
-                            },
-                            changes: [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}],
-                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "22346d4b4f886db356b056484e996dd3d2520fe5": {
-                            info: {
-                                id: "22346d4b4f886db356b056484e996dd3d2520fe5",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "f6e606b18c2917d8566e41c36bb05726f7f87074": {
-                            info: {
-                                id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
+                                id: "701eab7c9813998ce19a08049803cf7272961bda",
                                 author: "Demo User",
                                 message: "Add accessories",
-                                timestamp: 1754805767
+                                timestamp: 1754835259
                             },
                             changes: [{"key": [112,114,111,100,117,99,116,58,50,48,48,52], "operation": {"Added": [85,83,66,45,67,32,72,117,98]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,53], "operation": {"Added": [77,111,110,105,116,111,114,32,83,116,97,110,100]}}],
                             branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "891dee33a43e2a46750210f02c0454ae4f3e19a2": {
+        "0744a964a71eb36b62e338f9fa7a8e6d2156632c": {
                             info: {
-                                id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                                id: "0744a964a71eb36b62e338f9fa7a8e6d2156632c",
                                 author: "Demo User",
-                                message: "Add more customers",
-                                timestamp: 1754805766
+                                message: "Initial inventory levels",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock"]
+                        },
+        "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e": {
+                            info: {
+                                id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
                             },
                             changes: [],
                             branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "aa248b1a869c0e670b63b8a4569f7963275b6401": {
+        "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c": {
                             info: {
-                                id: "aa248b1a869c0e670b63b8a4569f7963275b6401",
+                                id: "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c",
+                                author: "Demo User",
+                                message: "Update order status - batch 1 shipped",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["processing/batch-1", "urgent/priority-orders"]
+                        },
+        "dd2032fdc722cbbd79f31456bd94af58a210c144": {
+                            info: {
+                                id: "dd2032fdc722cbbd79f31456bd94af58a210c144",
                                 author: "Demo User",
                                 message: "Add warehouse C inventory",
-                                timestamp: 1754805767
+                                timestamp: 1754835260
                             },
                             changes: [],
                             branches: ["audit/quarterly-review", "operations/restock"]
                         },
-        "350c6301583b2d3ad4b8ed87e74414c696154963": {
+        "612c26cdf967d698acaf41dcceb7e349fcd90678": {
                             info: {
-                                id: "350c6301583b2d3ad4b8ed87e74414c696154963",
+                                id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "82483feb0ddf5512af3d62edd862ac0619c70463": {
+                            info: {
+                                id: "82483feb0ddf5512af3d62edd862ac0619c70463",
                                 author: "Demo User",
                                 message: "Quarterly inventory audit updates",
-                                timestamp: 1754805767
+                                timestamp: 1754835260
                             },
                             changes: [],
                             branches: ["audit/quarterly-review"]
+                        },
+        "f928a26fa0a0ffa746b5dd2bf71b02486a960b09": {
+                            info: {
+                                id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
+                                author: "Demo User",
+                                message: "Initial customer data",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "df84871c306dbcfc429c282291c40f237b4bbe6c": {
+                            info: {
+                                id: "df84871c306dbcfc429c282291c40f237b4bbe6c",
+                                author: "Demo User",
+                                message: "Add new product inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock"]
+                        },
+        "7d91901aaa6e4df424d16bc549b5cb9d62bcb605": {
+                            info: {
+                                id: "7d91901aaa6e4df424d16bc549b5cb9d62bcb605",
+                                author: "Demo User",
+                                message: "Add tablet to catalog",
+                                timestamp: 1754835259
+                            },
+                            changes: [{"key": [112,114,111,100,117,99,116,58,50,48,48,56], "operation": {"Added": [84,97,98,108,101,116,32,49,48,32,105,110,99,104]}}],
+                            branches: ["feature/new-products", "release/v1.2"]
+                        },
+        "ee6323370a3c32c9066cd39458b8a6d1bc808aa4": {
+                            info: {
+                                id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
+                                author: "Demo User",
+                                message: "Additional orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                        },
+        "eea1caa63187c113c3176787f513c2acb9620a83": {
+                            info: {
+                                id: "eea1caa63187c113c3176787f513c2acb9620a83",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "1dbca75c520caeec29b1aec11148615a14726df1": {
+                            info: {
+                                id: "1dbca75c520caeec29b1aec11148615a14726df1",
+                                author: "Demo User",
+                                message: "Initial product catalog",
+                                timestamp: 1754835259
+                            },
+                            changes: [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}],
+                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "dda183856b9466fcda720b1fbd20a76d33f75f9d": {
+                            info: {
+                                id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
+                                author: "Demo User",
+                                message: "Initial orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                        },
+        "162a5c4eb5b5609bc8e33a6225f35321003f9233": {
+                            info: {
+                                id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
+                                author: "Demo User",
+                                message: "Add more customers",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "d3bb7b89ed97be4226c1bece12cafc2645817e5f": {
+                            info: {
+                                id: "d3bb7b89ed97be4226c1bece12cafc2645817e5f",
+                                author: "Demo User",
+                                message: "Add gaming and streaming products",
+                                timestamp: 1754835259
+                            },
+                            changes: [{"key": [112,114,111,100,117,99,116,58,50,48,48,54], "operation": {"Added": [71,97,109,105,110,103,32,72,101,97,100,115,101,116]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,55], "operation": {"Added": [87,101,98,99,97,109,32,72,68]}}],
+                            branches: ["feature/new-products", "release/v1.2"]
+                        },
+        "2711fe2bff2f2669034f1bea08c92179a5cadb2f": {
+                            info: {
+                                id: "2711fe2bff2f2669034f1bea08c92179a5cadb2f",
+                                author: "Demo User",
+                                message: "Development customer additions",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["develop"]
+                        },
+        "319e01060f62f6272fabd15168d5c7a4a3e1e280": {
+                            info: {
+                                id: "319e01060f62f6272fabd15168d5c7a4a3e1e280",
+                                author: "Demo User",
+                                message: "Add Grace as VIP customer",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["develop", "feature/vip-customers"]
+                        },
+        "83d04e7986e75c8a10d41b9ff54c9080226af899": {
+                            info: {
+                                id: "83d04e7986e75c8a10d41b9ff54c9080226af899",
+                                author: "Demo User",
+                                message: "Add VIP customer status",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["develop", "feature/vip-customers"]
+                        },
+        "286fafc07839fa2f7b3374e44e569068c4344c3c": {
+                            info: {
+                                id: "286fafc07839fa2f7b3374e44e569068c4344c3c",
+                                author: "Demo User",
+                                message: "Order 3003 delivered",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["processing/batch-1", "urgent/priority-orders"]
                         }
     }
 };
@@ -892,245 +1175,245 @@
                         }
     ],
     commits: {
-        "a999cf3d2c2c3a1a1e1b5833f568009be24592ec": {
+        "f928a26fa0a0ffa746b5dd2bf71b02486a960b09": {
                             info: {
-                                id: "a999cf3d2c2c3a1a1e1b5833f568009be24592ec",
-                                author: "Demo User",
-                                message: "Initial orders",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}],
-                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
-                        },
-        "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca": {
-                            info: {
-                                id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                                id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                                 author: "Demo User",
                                 message: "Initial customer data",
-                                timestamp: 1754805766
+                                timestamp: 1754835259
                             },
                             changes: [],
                             branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "14a419587113ce256ff23bb5d9f8d0d36b132974": {
+        "82483feb0ddf5512af3d62edd862ac0619c70463": {
                             info: {
-                                id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "7fd24d164371ad6543663b00d574b2e86384f054": {
-                            info: {
-                                id: "7fd24d164371ad6543663b00d574b2e86384f054",
-                                author: "Demo User",
-                                message: "Add Grace as VIP customer",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["develop", "feature/vip-customers"]
-                        },
-        "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c": {
-                            info: {
-                                id: "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c",
-                                author: "Demo User",
-                                message: "Additional orders",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}],
-                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
-                        },
-        "2e8c934600546752061f8b87f2ab29943612cbe4": {
-                            info: {
-                                id: "2e8c934600546752061f8b87f2ab29943612cbe4",
-                                author: "Demo User",
-                                message: "Initial inventory levels",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "main", "operations/restock"]
-                        },
-        "aa248b1a869c0e670b63b8a4569f7963275b6401": {
-                            info: {
-                                id: "aa248b1a869c0e670b63b8a4569f7963275b6401",
-                                author: "Demo User",
-                                message: "Add warehouse C inventory",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "operations/restock"]
-                        },
-        "22346d4b4f886db356b056484e996dd3d2520fe5": {
-                            info: {
-                                id: "22346d4b4f886db356b056484e996dd3d2520fe5",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "bf240556854e03dedd7e001ca22b64c889b8d08a": {
-                            info: {
-                                id: "bf240556854e03dedd7e001ca22b64c889b8d08a",
-                                author: "Demo User",
-                                message: "Add tablet to catalog",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["feature/new-products", "release/v1.2"]
-                        },
-        "0f6e679e932f155cbddeeacceec65bd222372afe": {
-                            info: {
-                                id: "0f6e679e932f155cbddeeacceec65bd222372afe",
-                                author: "Demo User",
-                                message: "Add VIP customer status",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["develop", "feature/vip-customers"]
-                        },
-        "f6e606b18c2917d8566e41c36bb05726f7f87074": {
-                            info: {
-                                id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
-                                author: "Demo User",
-                                message: "Add accessories",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "410c3fb97b84c3cc9676939d8c87750df87b4c48": {
-                            info: {
-                                id: "410c3fb97b84c3cc9676939d8c87750df87b4c48",
-                                author: "Demo User",
-                                message: "Restock warehouse inventory",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "operations/restock"]
-                        },
-        "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7": {
-                            info: {
-                                id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "5a2cce2798b32016f8c8b5af1c58e0e5fc65b93c": {
-                            info: {
-                                id: "5a2cce2798b32016f8c8b5af1c58e0e5fc65b93c",
-                                author: "Demo User",
-                                message: "Development customer additions",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["develop"]
-                        },
-        "5f4f1bc29dc910dd925665a92ca70f88bb631d68": {
-                            info: {
-                                id: "5f4f1bc29dc910dd925665a92ca70f88bb631d68",
-                                author: "Demo User",
-                                message: "Add new product inventory",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "main", "operations/restock"]
-                        },
-        "891dee33a43e2a46750210f02c0454ae4f3e19a2": {
-                            info: {
-                                id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
-                                author: "Demo User",
-                                message: "Add more customers",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "ebcc09213eeacf648eb49477ca1efa2f656d6377": {
-                            info: {
-                                id: "ebcc09213eeacf648eb49477ca1efa2f656d6377",
-                                author: "Demo User",
-                                message: "Add gaming and streaming products",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["feature/new-products", "release/v1.2"]
-                        },
-        "72d6c9500d056e125a78a7a67c9f65141acbaded": {
-                            info: {
-                                id: "72d6c9500d056e125a78a7a67c9f65141acbaded",
-                                author: "Demo User",
-                                message: "Order 3003 delivered",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Modified": {"old": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49], "new": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49,124,115,116,97,116,117,115,58,100,101,108,105,118,101,114,101,100]}}}],
-                            branches: ["processing/batch-1", "urgent/priority-orders"]
-                        },
-        "3bf712d9f10a186e3231173061e7ced35ba2cd65": {
-                            info: {
-                                id: "3bf712d9f10a186e3231173061e7ced35ba2cd65",
-                                author: "Demo User",
-                                message: "Add priority orders",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [111,114,100,101,114,58,51,48,48,54], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,54,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49,124,112,114,105,111,114,105,116,121,58,104,105,103,104]}}, {"key": [111,114,100,101,114,58,51,48,48,55], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,55,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,51,124,112,114,105,111,114,105,116,121,58,104,105,103,104]}}],
-                            branches: ["urgent/priority-orders"]
-                        },
-        "350c6301583b2d3ad4b8ed87e74414c696154963": {
-                            info: {
-                                id: "350c6301583b2d3ad4b8ed87e74414c696154963",
+                                id: "82483feb0ddf5512af3d62edd862ac0619c70463",
                                 author: "Demo User",
                                 message: "Quarterly inventory audit updates",
-                                timestamp: 1754805767
+                                timestamp: 1754835260
                             },
                             changes: [],
                             branches: ["audit/quarterly-review"]
                         },
-        "c16f8cc0a3dd095edc86a7af7db22ec65a98c624": {
+        "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e": {
                             info: {
-                                id: "c16f8cc0a3dd095edc86a7af7db22ec65a98c624",
+                                id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c": {
+                            info: {
+                                id: "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c",
                                 author: "Demo User",
                                 message: "Update order status - batch 1 shipped",
-                                timestamp: 1754805767
+                                timestamp: 1754835260
                             },
                             changes: [{"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Modified": {"old": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49], "new": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49,124,115,116,97,116,117,115,58,115,104,105,112,112,101,100]}}}, {"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Modified": {"old": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50], "new": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50,124,115,116,97,116,117,115,58,115,104,105,112,112,101,100]}}}],
                             branches: ["processing/batch-1", "urgent/priority-orders"]
                         },
-        "1c2d5c355cd35cd822db2a8f0790b1ce3807c370": {
+        "1dbca75c520caeec29b1aec11148615a14726df1": {
                             info: {
-                                id: "1c2d5c355cd35cd822db2a8f0790b1ce3807c370",
-                                author: "Demo User",
-                                message: "Product updates for v1.2 release",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["release/v1.2"]
-                        },
-        "8865a2faf67822063433baec46a0268e18197090": {
-                            info: {
-                                id: "8865a2faf67822063433baec46a0268e18197090",
+                                id: "1dbca75c520caeec29b1aec11148615a14726df1",
                                 author: "Demo User",
                                 message: "Initial product catalog",
-                                timestamp: 1754805766
+                                timestamp: 1754835259
                             },
                             changes: [],
                             branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "0d63d6b8a5e95aafbbce930ad363aaa645f8252f": {
+        "df84871c306dbcfc429c282291c40f237b4bbe6c": {
                             info: {
-                                id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                                id: "df84871c306dbcfc429c282291c40f237b4bbe6c",
+                                author: "Demo User",
+                                message: "Add new product inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock"]
+                        },
+        "c61d51114a3c74fb96d152f264a8362b9cab5103": {
+                            info: {
+                                id: "c61d51114a3c74fb96d152f264a8362b9cab5103",
+                                author: "Demo User",
+                                message: "Product updates for v1.2 release",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["release/v1.2"]
+                        },
+        "dda183856b9466fcda720b1fbd20a76d33f75f9d": {
+                            info: {
+                                id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
+                                author: "Demo User",
+                                message: "Initial orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}],
+                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                        },
+        "612c26cdf967d698acaf41dcceb7e349fcd90678": {
+                            info: {
+                                id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                                 author: "Demo User",
                                 message: "Initial commit",
-                                timestamp: 1754805766
+                                timestamp: 1754835259
                             },
                             changes: [],
                             branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "0744a964a71eb36b62e338f9fa7a8e6d2156632c": {
+                            info: {
+                                id: "0744a964a71eb36b62e338f9fa7a8e6d2156632c",
+                                author: "Demo User",
+                                message: "Initial inventory levels",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock"]
+                        },
+        "42427e154f70057a379b23d0a0aa3b5fb0d9445f": {
+                            info: {
+                                id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "eea1caa63187c113c3176787f513c2acb9620a83": {
+                            info: {
+                                id: "eea1caa63187c113c3176787f513c2acb9620a83",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "ee6323370a3c32c9066cd39458b8a6d1bc808aa4": {
+                            info: {
+                                id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
+                                author: "Demo User",
+                                message: "Additional orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}],
+                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                        },
+        "2711fe2bff2f2669034f1bea08c92179a5cadb2f": {
+                            info: {
+                                id: "2711fe2bff2f2669034f1bea08c92179a5cadb2f",
+                                author: "Demo User",
+                                message: "Development customer additions",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["develop"]
+                        },
+        "83d04e7986e75c8a10d41b9ff54c9080226af899": {
+                            info: {
+                                id: "83d04e7986e75c8a10d41b9ff54c9080226af899",
+                                author: "Demo User",
+                                message: "Add VIP customer status",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["develop", "feature/vip-customers"]
+                        },
+        "7d91901aaa6e4df424d16bc549b5cb9d62bcb605": {
+                            info: {
+                                id: "7d91901aaa6e4df424d16bc549b5cb9d62bcb605",
+                                author: "Demo User",
+                                message: "Add tablet to catalog",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["feature/new-products", "release/v1.2"]
+                        },
+        "286fafc07839fa2f7b3374e44e569068c4344c3c": {
+                            info: {
+                                id: "286fafc07839fa2f7b3374e44e569068c4344c3c",
+                                author: "Demo User",
+                                message: "Order 3003 delivered",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Modified": {"old": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49], "new": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49,124,115,116,97,116,117,115,58,100,101,108,105,118,101,114,101,100]}}}],
+                            branches: ["processing/batch-1", "urgent/priority-orders"]
+                        },
+        "bf21311a60bcc732b2bf30729b7eee66a504efab": {
+                            info: {
+                                id: "bf21311a60bcc732b2bf30729b7eee66a504efab",
+                                author: "Demo User",
+                                message: "Restock warehouse inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "operations/restock"]
+                        },
+        "dd2032fdc722cbbd79f31456bd94af58a210c144": {
+                            info: {
+                                id: "dd2032fdc722cbbd79f31456bd94af58a210c144",
+                                author: "Demo User",
+                                message: "Add warehouse C inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "operations/restock"]
+                        },
+        "701eab7c9813998ce19a08049803cf7272961bda": {
+                            info: {
+                                id: "701eab7c9813998ce19a08049803cf7272961bda",
+                                author: "Demo User",
+                                message: "Add accessories",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "319e01060f62f6272fabd15168d5c7a4a3e1e280": {
+                            info: {
+                                id: "319e01060f62f6272fabd15168d5c7a4a3e1e280",
+                                author: "Demo User",
+                                message: "Add Grace as VIP customer",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["develop", "feature/vip-customers"]
+                        },
+        "162a5c4eb5b5609bc8e33a6225f35321003f9233": {
+                            info: {
+                                id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
+                                author: "Demo User",
+                                message: "Add more customers",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "d3bb7b89ed97be4226c1bece12cafc2645817e5f": {
+                            info: {
+                                id: "d3bb7b89ed97be4226c1bece12cafc2645817e5f",
+                                author: "Demo User",
+                                message: "Add gaming and streaming products",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["feature/new-products", "release/v1.2"]
+                        },
+        "f1e9fc3f5fb4fd74a1904e8030575d002efcc261": {
+                            info: {
+                                id: "f1e9fc3f5fb4fd74a1904e8030575d002efcc261",
+                                author: "Demo User",
+                                message: "Add priority orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [111,114,100,101,114,58,51,48,48,54], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,54,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49,124,112,114,105,111,114,105,116,121,58,104,105,103,104]}}, {"key": [111,114,100,101,114,58,51,48,48,55], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,55,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,51,124,112,114,105,111,114,105,116,121,58,104,105,103,104]}}],
+                            branches: ["urgent/priority-orders"]
                         }
     }
 };
@@ -1174,245 +1457,245 @@
                         }
     ],
     commits: {
-        "8865a2faf67822063433baec46a0268e18197090": {
+        "162a5c4eb5b5609bc8e33a6225f35321003f9233": {
                             info: {
-                                id: "8865a2faf67822063433baec46a0268e18197090",
-                                author: "Demo User",
-                                message: "Initial product catalog",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7": {
-                            info: {
-                                id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "410c3fb97b84c3cc9676939d8c87750df87b4c48": {
-                            info: {
-                                id: "410c3fb97b84c3cc9676939d8c87750df87b4c48",
-                                author: "Demo User",
-                                message: "Restock warehouse inventory",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,49], "operation": {"Modified": {"old": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,53,48,124,114,101,115,101,114,118,101,100,58,53], "new": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,48,124,114,101,115,101,114,118,101,100,58,53]}}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,51], "operation": {"Modified": {"old": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,55,53,124,114,101,115,101,114,118,101,100,58,51], "new": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,49,50,53,124,114,101,115,101,114,118,101,100,58,51]}}}],
-                            branches: ["audit/quarterly-review", "operations/restock"]
-                        },
-        "0f6e679e932f155cbddeeacceec65bd222372afe": {
-                            info: {
-                                id: "0f6e679e932f155cbddeeacceec65bd222372afe",
-                                author: "Demo User",
-                                message: "Add VIP customer status",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["develop", "feature/vip-customers"]
-                        },
-        "5f4f1bc29dc910dd925665a92ca70f88bb631d68": {
-                            info: {
-                                id: "5f4f1bc29dc910dd925665a92ca70f88bb631d68",
-                                author: "Demo User",
-                                message: "Add new product inventory",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,53], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,124,114,101,115,101,114,118,101,100,58,49]}}],
-                            branches: ["audit/quarterly-review", "main", "operations/restock"]
-                        },
-        "350c6301583b2d3ad4b8ed87e74414c696154963": {
-                            info: {
-                                id: "350c6301583b2d3ad4b8ed87e74414c696154963",
-                                author: "Demo User",
-                                message: "Quarterly inventory audit updates",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,50], "operation": {"Modified": {"old": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,50,48,48,124,114,101,115,101,114,118,101,100,58,49,48], "new": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,57,53,124,114,101,115,101,114,118,101,100,58,49,48,124,97,117,100,105,116,101,100,58,50,48,50,52,45,48,56,45,48,57]}}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Modified": {"old": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50], "new": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,50,56,124,114,101,115,101,114,118,101,100,58,50,124,97,117,100,105,116,101,100,58,50,48,50,52,45,48,56,45,48,57]}}}],
-                            branches: ["audit/quarterly-review"]
-                        },
-        "f6e606b18c2917d8566e41c36bb05726f7f87074": {
-                            info: {
-                                id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
-                                author: "Demo User",
-                                message: "Add accessories",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "ebcc09213eeacf648eb49477ca1efa2f656d6377": {
-                            info: {
-                                id: "ebcc09213eeacf648eb49477ca1efa2f656d6377",
-                                author: "Demo User",
-                                message: "Add gaming and streaming products",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["feature/new-products", "release/v1.2"]
-                        },
-        "c16f8cc0a3dd095edc86a7af7db22ec65a98c624": {
-                            info: {
-                                id: "c16f8cc0a3dd095edc86a7af7db22ec65a98c624",
-                                author: "Demo User",
-                                message: "Update order status - batch 1 shipped",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["processing/batch-1", "urgent/priority-orders"]
-                        },
-        "1c2d5c355cd35cd822db2a8f0790b1ce3807c370": {
-                            info: {
-                                id: "1c2d5c355cd35cd822db2a8f0790b1ce3807c370",
-                                author: "Demo User",
-                                message: "Product updates for v1.2 release",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["release/v1.2"]
-                        },
-        "a999cf3d2c2c3a1a1e1b5833f568009be24592ec": {
-                            info: {
-                                id: "a999cf3d2c2c3a1a1e1b5833f568009be24592ec",
-                                author: "Demo User",
-                                message: "Initial orders",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
-                        },
-        "0d63d6b8a5e95aafbbce930ad363aaa645f8252f": {
-                            info: {
-                                id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "2e8c934600546752061f8b87f2ab29943612cbe4": {
-                            info: {
-                                id: "2e8c934600546752061f8b87f2ab29943612cbe4",
-                                author: "Demo User",
-                                message: "Initial inventory levels",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,49], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,53,48,124,114,101,115,101,114,118,101,100,58,53]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,50], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,50,48,48,124,114,101,115,101,114,118,101,100,58,49,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,51], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,55,53,124,114,101,115,101,114,118,101,100,58,51]}}],
-                            branches: ["audit/quarterly-review", "main", "operations/restock"]
-                        },
-        "22346d4b4f886db356b056484e996dd3d2520fe5": {
-                            info: {
-                                id: "22346d4b4f886db356b056484e996dd3d2520fe5",
-                                author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
-                            },
-                            changes: [],
-                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
-                        },
-        "bf240556854e03dedd7e001ca22b64c889b8d08a": {
-                            info: {
-                                id: "bf240556854e03dedd7e001ca22b64c889b8d08a",
-                                author: "Demo User",
-                                message: "Add tablet to catalog",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["feature/new-products", "release/v1.2"]
-                        },
-        "72d6c9500d056e125a78a7a67c9f65141acbaded": {
-                            info: {
-                                id: "72d6c9500d056e125a78a7a67c9f65141acbaded",
-                                author: "Demo User",
-                                message: "Order 3003 delivered",
-                                timestamp: 1754805767
-                            },
-                            changes: [],
-                            branches: ["processing/batch-1", "urgent/priority-orders"]
-                        },
-        "aa248b1a869c0e670b63b8a4569f7963275b6401": {
-                            info: {
-                                id: "aa248b1a869c0e670b63b8a4569f7963275b6401",
-                                author: "Demo User",
-                                message: "Add warehouse C inventory",
-                                timestamp: 1754805767
-                            },
-                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,54], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,49,48,48,124,114,101,115,101,114,118,101,100,58,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,55], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,56,48,124,114,101,115,101,114,118,101,100,58,48]}}],
-                            branches: ["audit/quarterly-review", "operations/restock"]
-                        },
-        "891dee33a43e2a46750210f02c0454ae4f3e19a2": {
-                            info: {
-                                id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                                id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                                 author: "Demo User",
                                 message: "Add more customers",
-                                timestamp: 1754805766
+                                timestamp: 1754835259
                             },
                             changes: [],
                             branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca": {
+        "42427e154f70057a379b23d0a0aa3b5fb0d9445f": {
                             info: {
-                                id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                                id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                                 author: "Demo User",
-                                message: "Initial customer data",
-                                timestamp: 1754805766
+                                message: "Initial commit",
+                                timestamp: 1754835259
                             },
                             changes: [],
                             branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "7fd24d164371ad6543663b00d574b2e86384f054": {
+        "1dbca75c520caeec29b1aec11148615a14726df1": {
                             info: {
-                                id: "7fd24d164371ad6543663b00d574b2e86384f054",
+                                id: "1dbca75c520caeec29b1aec11148615a14726df1",
                                 author: "Demo User",
-                                message: "Add Grace as VIP customer",
-                                timestamp: 1754805766
+                                message: "Initial product catalog",
+                                timestamp: 1754835259
                             },
                             changes: [],
-                            branches: ["develop", "feature/vip-customers"]
+                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "3bf712d9f10a186e3231173061e7ced35ba2cd65": {
+        "eea1caa63187c113c3176787f513c2acb9620a83": {
                             info: {
-                                id: "3bf712d9f10a186e3231173061e7ced35ba2cd65",
+                                id: "eea1caa63187c113c3176787f513c2acb9620a83",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "f1e9fc3f5fb4fd74a1904e8030575d002efcc261": {
+                            info: {
+                                id: "f1e9fc3f5fb4fd74a1904e8030575d002efcc261",
                                 author: "Demo User",
                                 message: "Add priority orders",
-                                timestamp: 1754805767
+                                timestamp: 1754835260
                             },
                             changes: [],
                             branches: ["urgent/priority-orders"]
                         },
-        "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c": {
+        "83d04e7986e75c8a10d41b9ff54c9080226af899": {
                             info: {
-                                id: "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c",
+                                id: "83d04e7986e75c8a10d41b9ff54c9080226af899",
                                 author: "Demo User",
-                                message: "Additional orders",
-                                timestamp: 1754805767
+                                message: "Add VIP customer status",
+                                timestamp: 1754835259
                             },
                             changes: [],
-                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                            branches: ["develop", "feature/vip-customers"]
                         },
-        "14a419587113ce256ff23bb5d9f8d0d36b132974": {
+        "f928a26fa0a0ffa746b5dd2bf71b02486a960b09": {
                             info: {
-                                id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                                id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                                 author: "Demo User",
-                                message: "Initial commit",
-                                timestamp: 1754805766
+                                message: "Initial customer data",
+                                timestamp: 1754835259
                             },
                             changes: [],
                             branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
                         },
-        "5a2cce2798b32016f8c8b5af1c58e0e5fc65b93c": {
+        "7d91901aaa6e4df424d16bc549b5cb9d62bcb605": {
                             info: {
-                                id: "5a2cce2798b32016f8c8b5af1c58e0e5fc65b93c",
+                                id: "7d91901aaa6e4df424d16bc549b5cb9d62bcb605",
+                                author: "Demo User",
+                                message: "Add tablet to catalog",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["feature/new-products", "release/v1.2"]
+                        },
+        "0744a964a71eb36b62e338f9fa7a8e6d2156632c": {
+                            info: {
+                                id: "0744a964a71eb36b62e338f9fa7a8e6d2156632c",
+                                author: "Demo User",
+                                message: "Initial inventory levels",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,49], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,53,48,124,114,101,115,101,114,118,101,100,58,53]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,50], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,50,48,48,124,114,101,115,101,114,118,101,100,58,49,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,51], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,55,53,124,114,101,115,101,114,118,101,100,58,51]}}],
+                            branches: ["audit/quarterly-review", "main", "operations/restock"]
+                        },
+        "82483feb0ddf5512af3d62edd862ac0619c70463": {
+                            info: {
+                                id: "82483feb0ddf5512af3d62edd862ac0619c70463",
+                                author: "Demo User",
+                                message: "Quarterly inventory audit updates",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,50], "operation": {"Modified": {"old": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,50,48,48,124,114,101,115,101,114,118,101,100,58,49,48], "new": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,57,53,124,114,101,115,101,114,118,101,100,58,49,48,124,97,117,100,105,116,101,100,58,50,48,50,52,45,48,56,45,48,57]}}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Modified": {"old": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50], "new": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,50,56,124,114,101,115,101,114,118,101,100,58,50,124,97,117,100,105,116,101,100,58,50,48,50,52,45,48,56,45,48,57]}}}],
+                            branches: ["audit/quarterly-review"]
+                        },
+        "612c26cdf967d698acaf41dcceb7e349fcd90678": {
+                            info: {
+                                id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "df84871c306dbcfc429c282291c40f237b4bbe6c": {
+                            info: {
+                                id: "df84871c306dbcfc429c282291c40f237b4bbe6c",
+                                author: "Demo User",
+                                message: "Add new product inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,53], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,124,114,101,115,101,114,118,101,100,58,49]}}],
+                            branches: ["audit/quarterly-review", "main", "operations/restock"]
+                        },
+        "d3bb7b89ed97be4226c1bece12cafc2645817e5f": {
+                            info: {
+                                id: "d3bb7b89ed97be4226c1bece12cafc2645817e5f",
+                                author: "Demo User",
+                                message: "Add gaming and streaming products",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["feature/new-products", "release/v1.2"]
+                        },
+        "c61d51114a3c74fb96d152f264a8362b9cab5103": {
+                            info: {
+                                id: "c61d51114a3c74fb96d152f264a8362b9cab5103",
+                                author: "Demo User",
+                                message: "Product updates for v1.2 release",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["release/v1.2"]
+                        },
+        "286fafc07839fa2f7b3374e44e569068c4344c3c": {
+                            info: {
+                                id: "286fafc07839fa2f7b3374e44e569068c4344c3c",
+                                author: "Demo User",
+                                message: "Order 3003 delivered",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["processing/batch-1", "urgent/priority-orders"]
+                        },
+        "319e01060f62f6272fabd15168d5c7a4a3e1e280": {
+                            info: {
+                                id: "319e01060f62f6272fabd15168d5c7a4a3e1e280",
+                                author: "Demo User",
+                                message: "Add Grace as VIP customer",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["develop", "feature/vip-customers"]
+                        },
+        "dd2032fdc722cbbd79f31456bd94af58a210c144": {
+                            info: {
+                                id: "dd2032fdc722cbbd79f31456bd94af58a210c144",
+                                author: "Demo User",
+                                message: "Add warehouse C inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,54], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,49,48,48,124,114,101,115,101,114,118,101,100,58,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,55], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,56,48,124,114,101,115,101,114,118,101,100,58,48]}}],
+                            branches: ["audit/quarterly-review", "operations/restock"]
+                        },
+        "bf21311a60bcc732b2bf30729b7eee66a504efab": {
+                            info: {
+                                id: "bf21311a60bcc732b2bf30729b7eee66a504efab",
+                                author: "Demo User",
+                                message: "Restock warehouse inventory",
+                                timestamp: 1754835260
+                            },
+                            changes: [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,49], "operation": {"Modified": {"old": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,53,48,124,114,101,115,101,114,118,101,100,58,53], "new": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,48,124,114,101,115,101,114,118,101,100,58,53]}}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,51], "operation": {"Modified": {"old": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,55,53,124,114,101,115,101,114,118,101,100,58,51], "new": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,49,50,53,124,114,101,115,101,114,118,101,100,58,51]}}}],
+                            branches: ["audit/quarterly-review", "operations/restock"]
+                        },
+        "dda183856b9466fcda720b1fbd20a76d33f75f9d": {
+                            info: {
+                                id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
+                                author: "Demo User",
+                                message: "Initial orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                        },
+        "ee6323370a3c32c9066cd39458b8a6d1bc808aa4": {
+                            info: {
+                                id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
+                                author: "Demo User",
+                                message: "Additional orders",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "main", "operations/restock", "processing/batch-1", "urgent/priority-orders"]
+                        },
+        "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e": {
+                            info: {
+                                id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                                author: "Demo User",
+                                message: "Initial commit",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "develop", "feature/new-products", "feature/vip-customers", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "2711fe2bff2f2669034f1bea08c92179a5cadb2f": {
+                            info: {
+                                id: "2711fe2bff2f2669034f1bea08c92179a5cadb2f",
                                 author: "Demo User",
                                 message: "Development customer additions",
-                                timestamp: 1754805766
+                                timestamp: 1754835259
                             },
                             changes: [],
                             branches: ["develop"]
+                        },
+        "701eab7c9813998ce19a08049803cf7272961bda": {
+                            info: {
+                                id: "701eab7c9813998ce19a08049803cf7272961bda",
+                                author: "Demo User",
+                                message: "Add accessories",
+                                timestamp: 1754835259
+                            },
+                            changes: [],
+                            branches: ["audit/quarterly-review", "feature/new-products", "main", "operations/restock", "processing/batch-1", "release/v1.2", "urgent/priority-orders"]
+                        },
+        "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c": {
+                            info: {
+                                id: "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c",
+                                author: "Demo User",
+                                message: "Update order status - batch 1 shipped",
+                                timestamp: 1754835260
+                            },
+                            changes: [],
+                            branches: ["processing/batch-1", "urgent/priority-orders"]
                         }
     }
 };
@@ -1424,136 +1707,136 @@
                     current: false,
                     commits: [
                         {
-                            id: "350c6301583b2d3ad4b8ed87e74414c696154963",
+                            id: "82483feb0ddf5512af3d62edd862ac0619c70463",
                             author: "Demo User",
                             message: "Quarterly inventory audit updates",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "aa248b1a869c0e670b63b8a4569f7963275b6401",
+                            id: "dd2032fdc722cbbd79f31456bd94af58a210c144",
                             author: "Demo User",
                             message: "Add warehouse C inventory",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,54], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,49,48,48,124,114,101,115,101,114,118,101,100,58,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,55], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,56,48,124,114,101,115,101,114,118,101,100,58,48]}}]
+                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,55], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,56,48,124,114,101,115,101,114,118,101,100,58,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,54], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,49,48,48,124,114,101,115,101,114,118,101,100,58,48]}}]
                             }
                         },
             {
-                            id: "410c3fb97b84c3cc9676939d8c87750df87b4c48",
+                            id: "bf21311a60bcc732b2bf30729b7eee66a504efab",
                             author: "Demo User",
                             message: "Restock warehouse inventory",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "5f4f1bc29dc910dd925665a92ca70f88bb631d68",
+                            id: "df84871c306dbcfc429c282291c40f237b4bbe6c",
                             author: "Demo User",
                             message: "Add new product inventory",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,53], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,124,114,101,115,101,114,118,101,100,58,49]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50]}}]
+                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,53], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,124,114,101,115,101,114,118,101,100,58,49]}}]
                             }
                         },
             {
-                            id: "2e8c934600546752061f8b87f2ab29943612cbe4",
+                            id: "0744a964a71eb36b62e338f9fa7a8e6d2156632c",
                             author: "Demo User",
                             message: "Initial inventory levels",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,50], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,50,48,48,124,114,101,115,101,114,118,101,100,58,49,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,49], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,53,48,124,114,101,115,101,114,118,101,100,58,53]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,51], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,55,53,124,114,101,115,101,114,118,101,100,58,51]}}]
                             }
                         },
             {
-                            id: "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c",
+                            id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
                             author: "Demo User",
                             message: "Additional orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "a999cf3d2c2c3a1a1e1b5833f568009be24592ec",
+                            id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
                             author: "Demo User",
                             message: "Initial orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
+                            id: "701eab7c9813998ce19a08049803cf7272961bda",
                             author: "Demo User",
                             message: "Add accessories",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,52], "operation": {"Added": [85,83,66,45,67,32,72,117,98]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,53], "operation": {"Added": [77,111,110,105,116,111,114,32,83,116,97,110,100]}}]
                             }
                         },
             {
-                            id: "8865a2faf67822063433baec46a0268e18197090",
+                            id: "1dbca75c520caeec29b1aec11148615a14726df1",
                             author: "Demo User",
                             message: "Initial product catalog",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}]
+                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
@@ -1565,82 +1848,82 @@
                     current: false,
                     commits: [
                         {
-                            id: "5a2cce2798b32016f8c8b5af1c58e0e5fc65b93c",
+                            id: "2711fe2bff2f2669034f1bea08c92179a5cadb2f",
                             author: "Demo User",
                             message: "Development customer additions",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,56], "operation": {"Added": [72,101,110,114,121,32,84,97,121,108,111,114]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,57], "operation": {"Added": [73,118,121,32,67,104,101,110]}}]
                             }
                         },
             {
-                            id: "7fd24d164371ad6543663b00d574b2e86384f054",
+                            id: "319e01060f62f6272fabd15168d5c7a4a3e1e280",
                             author: "Demo User",
                             message: "Add Grace as VIP customer",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,55], "operation": {"Added": [71,114,97,99,101,32,76,101,101,32,40,86,73,80,41]}}]
                             }
                         },
             {
-                            id: "0f6e679e932f155cbddeeacceec65bd222372afe",
+                            id: "83d04e7986e75c8a10d41b9ff54c9080226af899",
                             author: "Demo User",
                             message: "Add VIP customer status",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,54], "operation": {"Added": [70,114,97,110,107,32,77,105,108,108,101,114,32,40,86,73,80,41]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
@@ -1652,91 +1935,91 @@
                     current: false,
                     commits: [
                         {
-                            id: "bf240556854e03dedd7e001ca22b64c889b8d08a",
+                            id: "7d91901aaa6e4df424d16bc549b5cb9d62bcb605",
                             author: "Demo User",
                             message: "Add tablet to catalog",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,56], "operation": {"Added": [84,97,98,108,101,116,32,49,48,32,105,110,99,104]}}]
                             }
                         },
             {
-                            id: "ebcc09213eeacf648eb49477ca1efa2f656d6377",
+                            id: "d3bb7b89ed97be4226c1bece12cafc2645817e5f",
                             author: "Demo User",
                             message: "Add gaming and streaming products",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,55], "operation": {"Added": [87,101,98,99,97,109,32,72,68]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,54], "operation": {"Added": [71,97,109,105,110,103,32,72,101,97,100,115,101,116]}}]
                             }
                         },
             {
-                            id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
+                            id: "701eab7c9813998ce19a08049803cf7272961bda",
                             author: "Demo User",
                             message: "Add accessories",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,52], "operation": {"Added": [85,83,66,45,67,32,72,117,98]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,53], "operation": {"Added": [77,111,110,105,116,111,114,32,83,116,97,110,100]}}]
                             }
                         },
             {
-                            id: "8865a2faf67822063433baec46a0268e18197090",
+                            id: "1dbca75c520caeec29b1aec11148615a14726df1",
                             author: "Demo User",
                             message: "Initial product catalog",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}]
+                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
@@ -1748,73 +2031,73 @@
                     current: false,
                     commits: [
                         {
-                            id: "7fd24d164371ad6543663b00d574b2e86384f054",
+                            id: "319e01060f62f6272fabd15168d5c7a4a3e1e280",
                             author: "Demo User",
                             message: "Add Grace as VIP customer",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,55], "operation": {"Added": [71,114,97,99,101,32,76,101,101,32,40,86,73,80,41]}}]
                             }
                         },
             {
-                            id: "0f6e679e932f155cbddeeacceec65bd222372afe",
+                            id: "83d04e7986e75c8a10d41b9ff54c9080226af899",
                             author: "Demo User",
                             message: "Add VIP customer status",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,54], "operation": {"Added": [70,114,97,110,107,32,77,105,108,108,101,114,32,40,86,73,80,41]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
@@ -1826,109 +2109,109 @@
                     current: true,
                     commits: [
                         {
-                            id: "5f4f1bc29dc910dd925665a92ca70f88bb631d68",
+                            id: "df84871c306dbcfc429c282291c40f237b4bbe6c",
                             author: "Demo User",
                             message: "Add new product inventory",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,53], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,124,114,101,115,101,114,118,101,100,58,49]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50]}}]
+                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,53], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,124,114,101,115,101,114,118,101,100,58,49]}}]
                             }
                         },
             {
-                            id: "2e8c934600546752061f8b87f2ab29943612cbe4",
+                            id: "0744a964a71eb36b62e338f9fa7a8e6d2156632c",
                             author: "Demo User",
                             message: "Initial inventory levels",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,50], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,50,48,48,124,114,101,115,101,114,118,101,100,58,49,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,49], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,53,48,124,114,101,115,101,114,118,101,100,58,53]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,51], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,55,53,124,114,101,115,101,114,118,101,100,58,51]}}]
                             }
                         },
             {
-                            id: "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c",
+                            id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
                             author: "Demo User",
                             message: "Additional orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "a999cf3d2c2c3a1a1e1b5833f568009be24592ec",
+                            id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
                             author: "Demo User",
                             message: "Initial orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
+                            id: "701eab7c9813998ce19a08049803cf7272961bda",
                             author: "Demo User",
                             message: "Add accessories",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,52], "operation": {"Added": [85,83,66,45,67,32,72,117,98]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,53], "operation": {"Added": [77,111,110,105,116,111,114,32,83,116,97,110,100]}}]
                             }
                         },
             {
-                            id: "8865a2faf67822063433baec46a0268e18197090",
+                            id: "1dbca75c520caeec29b1aec11148615a14726df1",
                             author: "Demo User",
                             message: "Initial product catalog",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}]
+                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
@@ -1940,127 +2223,127 @@
                     current: false,
                     commits: [
                         {
-                            id: "aa248b1a869c0e670b63b8a4569f7963275b6401",
+                            id: "dd2032fdc722cbbd79f31456bd94af58a210c144",
                             author: "Demo User",
                             message: "Add warehouse C inventory",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,54], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,49,48,48,124,114,101,115,101,114,118,101,100,58,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,55], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,56,48,124,114,101,115,101,114,118,101,100,58,48]}}]
+                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,55], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,56,48,124,114,101,115,101,114,118,101,100,58,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,54], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,67,124,115,116,111,99,107,58,49,48,48,124,114,101,115,101,114,118,101,100,58,48]}}]
                             }
                         },
             {
-                            id: "410c3fb97b84c3cc9676939d8c87750df87b4c48",
+                            id: "bf21311a60bcc732b2bf30729b7eee66a504efab",
                             author: "Demo User",
                             message: "Restock warehouse inventory",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "5f4f1bc29dc910dd925665a92ca70f88bb631d68",
+                            id: "df84871c306dbcfc429c282291c40f237b4bbe6c",
                             author: "Demo User",
                             message: "Add new product inventory",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,53], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,124,114,101,115,101,114,118,101,100,58,49]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50]}}]
+                                "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,52], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,51,48,124,114,101,115,101,114,118,101,100,58,50]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,53], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,49,53,124,114,101,115,101,114,118,101,100,58,49]}}]
                             }
                         },
             {
-                            id: "2e8c934600546752061f8b87f2ab29943612cbe4",
+                            id: "0744a964a71eb36b62e338f9fa7a8e6d2156632c",
                             author: "Demo User",
                             message: "Initial inventory levels",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 "Inventory": [{"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,50], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,50,48,48,124,114,101,115,101,114,118,101,100,58,49,48]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,49], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,65,124,115,116,111,99,107,58,53,48,124,114,101,115,101,114,118,101,100,58,53]}}, {"key": [105,110,118,101,110,116,111,114,121,58,50,48,48,51], "operation": {"Added": [119,97,114,101,104,111,117,115,101,58,66,124,115,116,111,99,107,58,55,53,124,114,101,115,101,114,118,101,100,58,51]}}]
                             }
                         },
             {
-                            id: "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c",
+                            id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
                             author: "Demo User",
                             message: "Additional orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "a999cf3d2c2c3a1a1e1b5833f568009be24592ec",
+                            id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
                             author: "Demo User",
                             message: "Initial orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
+                            id: "701eab7c9813998ce19a08049803cf7272961bda",
                             author: "Demo User",
                             message: "Add accessories",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,52], "operation": {"Added": [85,83,66,45,67,32,72,117,98]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,53], "operation": {"Added": [77,111,110,105,116,111,114,32,83,116,97,110,100]}}]
                             }
                         },
             {
-                            id: "8865a2faf67822063433baec46a0268e18197090",
+                            id: "1dbca75c520caeec29b1aec11148615a14726df1",
                             author: "Demo User",
                             message: "Initial product catalog",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}]
+                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
@@ -2072,109 +2355,109 @@
                     current: false,
                     commits: [
                         {
-                            id: "72d6c9500d056e125a78a7a67c9f65141acbaded",
+                            id: "286fafc07839fa2f7b3374e44e569068c4344c3c",
                             author: "Demo User",
                             message: "Order 3003 delivered",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "c16f8cc0a3dd095edc86a7af7db22ec65a98c624",
+                            id: "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c",
                             author: "Demo User",
                             message: "Update order status - batch 1 shipped",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c",
+                            id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
                             author: "Demo User",
                             message: "Additional orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "a999cf3d2c2c3a1a1e1b5833f568009be24592ec",
+                            id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
                             author: "Demo User",
                             message: "Initial orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
+                            id: "701eab7c9813998ce19a08049803cf7272961bda",
                             author: "Demo User",
                             message: "Add accessories",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,52], "operation": {"Added": [85,83,66,45,67,32,72,117,98]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,53], "operation": {"Added": [77,111,110,105,116,111,114,32,83,116,97,110,100]}}]
                             }
                         },
             {
-                            id: "8865a2faf67822063433baec46a0268e18197090",
+                            id: "1dbca75c520caeec29b1aec11148615a14726df1",
                             author: "Demo User",
                             message: "Initial product catalog",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}]
+                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
@@ -2186,100 +2469,100 @@
                     current: false,
                     commits: [
                         {
-                            id: "1c2d5c355cd35cd822db2a8f0790b1ce3807c370",
+                            id: "c61d51114a3c74fb96d152f264a8362b9cab5103",
                             author: "Demo User",
                             message: "Product updates for v1.2 release",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,57], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,51]}}]
                             }
                         },
             {
-                            id: "bf240556854e03dedd7e001ca22b64c889b8d08a",
+                            id: "7d91901aaa6e4df424d16bc549b5cb9d62bcb605",
                             author: "Demo User",
                             message: "Add tablet to catalog",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,56], "operation": {"Added": [84,97,98,108,101,116,32,49,48,32,105,110,99,104]}}]
                             }
                         },
             {
-                            id: "ebcc09213eeacf648eb49477ca1efa2f656d6377",
+                            id: "d3bb7b89ed97be4226c1bece12cafc2645817e5f",
                             author: "Demo User",
                             message: "Add gaming and streaming products",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,55], "operation": {"Added": [87,101,98,99,97,109,32,72,68]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,54], "operation": {"Added": [71,97,109,105,110,103,32,72,101,97,100,115,101,116]}}]
                             }
                         },
             {
-                            id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
+                            id: "701eab7c9813998ce19a08049803cf7272961bda",
                             author: "Demo User",
                             message: "Add accessories",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,52], "operation": {"Added": [85,83,66,45,67,32,72,117,98]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,53], "operation": {"Added": [77,111,110,105,116,111,114,32,83,116,97,110,100]}}]
                             }
                         },
             {
-                            id: "8865a2faf67822063433baec46a0268e18197090",
+                            id: "1dbca75c520caeec29b1aec11148615a14726df1",
                             author: "Demo User",
                             message: "Initial product catalog",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}]
+                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
@@ -2291,118 +2574,118 @@
                     current: false,
                     commits: [
                         {
-                            id: "3bf712d9f10a186e3231173061e7ced35ba2cd65",
+                            id: "f1e9fc3f5fb4fd74a1904e8030575d002efcc261",
                             author: "Demo User",
                             message: "Add priority orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,54], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,54,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49,124,112,114,105,111,114,105,116,121,58,104,105,103,104]}}, {"key": [111,114,100,101,114,58,51,48,48,55], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,55,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,51,124,112,114,105,111,114,105,116,121,58,104,105,103,104]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,55], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,55,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,51,124,112,114,105,111,114,105,116,121,58,104,105,103,104]}}, {"key": [111,114,100,101,114,58,51,48,48,54], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,54,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49,124,112,114,105,111,114,105,116,121,58,104,105,103,104]}}]
                             }
                         },
             {
-                            id: "72d6c9500d056e125a78a7a67c9f65141acbaded",
+                            id: "286fafc07839fa2f7b3374e44e569068c4344c3c",
                             author: "Demo User",
                             message: "Order 3003 delivered",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "c16f8cc0a3dd095edc86a7af7db22ec65a98c624",
+                            id: "964b727e50d4bcb30de77f5eaf6af7a77fb1ee3c",
                             author: "Demo User",
                             message: "Update order status - batch 1 shipped",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "19e8f0cdbe3cab7695bc011eb23db17a90d2ee1c",
+                            id: "ee6323370a3c32c9066cd39458b8a6d1bc808aa4",
                             author: "Demo User",
                             message: "Additional orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,53], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,52,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,52], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,52,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "a999cf3d2c2c3a1a1e1b5833f568009be24592ec",
+                            id: "dda183856b9466fcda720b1fbd20a76d33f75f9d",
                             author: "Demo User",
                             message: "Initial orders",
-                            timestamp: 1754805767,
+                            timestamp: 1754835260,
                             datasetChanges: {
-                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}]
+                                "Orders": [{"key": [111,114,100,101,114,58,51,48,48,51], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,51,124,112,114,111,100,117,99,116,58,50,48,48,51,124,113,116,121,58,49]}}, {"key": [111,114,100,101,114,58,51,48,48,50], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,50,124,112,114,111,100,117,99,116,58,50,48,48,50,124,113,116,121,58,50]}}, {"key": [111,114,100,101,114,58,51,48,48,49], "operation": {"Added": [99,117,115,116,111,109,101,114,58,49,48,48,49,124,112,114,111,100,117,99,116,58,50,48,48,49,124,113,116,121,58,49]}}]
                             }
                         },
             {
-                            id: "f6e606b18c2917d8566e41c36bb05726f7f87074",
+                            id: "701eab7c9813998ce19a08049803cf7272961bda",
                             author: "Demo User",
                             message: "Add accessories",
-                            timestamp: 1754805767,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,52], "operation": {"Added": [85,83,66,45,67,32,72,117,98]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,53], "operation": {"Added": [77,111,110,105,116,111,114,32,83,116,97,110,100]}}]
                             }
                         },
             {
-                            id: "8865a2faf67822063433baec46a0268e18197090",
+                            id: "1dbca75c520caeec29b1aec11148615a14726df1",
                             author: "Demo User",
                             message: "Initial product catalog",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}]
+                                "Products": [{"key": [112,114,111,100,117,99,116,58,50,48,48,49], "operation": {"Added": [76,97,112,116,111,112,32,80,114,111,32,49,53]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,51], "operation": {"Added": [77,101,99,104,97,110,105,99,97,108,32,75,101,121,98,111,97,114,100]}}, {"key": [112,114,111,100,117,99,116,58,50,48,48,50], "operation": {"Added": [87,105,114,101,108,101,115,115,32,77,111,117,115,101]}}]
                             }
                         },
             {
-                            id: "891dee33a43e2a46750210f02c0454ae4f3e19a2",
+                            id: "162a5c4eb5b5609bc8e33a6225f35321003f9233",
                             author: "Demo User",
                             message: "Add more customers",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
-                                
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,52], "operation": {"Added": [68,97,118,105,100,32,87,105,108,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,53], "operation": {"Added": [69,109,109,97,32,66,114,111,119,110]}}]
                             }
                         },
             {
-                            id: "42abfa9df9fe05e2aff4bc1cfb640c06c1f10fca",
+                            id: "f928a26fa0a0ffa746b5dd2bf71b02486a960b09",
                             author: "Demo User",
                             message: "Initial customer data",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
+                            datasetChanges: {
+                                "Customers": [{"key": [99,117,115,116,111,109,101,114,58,49,48,48,49], "operation": {"Added": [65,108,105,99,101,32,74,111,104,110,115,111,110]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,50], "operation": {"Added": [66,111,98,32,83,109,105,116,104]}}, {"key": [99,117,115,116,111,109,101,114,58,49,48,48,51], "operation": {"Added": [67,97,114,111,108,32,68,97,118,105,115]}}]
+                            }
+                        },
+            {
+                            id: "4f883e5bacbdedaecd98a7aa8a62dc7eb691ca4e",
+                            author: "Demo User",
+                            message: "Initial commit",
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "0d63d6b8a5e95aafbbce930ad363aaa645f8252f",
+                            id: "42427e154f70057a379b23d0a0aa3b5fb0d9445f",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "22346d4b4f886db356b056484e996dd3d2520fe5",
+                            id: "eea1caa63187c113c3176787f513c2acb9620a83",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }
                         },
             {
-                            id: "14a419587113ce256ff23bb5d9f8d0d36b132974",
+                            id: "612c26cdf967d698acaf41dcceb7e349fcd90678",
                             author: "Demo User",
                             message: "Initial commit",
-                            timestamp: 1754805766,
-                            datasetChanges: {
-                                
-                            }
-                        },
-            {
-                            id: "8ede71824dd36f8ccbdc37c99a1ffc21d2a688a7",
-                            author: "Demo User",
-                            message: "Initial commit",
-                            timestamp: 1754805766,
+                            timestamp: 1754835259,
                             datasetChanges: {
                                 
                             }

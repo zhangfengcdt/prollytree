@@ -192,7 +192,8 @@ echo "📋 Populating inventory dataset..."
 
 ## Generate the HTML output in the expected location
 echo "📊 Generating unified multi-dataset visualization..."
-"$UI_BIN" "$DEMO_DIR/customers" \
+"$UI_BIN" "$DEMO_DIR" \
+  --dataset "Customers:$DEMO_DIR/customers" \
   --dataset "Products:$DEMO_DIR/products" \
   --dataset "Orders:$DEMO_DIR/orders" \
   --dataset "Inventory:$DEMO_DIR/inventory" \
