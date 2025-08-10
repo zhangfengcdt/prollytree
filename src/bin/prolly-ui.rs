@@ -460,6 +460,7 @@ fn calculate_commit_changes(
             // Always try to extract prolly-tree data changes for every dataset
             // Find the actual dataset path
             if let Some(dataset_info) = datasets.iter().find(|d| &d.name == dataset_tag) {
+                // Always try to extract prolly-tree data changes for every dataset
                 if let Ok(changes) = get_actual_prolly_changes_with_path(
                     commit_id,
                     parent_commit_id,
@@ -488,18 +489,58 @@ fn get_prolly_changes_from_commit(
         .map(|p| p.parent().unwrap().join("git-prolly"))
         .unwrap_or_else(|_| PathBuf::from("git-prolly"));
 
-    // Get changes directly from git-prolly show
+    // First try the commit ID directly (in case it exists in this dataset)
     let output = Command::new(&git_prolly_path)
         .args(["show", commit_id])
         .current_dir(dataset_path)
         .output()?;
 
-    if !output.status.success() {
-        // If commit doesn't exist in git-prolly, return empty
-        return Ok(Vec::new());
+    if output.status.success() {
+        // Parse the output from git-prolly show
+        return parse_prolly_show_output(&String::from_utf8(output.stdout)?);
     }
 
-    let show_output = String::from_utf8_lossy(&output.stdout);
+    // If the exact commit doesn't exist, try to find recent commits with changes
+    // This handles the case where the main repo commit doesn't exist in the dataset repo
+    let log_output = Command::new(&git_prolly_path)
+        .args(["log", "--limit", "20"])
+        .current_dir(dataset_path)
+        .output()?;
+
+    if log_output.status.success() {
+        let log_text = String::from_utf8(log_output.stdout)?;
+
+        // Parse log output to find commits with actual changes
+        for line in log_text.lines() {
+            if line.starts_with("Commit: ") {
+                if let Some(prolly_commit) = line
+                    .strip_prefix("Commit: ")
+                    .and_then(|s| s.split(' ').next())
+                {
+                    // Try to get changes for this prolly commit
+                    let show_output = Command::new(&git_prolly_path)
+                        .args(["show", prolly_commit])
+                        .current_dir(dataset_path)
+                        .output()?;
+
+                    if show_output.status.success() {
+                        if let Ok(changes) =
+                            parse_prolly_show_output(&String::from_utf8(show_output.stdout)?)
+                        {
+                            if !changes.is_empty() {
+                                return Ok(changes);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Vec::new())
+}
+
+fn parse_prolly_show_output(show_output: &str) -> Result<Vec<KvDiff>, Box<dyn std::error::Error>> {
     let mut diffs = Vec::new();
     let mut in_changes_section = false;
 
