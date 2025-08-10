@@ -190,16 +190,23 @@ echo "📋 Populating inventory dataset..."
 # Back to main
 (cd "$DEMO_DIR/inventory" && git checkout main)
 
-## Generate the HTML output in the expected location
+## Generate the HTML output in a temporary directory
 echo "📊 Generating unified multi-dataset visualization..."
-"$UI_BIN" "$DEMO_DIR" -o "$PROJECT_ROOT/examples/prollytree-ui.html"
+
+# Create temporary directory for HTML output
+TEMP_DIR=$(mktemp -d)
+HTML_OUTPUT="$TEMP_DIR/prollytree-ui.html"
+
+"$UI_BIN" "$DEMO_DIR" -o "$HTML_OUTPUT"
 
 echo ""
 echo "✅ HTML visualization generated successfully!"
-echo "  📄 Output file: $PROJECT_ROOT/examples/prollytree-ui.html"
+echo "  📄 Output file: $HTML_OUTPUT"
 echo "  🌐 Multi-dataset view with comprehensive git commit details"
 echo "  📊 Features: Dataset switching, branch filtering, commit diff details"
 
 cd "$PROJECT_ROOT"
 
-open  "$PROJECT_ROOT/examples/prollytree-ui.html"
+# Open the HTML file from temp directory
+echo "🌐 Opening visualization in browser..."
+open "$HTML_OUTPUT"
