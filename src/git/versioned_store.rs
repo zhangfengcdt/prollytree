@@ -694,30 +694,39 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, GitNodeStorage<N
 impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     /// Save both tree config and hash mappings to git for GitNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // Get the current tree config
-        let config = &self.tree.config;
+        // For GitNodeStorage, we need to ensure the config and hash mappings are
+        // available in the dataset directory so they can be committed to git
 
-        // Serialize the config to JSON
-        let config_json = serde_json::to_vec_pretty(&config)
+        // Get the current tree configuration
+        let config = self.tree.config.clone();
+
+        // Serialize the configuration to JSON
+        let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
 
-        // Get the git root directory to save the config file
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
-
-        // Write the config file to the git root
-        let config_path = git_root.join("prolly_config_tree_config");
-        std::fs::write(&config_path, &config_json)
+        // Write config to the dataset directory
+        let config_path = self
+            .tree
+            .storage
+            .dataset_dir()
+            .join("prolly_config_tree_config");
+        std::fs::write(&config_path, config_json)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
 
-        // For GitNodeStorage, also save the hash mappings to git
-        let mappings_path = self.tree.storage.dataset_dir().join("prolly_hash_mappings");
-        if mappings_path.exists() {
-            let git_mappings_path = git_root.join("prolly_hash_mappings");
-            std::fs::copy(&mappings_path, &git_mappings_path).map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to copy hash mappings: {e}"))
-            })?;
+        // Get hash mappings from storage and save them
+        let mappings = self.tree.storage.get_hash_mappings();
+        let mut mappings_content = String::new();
+        for (hash, object_id) in mappings {
+            // Convert hash bytes to hex manually
+            let hash_hex: String = hash.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+            mappings_content.push_str(&format!("{hash_hex}:{object_id}\n"));
         }
+
+        // Write mappings to the dataset directory
+        let mappings_path = self.tree.storage.dataset_dir().join("prolly_hash_mappings");
+        std::fs::write(&mappings_path, mappings_content).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write mappings file: {e}"))
+        })?;
 
         Ok(())
     }
@@ -1126,17 +1135,25 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         let keys_at_head = self.collect_keys_at_commit(&head_object_id)?;
 
         // Clear the current tree and rebuild it with the data from HEAD
-        self.tree = ProllyTree::new(self.tree.storage.clone(), self.tree.config.clone());
+        // Important: Create tree with config that already has the correct root hash to avoid triggering persist_root
+        let mut config = self.tree.config.clone();
+
+        // Get the config from the commit to get the correct root hash
+        if let Ok(commit_config) = self.read_tree_config_from_commit(&head_object_id) {
+            config.root_hash = commit_config.root_hash;
+        }
+
+        self.tree = ProllyTree::new(self.tree.storage.clone(), config);
 
         // Insert all the key-value pairs from the HEAD commit
+        // Note: These insertions may still trigger auto-save in the tree
         for (key, value) in keys_at_head {
             self.tree.insert(key, value);
         }
 
-        // Save the tree state
-        self.tree
-            .save_config()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
+        // Note: We don't save_config() or persist_root() here because this is a read operation.
+        // The config files should only be saved during write operations (commit).
+        // Saving here would overwrite the existing files with potentially stale data.
 
         Ok(())
     }
@@ -1213,9 +1230,23 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         // Load tree configuration from storage
         let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
 
-        // Try to load existing tree from storage, or create new one
-        let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
-            .unwrap_or_else(|| ProllyTree::new(storage, config));
+        // Try to load existing tree from storage
+        let tree = if let Some(existing_tree) =
+            ProllyTree::load_from_storage(storage.clone(), config.clone())
+        {
+            existing_tree
+        } else if config.root_hash.is_some() {
+            // We have a saved root hash but failed to load the tree
+            // This could be due to missing hash mappings or git objects
+            // For read-only operations, we should try to work with what we have
+            // rather than creating a new empty tree that would overwrite the config
+            eprintln!("Warning: Failed to load tree from saved root hash. This may indicate missing git objects or corrupted hash mappings.");
+            eprintln!("Attempting to create tree with saved config to avoid data loss...");
+            ProllyTree::new(storage, config)
+        } else {
+            // No saved root hash - this is a genuinely new/empty tree
+            ProllyTree::new(storage, config)
+        };
 
         // Get current branch
         let current_branch = git_repo
@@ -1235,8 +1266,10 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         // Load staging area from file if it exists
         store.load_staging_area()?;
 
-        // Reload the tree from the current HEAD
-        store.reload_tree_from_head()?;
+        // Note: We intentionally do NOT call reload_tree_from_head() here
+        // because git-prolly commands should read from the current directory's
+        // prolly_config_tree_config and mapping files, not from git HEAD.
+        // The tree was already loaded from local storage by load_from_storage() above.
 
         Ok(store)
     }
@@ -1274,8 +1307,23 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         let tree_id = commit_ref.tree();
 
         // Try to load the prolly tree configuration from the tree
-        let config_result = self.read_file_from_tree(&tree_id, "prolly_config_tree_config");
-        let mapping_result = self.read_file_from_tree(&tree_id, "prolly_hash_mappings");
+        // Since files are stored relative to git root, we need the relative path from git root to dataset
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        let dataset_relative_path = self
+            .tree
+            .storage
+            .dataset_dir()
+            .strip_prefix(&git_root)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get relative path: {e}")))?;
+
+        let config_path = format!(
+            "{}/prolly_config_tree_config",
+            dataset_relative_path.display()
+        );
+        let mapping_path = format!("{}/prolly_hash_mappings", dataset_relative_path.display());
+
+        let config_result = self.read_file_from_tree(&tree_id, &config_path);
+        let mapping_result = self.read_file_from_tree(&tree_id, &mapping_path);
 
         // If files are not found, this might be an initial empty commit, return empty
         if config_result.is_err() || mapping_result.is_err() {
@@ -1292,33 +1340,55 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         let mapping_str = String::from_utf8(mapping_data)
             .map_err(|e| GitKvError::GitObjectError(format!("Invalid UTF-8 in mappings: {e}")))?;
 
+        // Check if this is a simple key-value mapping (for InMemory storage)
+        // or a hash mapping (for Git storage)
+        let mut key_values = HashMap::new();
         let mut hash_mappings = HashMap::new();
+        let mut is_simple_mapping = false;
+
         for line in mapping_str.lines() {
-            if let Some((hash_hex, object_hex)) = line.split_once(':') {
-                // Parse hex string manually
-                if hash_hex.len() == N * 2 {
-                    let mut hash_bytes = Vec::new();
-                    for i in 0..N {
-                        if let Ok(byte) = u8::from_str_radix(&hash_hex[i * 2..i * 2 + 2], 16) {
-                            hash_bytes.push(byte);
-                        } else {
-                            break;
+            if let Some((prefix, rest)) = line.split_once(':') {
+                if prefix == "key" {
+                    // This is a simple key-value mapping from InMemory storage
+                    is_simple_mapping = true;
+                    if let Some((key_hex, value_hex)) = rest.split_once(':') {
+                        if let (Ok(key), Ok(value)) = (hex::decode(key_hex), hex::decode(value_hex))
+                        {
+                            key_values.insert(key, value);
                         }
                     }
+                } else {
+                    // This is a hash mapping from Git storage
+                    let hash_hex = prefix;
+                    let object_hex = rest;
 
-                    if hash_bytes.len() == N {
-                        if let Ok(object_id) = gix::ObjectId::from_hex(object_hex.as_bytes()) {
-                            let mut hash_array = [0u8; N];
-                            hash_array.copy_from_slice(&hash_bytes);
-                            let hash = ValueDigest(hash_array);
-                            hash_mappings.insert(hash, object_id);
+                    if hash_hex.len() == N * 2 {
+                        let mut hash_bytes = Vec::new();
+                        for i in 0..N {
+                            if let Ok(byte) = u8::from_str_radix(&hash_hex[i * 2..i * 2 + 2], 16) {
+                                hash_bytes.push(byte);
+                            } else {
+                                break;
+                            }
+                        }
+
+                        if hash_bytes.len() == N {
+                            if let Ok(object_id) = gix::ObjectId::from_hex(object_hex.as_bytes()) {
+                                let hash = ValueDigest::raw_hash(&hash_bytes);
+                                hash_mappings.insert(hash, object_id);
+                            }
                         }
                     }
                 }
             }
         }
 
-        // If there are no mappings, this is likely an empty tree
+        if is_simple_mapping {
+            // For InMemory storage, return the directly stored key-value pairs
+            return Ok(key_values);
+        }
+
+        // For Git storage, reconstruct the tree from hash mappings
         if hash_mappings.is_empty() {
             return Ok(HashMap::new());
         }
@@ -1336,17 +1406,17 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         })?;
 
         // Collect all key-value pairs
-        let mut key_values = HashMap::new();
+        let mut result_key_values = HashMap::new();
         for key in tree.collect_keys() {
             if let Some(node) = tree.find(&key) {
                 // Find the value in the node
                 if let Some(index) = node.keys.iter().position(|k| k == &key) {
-                    key_values.insert(key, node.values[index].clone());
+                    result_key_values.insert(key, node.values[index].clone());
                 }
             }
         }
 
-        Ok(key_values)
+        Ok(result_key_values)
     }
 }
 
@@ -1822,28 +1892,87 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
             }
         };
 
-        // Search for the file in the tree
-        for entry in tree.entries {
-            if entry.filename == file_path.as_bytes() {
-                // Found the file, read its content
-                let mut file_buffer = Vec::new();
-                let file_obj = self
-                    .git_repo
-                    .objects
-                    .find(entry.oid, &mut file_buffer)
-                    .map_err(|e| {
-                        GitKvError::GitObjectError(format!("Failed to find file object: {e}"))
-                    })?;
+        // Handle file paths with subdirectories
+        let path_parts: Vec<&str> = file_path.split('/').collect();
+        self.read_file_from_tree_recursive(&tree, &path_parts, 0)
+    }
 
-                match file_obj.kind {
-                    gix::object::Kind::Blob => return Ok(file_obj.data.to_vec()),
-                    _ => return Err(GitKvError::GitObjectError("File is not a blob".to_string())),
+    /// Recursively read a file from a tree, handling subdirectories
+    fn read_file_from_tree_recursive(
+        &self,
+        tree: &gix::objs::TreeRef,
+        path_parts: &[&str],
+        part_index: usize,
+    ) -> Result<Vec<u8>, GitKvError> {
+        if part_index >= path_parts.len() {
+            return Err(GitKvError::GitObjectError(
+                "Path traversal error".to_string(),
+            ));
+        }
+
+        let current_part = path_parts[part_index];
+
+        // Search for the current path part in the tree
+        for entry in &tree.entries {
+            if entry.filename == current_part.as_bytes() {
+                if part_index == path_parts.len() - 1 {
+                    // This is the final part (the file), read its content
+                    let mut file_buffer = Vec::new();
+                    let file_obj = self
+                        .git_repo
+                        .objects
+                        .find(entry.oid, &mut file_buffer)
+                        .map_err(|e| {
+                            GitKvError::GitObjectError(format!("Failed to find file object: {e}"))
+                        })?;
+
+                    match file_obj.kind {
+                        gix::object::Kind::Blob => return Ok(file_obj.data.to_vec()),
+                        _ => {
+                            return Err(GitKvError::GitObjectError(
+                                "File is not a blob".to_string(),
+                            ))
+                        }
+                    }
+                } else {
+                    // This is a directory, recurse into it
+                    let mut subtree_buffer = Vec::new();
+                    let subtree_obj = self
+                        .git_repo
+                        .objects
+                        .find(entry.oid, &mut subtree_buffer)
+                        .map_err(|e| {
+                            GitKvError::GitObjectError(format!(
+                                "Failed to find subtree object: {e}"
+                            ))
+                        })?;
+
+                    match subtree_obj.kind {
+                        gix::object::Kind::Tree => {
+                            let subtree = gix::objs::TreeRef::from_bytes(subtree_obj.data)
+                                .map_err(|e| {
+                                    GitKvError::GitObjectError(format!(
+                                        "Failed to parse subtree: {e}"
+                                    ))
+                                })?;
+                            return self.read_file_from_tree_recursive(
+                                &subtree,
+                                path_parts,
+                                part_index + 1,
+                            );
+                        }
+                        _ => {
+                            return Err(GitKvError::GitObjectError(
+                                "Expected directory but found file".to_string(),
+                            ))
+                        }
+                    }
                 }
             }
         }
 
         Err(GitKvError::GitObjectError(format!(
-            "File '{file_path}' not found in tree"
+            "Path component '{current_part}' not found in tree"
         )))
     }
 
@@ -2023,21 +2152,59 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, InMemoryNodeStor
 impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
     /// Save tree config to git for InMemoryNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // Get the current tree config
-        let config = &self.tree.config;
+        // For InMemoryNodeStorage, we need to persist the current tree state to filesystem
+        // so it can be committed to git and accessed historically
+
+        // Get the current tree configuration
+        let config = self.tree.config.clone();
 
         // Serialize the config to JSON
-        let config_json = serde_json::to_vec_pretty(&config)
+        let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
 
-        // Get the git root directory to save the config file
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
-
-        // Write the config file to the git root
-        let config_path = git_root.join("prolly_config_tree_config");
-        std::fs::write(&config_path, &config_json)
+        // Write the config file to the dataset directory
+        // For InMemoryNodeStorage, we need to determine the dataset directory from git repo path
+        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        let dataset_dir = if self.git_repo.path().parent().unwrap() == git_root {
+            // Dataset is at git root
+            git_root
+        } else {
+            // Dataset is in a subdirectory
+            self.git_repo.path().parent().unwrap().to_path_buf()
+        };
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        std::fs::write(&config_path, config_json)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
+
+        // Since InMemoryNodeStorage doesn't persist node mappings to disk like GitNodeStorage,
+        // we need to create a mapping from the current in-memory tree nodes.
+        // We'll serialize the entire tree structure as a mapping file.
+        let mut mappings_content = String::new();
+
+        // For InMemory storage, we can't get actual git object IDs for the nodes
+        // Instead, we'll create a synthetic mapping using the node hashes themselves
+        // This allows historical access to work by reconstructing the tree from its structure
+
+        // Get all keys from the current tree and find their values
+        let all_keys = self.tree.collect_keys();
+        for key in all_keys {
+            if let Some(node) = self.tree.find(&key) {
+                // Find the value in the node
+                if let Some(index) = node.keys.iter().position(|k| k == &key) {
+                    let value = &node.values[index];
+                    // Create a simple key-value mapping for historical access
+                    let key_hex = hex::encode(&key);
+                    let value_hex = hex::encode(value);
+                    mappings_content.push_str(&format!("key:{key_hex}:{value_hex}\n"));
+                }
+            }
+        }
+
+        // Write the synthetic mappings file
+        let mappings_path = dataset_dir.join("prolly_hash_mappings");
+        std::fs::write(&mappings_path, mappings_content).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to write mappings file: {e}"))
+        })?;
 
         Ok(())
     }
@@ -2054,22 +2221,8 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, FileNodeStorage<
 impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     /// Save tree config to git for FileNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // Get the current tree config
-        let config = &self.tree.config;
-
-        // Serialize the config to JSON
-        let config_json = serde_json::to_vec_pretty(&config)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
-
-        // Get the git root directory to save the config file
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
-
-        // Write the config file to the git root
-        let config_path = git_root.join("prolly_config_tree_config");
-        std::fs::write(&config_path, &config_json)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
-
+        // For FileNodeStorage, the config is already saved to disk in the dataset directory.
+        // No need to duplicate it at the git root level.
         Ok(())
     }
 }
@@ -2087,24 +2240,8 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, RocksDBNodeStora
 impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     /// Save tree config to git for RocksDBNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // Get the current tree config
-        let config = &self.tree.config;
-
-        // Serialize the config to JSON
-        let config_json = serde_json::to_vec_pretty(&config).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to serialize config: {}", e))
-        })?;
-
-        // Get the git root directory to save the config file
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Git root not found".to_string()))?;
-
-        // Write the config file to the git root
-        let config_path = git_root.join("prolly_config_tree_config");
-        std::fs::write(&config_path, &config_json).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write config file: {}", e))
-        })?;
-
+        // For RocksDBNodeStorage, the config is already persisted in the dataset directory.
+        // No need to duplicate it at the git root level.
         Ok(())
     }
 }
@@ -2439,6 +2576,15 @@ mod tests {
         let diffs = store
             .diff(&commit1.to_hex().to_string(), &commit2.to_hex().to_string())
             .unwrap();
+
+        println!("Diffs found: {}", diffs.len());
+        for diff in &diffs {
+            println!(
+                "  {:?}: {:?}",
+                String::from_utf8_lossy(&diff.key),
+                diff.operation
+            );
+        }
 
         // Should have 3 changes: key1 modified, key2 removed, key3 added
         assert_eq!(diffs.len(), 3);
