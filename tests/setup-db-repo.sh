@@ -192,12 +192,7 @@ echo "📋 Populating inventory dataset..."
 
 ## Generate the HTML output in the expected location
 echo "📊 Generating unified multi-dataset visualization..."
-"$UI_BIN" "$DEMO_DIR" \
-  --dataset "Customers:$DEMO_DIR/customers" \
-  --dataset "Products:$DEMO_DIR/products" \
-  --dataset "Orders:$DEMO_DIR/orders" \
-  --dataset "Inventory:$DEMO_DIR/inventory" \
-  -o "$PROJECT_ROOT/examples/prollytree-ui.html"
+"$UI_BIN" "$DEMO_DIR" -o "$PROJECT_ROOT/examples/prollytree-ui.html"
 
 echo ""
 echo "✅ HTML visualization generated successfully!"

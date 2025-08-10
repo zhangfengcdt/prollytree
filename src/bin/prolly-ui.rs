@@ -92,7 +92,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Discover or use specified datasets
     let dataset_names = if cli.datasets.is_empty() {
-        discover_datasets(&repo_path)?
+        // Auto-discover datasets and format them properly
+        let discovered = discover_datasets(&repo_path)?;
+        // Convert discovered dataset names to proper format with full paths
+        discovered
+            .into_iter()
+            .map(|name| {
+                // Capitalize first letter for the tag
+                let tag = name
+                    .chars()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        if i == 0 {
+                            c.to_uppercase().to_string()
+                        } else {
+                            c.to_string()
+                        }
+                    })
+                    .collect::<String>();
+                // Return in "Tag:Path" format
+                format!("{}:{}", tag, repo_path.join(&name).display())
+            })
+            .collect()
     } else {
         cli.datasets
     };
@@ -470,7 +491,6 @@ fn calculate_commit_changes(
                     if !changes.is_empty() {
                         dataset_changes.insert(dataset_tag.clone(), changes);
                     }
-                    // Don't insert anything if no changes - this is normal
                 }
             }
         }
@@ -496,8 +516,9 @@ fn get_prolly_changes_from_commit(
         .output()?;
 
     if output.status.success() {
+        let stdout_str = String::from_utf8(output.stdout)?;
         // Parse the output from git-prolly show
-        return parse_prolly_show_output(&String::from_utf8(output.stdout)?);
+        return parse_prolly_show_output(&stdout_str);
     }
 
     // If the exact commit doesn't exist, try to find recent commits with changes
@@ -599,14 +620,14 @@ fn parse_prolly_show_output(show_output: &str) -> Result<Vec<KvDiff>, Box<dyn st
                     }
                 }
             }
-        } else if line.contains("[33mM ") && line.contains(": ") && line.contains(" -> ") {
-            // Modified key (yellow)
-            if let Some(start) = line.find("[33mM ") {
+        } else if line.contains("[33m~ ") && line.contains(" = ") && line.contains(" -> ") {
+            // Modified key (yellow) - format: [33m~ key = "old" -> "new"[0m
+            if let Some(start) = line.find("[33m~ ") {
                 if let Some(end) = line.find("[0m") {
-                    let content = &line[start + 6..end]; // Skip "[33mM "
-                    if let Some(colon_pos) = content.find(": ") {
-                        let key = content[..colon_pos].to_string();
-                        let change_part = &content[colon_pos + 2..];
+                    let content = &line[start + 6..end]; // Skip "[33m~ "
+                    if let Some(eq_pos) = content.find(" = ") {
+                        let key = content[..eq_pos].to_string();
+                        let change_part = &content[eq_pos + 3..]; // Skip " = "
                         if let Some(arrow_pos) = change_part.find(" -> ") {
                             let mut old_value = change_part[..arrow_pos].to_string();
                             let mut new_value = change_part[arrow_pos + 4..].to_string();
@@ -620,6 +641,7 @@ fn parse_prolly_show_output(show_output: &str) -> Result<Vec<KvDiff>, Box<dyn st
                             // Clean up quotes properly
                             old_value = old_value.trim_matches('"').to_string();
                             new_value = new_value.trim_matches('"').to_string();
+
                             diffs.push(KvDiff {
                                 key: key.into_bytes(),
                                 operation: DiffOperation::Modified {
