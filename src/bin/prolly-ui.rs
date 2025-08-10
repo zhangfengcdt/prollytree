@@ -450,9 +450,9 @@ fn calculate_commit_changes(
     println!("  📊 Affected datasets from git files: {affected_datasets:?}");
 
     // Check ALL datasets for prolly data changes in this commit, not just the ones with file changes
-    for (dataset_tag, dataset_dir) in dataset_mappings {
+    for (dataset_tag, _dataset_dir) in dataset_mappings {
         // Check if this dataset had git file changes (for informational purposes)
-        let has_git_changes = affected_datasets.contains(dataset_tag);
+        let _has_git_changes = affected_datasets.contains(dataset_tag);
 
         // Always try to get prolly data changes for each dataset
 
