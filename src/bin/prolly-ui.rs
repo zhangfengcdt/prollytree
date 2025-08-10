@@ -892,29 +892,41 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
             margin-bottom: 16px;
         }}
 
-        .repository-path {{
-            color: #6b7280;
-            font-size: 14px;
+        .repo-and-datasets {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
             margin-bottom: 16px;
+            flex-wrap: wrap;
+        }}
+
+        .repository-path {{
+            display: inline-block;
+            background: #f3f4f6;
+            color: #6b7280;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 6px;
             font-family: ui-monospace, 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+            border: 1px solid #e5e7eb;
         }}
 
         .dataset-tags {{
             display: flex;
             align-items: center;
             gap: 8px;
-            margin-bottom: 16px;
             flex-wrap: wrap;
         }}
 
         .dataset-tag {{
-            background: #3b82f6;
-            color: white;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 13px;
+            background: #f9fafb;
+            color: #374151;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
             font-weight: 500;
-            border: 2px solid #2563eb;
+            border: 1px solid #d1d5db;
+            cursor: default;
         }}
 
         .controls {{
@@ -1377,9 +1389,11 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
     <div class="container">
         <div class="header">
             <h1>🌳 Git-Prolly Visualization (beta)</h1>
-            <div class="repository-path">Repository: {repo_path}</div>
-            <div class="dataset-tags">
-                {dataset_tags}
+            <div class="repo-and-datasets">
+                <div class="repository-path">Repository: {repo_path}</div>
+                <div class="dataset-tags">
+                    {dataset_tags}
+                </div>
             </div>
             <div class="controls">
                 <div class="branch-selector">
