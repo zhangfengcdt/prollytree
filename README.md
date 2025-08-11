@@ -74,13 +74,6 @@ fs::create_dir_all(repo_path)?;
 
 // Initialize Git repository
 Command::new("git").args(&["init"]).current_dir(repo_path).output()?;
-Command::new("git").args(&["config", "user.name", "Demo"]).current_dir(repo_path).output()?;
-Command::new("git").args(&["config", "user.email", "demo@example.com"]).current_dir(repo_path).output()?;
-
-// Initial git commit
-fs::write(format!("{}/README.md", repo_path), "# Demo")?;
-Command::new("git").args(&["add", "."]).current_dir(repo_path).output()?;
-Command::new("git").args(&["commit", "-m", "Initial"]).current_dir(repo_path).output()?;
 
 // Switch to repo directory and create dataset
 std::env::set_current_dir(repo_path)?;
