@@ -156,10 +156,10 @@ Run benchmarks: `cargo bench`
 
 ## Documentation & Examples
 
-- **[📖 Full API Documentation](https://docs.rs/prollytree)**
-- **[💡 Use Cases & Examples](examples/README.md)** - AI agents, version control, distributed systems
-- **[🐍 Python Bindings](python/README.md)** - Complete Python API
-- **[⚡ Performance Guide](docs/performance.md)** - Optimization tips
+- **[Full API Documentation](https://docs.rs/prollytree)**
+- **[Use Cases & Examples](examples/README.md)** - AI agents, version control, distributed systems
+- **[Python Bindings](python/README.md)** - Complete Python API
+- **[Performance Guide](docs/performance.md)** - Optimization tips
 
 ## CLI Tool
 
