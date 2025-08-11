@@ -35,6 +35,10 @@ struct Cli {
     /// Specify which subdirectories are datasets (if not specified, all subdirectories with prolly data will be used)
     #[arg(short = 'd', long = "dataset", value_name = "NAME")]
     datasets: Vec<String>,
+
+    /// Filter to specific branches (if not specified, all branches will be processed)
+    #[arg(short = 'b', long = "branch", value_name = "BRANCH")]
+    branches: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,7 +96,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Discover or use specified datasets
     let dataset_names = if cli.datasets.is_empty() {
-        discover_datasets(&repo_path)?
+        // Auto-discover datasets and format them properly
+        let discovered = discover_datasets(&repo_path)?;
+        // Convert discovered dataset names to proper format with full paths
+        discovered
+            .into_iter()
+            .map(|name| {
+                // Capitalize first letter for the tag
+                let tag = name
+                    .chars()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        if i == 0 {
+                            c.to_uppercase().to_string()
+                        } else {
+                            c.to_string()
+                        }
+                    })
+                    .collect::<String>();
+                // Return in "Tag:Path" format
+                format!("{}:{}", tag, repo_path.join(&name).display())
+            })
+            .collect()
     } else {
         cli.datasets
     };
@@ -137,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tag,
             dataset_path.display()
         );
-        match process_dataset(tag.clone(), &dataset_path) {
+        match process_dataset(tag.clone(), &dataset_path, &cli.branches) {
             Ok(dataset) => datasets.push(dataset),
             Err(e) => eprintln!("  ⚠️  Failed to process dataset '{tag}': {e}"),
         }
@@ -165,7 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let (git_branches, git_commits) =
-        process_git_repository(&repo_path, &dataset_mappings, &datasets)?;
+        process_git_repository(&repo_path, &dataset_mappings, &datasets, &cli.branches)?;
 
     let repository_data = RepositoryData {
         path: repo_path,
@@ -219,6 +244,7 @@ fn process_git_repository(
     repo_path: &Path,
     dataset_mappings: &[(String, String)],
     datasets: &[DatasetInfo],
+    branch_filter: &[String],
 ) -> GitRepositoryResult {
     use std::process::Command;
 
@@ -243,7 +269,7 @@ fn process_git_repository(
     let mut current_branch = String::new();
 
     // Parse branches
-    let branch_names: Vec<String> = branch_list
+    let all_branch_names: Vec<String> = branch_list
         .lines()
         .filter_map(|line| {
             let trimmed = line.trim();
@@ -257,6 +283,16 @@ fn process_git_repository(
             }
         })
         .collect();
+
+    // Filter branches if specified
+    let branch_names: Vec<String> = if branch_filter.is_empty() {
+        all_branch_names
+    } else {
+        all_branch_names
+            .into_iter()
+            .filter(|branch| branch_filter.contains(branch))
+            .collect()
+    };
 
     // Store original branch to restore later
     let original_branch = current_branch.clone();
@@ -470,7 +506,6 @@ fn calculate_commit_changes(
                     if !changes.is_empty() {
                         dataset_changes.insert(dataset_tag.clone(), changes);
                     }
-                    // Don't insert anything if no changes - this is normal
                 }
             }
         }
@@ -496,8 +531,9 @@ fn get_prolly_changes_from_commit(
         .output()?;
 
     if output.status.success() {
+        let stdout_str = String::from_utf8(output.stdout)?;
         // Parse the output from git-prolly show
-        return parse_prolly_show_output(&String::from_utf8(output.stdout)?);
+        return parse_prolly_show_output(&stdout_str);
     }
 
     // If the exact commit doesn't exist, try to find recent commits with changes
@@ -599,14 +635,14 @@ fn parse_prolly_show_output(show_output: &str) -> Result<Vec<KvDiff>, Box<dyn st
                     }
                 }
             }
-        } else if line.contains("[33mM ") && line.contains(": ") && line.contains(" -> ") {
-            // Modified key (yellow)
-            if let Some(start) = line.find("[33mM ") {
+        } else if line.contains("[33m~ ") && line.contains(" = ") && line.contains(" -> ") {
+            // Modified key (yellow) - format: [33m~ key = "old" -> "new"[0m
+            if let Some(start) = line.find("[33m~ ") {
                 if let Some(end) = line.find("[0m") {
-                    let content = &line[start + 6..end]; // Skip "[33mM "
-                    if let Some(colon_pos) = content.find(": ") {
-                        let key = content[..colon_pos].to_string();
-                        let change_part = &content[colon_pos + 2..];
+                    let content = &line[start + 6..end]; // Skip "[33m~ "
+                    if let Some(eq_pos) = content.find(" = ") {
+                        let key = content[..eq_pos].to_string();
+                        let change_part = &content[eq_pos + 3..]; // Skip " = "
                         if let Some(arrow_pos) = change_part.find(" -> ") {
                             let mut old_value = change_part[..arrow_pos].to_string();
                             let mut new_value = change_part[arrow_pos + 4..].to_string();
@@ -620,6 +656,7 @@ fn parse_prolly_show_output(show_output: &str) -> Result<Vec<KvDiff>, Box<dyn st
                             // Clean up quotes properly
                             old_value = old_value.trim_matches('"').to_string();
                             new_value = new_value.trim_matches('"').to_string();
+
                             diffs.push(KvDiff {
                                 key: key.into_bytes(),
                                 operation: DiffOperation::Modified {
@@ -762,12 +799,26 @@ fn get_diff_between_commits(
     Ok(diffs)
 }
 
-fn process_dataset(name: String, path: &Path) -> Result<DatasetInfo, Box<dyn std::error::Error>> {
+fn process_dataset(
+    name: String,
+    path: &Path,
+    branch_filter: &[String],
+) -> Result<DatasetInfo, Box<dyn std::error::Error>> {
     let store = GitVersionedKvStore::<32>::open(path)?;
 
     // Get all branches
-    let branches = store.list_branches()?;
+    let all_branches = store.list_branches()?;
     let current_branch = store.current_branch().to_string();
+
+    // Filter branches if specified
+    let branches = if branch_filter.is_empty() {
+        all_branches
+    } else {
+        all_branches
+            .into_iter()
+            .filter(|branch| branch_filter.contains(branch))
+            .collect()
+    };
 
     let mut branch_infos = Vec::new();
     let mut commit_details = HashMap::new();
@@ -870,29 +921,41 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
             margin-bottom: 16px;
         }}
 
-        .repository-path {{
-            color: #6b7280;
-            font-size: 14px;
+        .repo-and-datasets {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
             margin-bottom: 16px;
+            flex-wrap: wrap;
+        }}
+
+        .repository-path {{
+            display: inline-block;
+            background: #f3f4f6;
+            color: #6b7280;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 6px;
             font-family: ui-monospace, 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+            border: 1px solid #e5e7eb;
         }}
 
         .dataset-tags {{
             display: flex;
             align-items: center;
             gap: 8px;
-            margin-bottom: 16px;
             flex-wrap: wrap;
         }}
 
         .dataset-tag {{
-            background: #3b82f6;
-            color: white;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 13px;
+            background: #f9fafb;
+            color: #374151;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
             font-weight: 500;
-            border: 2px solid #2563eb;
+            border: 1px solid #d1d5db;
+            cursor: default;
         }}
 
         .controls {{
@@ -1355,9 +1418,11 @@ fn generate_html(repository: &RepositoryData) -> Result<String, Box<dyn std::err
     <div class="container">
         <div class="header">
             <h1>🌳 Git-Prolly Visualization (beta)</h1>
-            <div class="repository-path">Repository: {repo_path}</div>
-            <div class="dataset-tags">
-                {dataset_tags}
+            <div class="repo-and-datasets">
+                <div class="repository-path">Repository: {repo_path}</div>
+                <div class="dataset-tags">
+                    {dataset_tags}
+                </div>
             </div>
             <div class="controls">
                 <div class="branch-selector">
