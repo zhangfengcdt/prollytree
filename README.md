@@ -69,10 +69,7 @@ use std::fs;
 
 // Setup: Create a temporary Git repository (in real use, you'd have an existing repo)
 let repo_path = "/tmp/demo_git_repo";
-fs::remove_dir_all(repo_path).ok(); // Clean up
 fs::create_dir_all(repo_path)?;
-
-// Initialize Git repository
 Command::new("git").args(&["init"]).current_dir(repo_path).output()?;
 
 // Switch to repo directory and create dataset
