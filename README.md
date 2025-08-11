@@ -64,68 +64,70 @@ let is_valid = tree.verify(proof, b"user:alice", Some(b"Alice Johnson"));
 
 ```rust
 use prollytree::git::GitVersionedKvStore;
-use prollytree::diff::IgnoreConflictsResolver;
+use std::process::Command;
+use std::fs;
 
-let mut store = GitVersionedKvStore::<32>::init("./data")?;
+// Setup: Create a temporary Git repository (in real use, you'd have an existing repo)
+let repo_path = "/tmp/demo_git_repo";
+fs::remove_dir_all(repo_path).ok(); // Clean up
+fs::create_dir_all(repo_path)?;
 
-// Version your data like Git
+// Initialize Git repository
+Command::new("git").args(&["init"]).current_dir(repo_path).output()?;
+Command::new("git").args(&["config", "user.name", "Demo"]).current_dir(repo_path).output()?;
+Command::new("git").args(&["config", "user.email", "demo@example.com"]).current_dir(repo_path).output()?;
+
+// Initial git commit
+fs::write(format!("{}/README.md", repo_path), "# Demo")?;
+Command::new("git").args(&["add", "."]).current_dir(repo_path).output()?;
+Command::new("git").args(&["commit", "-m", "Initial"]).current_dir(repo_path).output()?;
+
+// Switch to repo directory and create dataset
+std::env::set_current_dir(repo_path)?;
+fs::create_dir_all("data")?;
+let mut store = GitVersionedKvStore::<32>::init("data")?;
+
+// Now use Git-backed versioned storage
 store.insert(b"config/api_key".to_vec(), b"secret123".to_vec())?;
 store.commit("Initial config")?;
 
-// Create and switch to a new branch for experiments
-store.create_branch("feature/optimization")?;
-// Use regular git to switch branches: git checkout feature/optimization
-store.insert(b"config/timeout".to_vec(), b"60".to_vec())?;
-store.commit("Increase timeout")?;
+// Retrieve data
+if let Some(value) = store.get(b"config/api_key") {
+    println!("Retrieved: {}", String::from_utf8(value)?);
+}
 
-// Switch back to main and merge
-// Use regular git to switch: git checkout main
-store.merge("feature/optimization", &IgnoreConflictsResolver)?;
+// Add more data and commit
+store.insert(b"config/timeout".to_vec(), b"30".to_vec())?;
+store.commit("Add timeout config")?;
+
+// Create branches for parallel development
+store.create_branch("experimental")?;
+println!("Git-backed storage with full version control!");
 ```
 
-### SQL Interface with ProllyTree
+### Multiple Storage Backends
 
 ```rust
-use prollytree::sql::ProllyStorage;
-use gluesql_core::prelude::Glue;
+use prollytree::tree::{ProllyTree, Tree};
+use prollytree::storage::{InMemoryNodeStorage, FileNodeStorage};
 
-// Create ProllyTree storage backend
-let storage = ProllyStorage::<32>::new("./data")?;
-let mut glue = Glue::new(storage);
+// In-memory storage (fast, temporary)
+let mem_storage = InMemoryNodeStorage::<32>::new();
+let mut mem_tree = ProllyTree::new(mem_storage, Default::default());
+mem_tree.insert(b"session:abc123".to_vec(), b"active".to_vec());
 
-// Execute SQL operations
-glue.execute("CREATE TABLE users (id INTEGER, name TEXT)").await?;
-glue.execute("INSERT INTO users VALUES (1, 'Alice Johnson')").await?;
+// File-based storage (persistent)
+let file_storage = FileNodeStorage::<32>::new("./tree_data".into());
+let mut file_tree = ProllyTree::new(file_storage, Default::default());
+file_tree.insert(b"user:alice".to_vec(), b"Alice Johnson".to_vec());
 
-// Query the data
-let result = glue.execute("SELECT * FROM users WHERE id = 1").await?;
-println!("Query result: {:?}", result);
-```
+// Both trees support the same operations
+if let Some(node) = mem_tree.find(b"session:abc123") {
+    println!("Session found in memory storage");
+}
 
-### AI Agent Memory
-
-```rust
-use prollytree::agent::{AgentMemorySystem, MemoryQuery};
-
-let mut memory = AgentMemorySystem::init_with_thread_safe_git(
-    "./agent_memory", "agent_001".to_string(), None
-)?;
-
-// Store conversation context
-memory.short_term.store_conversation_turn(
-    "session_123", "user", "What's the weather today?", None
-).await?;
-
-// Store persistent knowledge
-memory.semantic.store_fact(
-    "weather", "temperature",
-    json!({"location": "Tokyo", "temp": "22°C"}),
-    0.9, "weather_api"
-).await?;
-
-// Query and checkpoint
-let memories = memory.semantic.query(MemoryQuery::text("Tokyo")).await?;
-let checkpoint = memory.checkpoint("Weather conversation").await?;
+// For SQL functionality, see examples/sql.rs
+println!("Multiple storage backends working!");
 ```
 
 ## Feature Flags
@@ -165,9 +167,9 @@ Run benchmarks: `cargo bench`
 # Install git-prolly CLI
 cargo install prollytree --features git
 
-# First setup a git repository and then create a dataset
+# Setup git repository and create dataset
 git init my-repo && cd my-repo
-git-prolly init my-data  # Creates subdirectory for dataset
+mkdir my-data && git-prolly init my-data  # Create dataset directory
 cd my-data
 git-prolly set "user:alice" "Alice Johnson"
 git-prolly commit -m "Add user"
