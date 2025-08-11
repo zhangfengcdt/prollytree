@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(name = "prolly-ui")]
 #[command(about = "Generate static HTML visualization for git-prolly repositories")]
-#[command(version = "0.1.0")]
+#[command(version = "0.3.0")]
 struct Cli {
     /// Path to the main git repository containing datasets as subdirectories
     #[arg(help = "Repository path (defaults to current directory)")]

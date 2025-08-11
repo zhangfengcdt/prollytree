@@ -124,6 +124,7 @@ impl AgentPriorityResolver {
 
     /// Extract agent ID from key (assumes key format includes agent info)
     /// This is a simple implementation - in practice you might have more sophisticated key parsing
+    /// Note: Reserved for future agent-based conflict resolution features
     #[allow(dead_code)]
     fn extract_agent_id(&self, key: &[u8]) -> Option<String> {
         let key_str = String::from_utf8_lossy(key);
@@ -136,6 +137,8 @@ impl AgentPriorityResolver {
         None
     }
 
+    /// Get priority for a given key based on its agent ID
+    /// Note: Reserved for future agent-based conflict resolution features
     #[allow(dead_code)]
     fn get_priority_for_key(&self, key: &[u8]) -> u32 {
         self.extract_agent_id(key)

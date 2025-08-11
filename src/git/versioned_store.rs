@@ -250,7 +250,12 @@ where
 
         // Create tree object in Git using git commands
         // Get the git root directory
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        let parent_path =
+            self.git_repo.path().parent().ok_or_else(|| {
+                GitKvError::GitObjectError("Repository path has no parent".into())
+            })?;
+        let git_root = Self::find_git_root(parent_path)
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
         // Stage all files in the current directory recursively
         let add_cmd = std::process::Command::new("git")
@@ -476,7 +481,7 @@ where
         // Get the current time
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| GitKvError::GitObjectError(format!("System time error: {e}")))?
             .as_secs() as i64;
 
         // Get git user configuration
