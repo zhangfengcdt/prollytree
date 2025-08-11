@@ -23,10 +23,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-prollytree = "0.2.0"
+prollytree = "0.3.0"
 
 # Optional features
-prollytree = { version = "0.2.0", features = ["git", "sql", "rig"] }
+prollytree = { version = "0.3.0", features = ["git", "sql", "rig"] }
 ```
 
 ## Examples
@@ -34,7 +34,7 @@ prollytree = { version = "0.2.0", features = ["git", "sql", "rig"] }
 ### Basic Tree Operations
 
 ```rust
-use prollytree::tree::ProllyTree;
+use prollytree::tree::{ProllyTree, Tree};
 use prollytree::storage::InMemoryNodeStorage;
 
 let storage = InMemoryNodeStorage::<32>::new();
@@ -44,56 +44,62 @@ let mut tree = ProllyTree::new(storage, Default::default());
 tree.insert(b"user:alice".to_vec(), b"Alice Johnson".to_vec());
 tree.insert(b"config:timeout".to_vec(), b"30".to_vec());
 
-// Query data
-let value = tree.find(b"user:alice")?;
-println!("Found: {}", String::from_utf8(value)?);
+// Query data - find returns a node, extract the value
+if let Some(node) = tree.find(b"user:alice") {
+    for (i, key) in node.keys.iter().enumerate() {
+        if key == b"user:alice" {
+            let value = &node.values[i];
+            println!("Found: {}", String::from_utf8(value.clone())?);
+            break;
+        }
+    }
+}
 
 // Generate cryptographic proof
-let proof = tree.generate_proof(b"user:alice")?;
-let is_valid = tree.verify_proof(&proof, b"user:alice", b"Alice Johnson");
+let proof = tree.generate_proof(b"user:alice");
+let is_valid = tree.verify(proof, b"user:alice", Some(b"Alice Johnson"));
 ```
 
 ### Git-backed Versioned Storage
 
 ```rust
 use prollytree::git::GitVersionedKvStore;
+use prollytree::diff::IgnoreConflictsResolver;
 
-let mut store = GitVersionedKvStore::init("./data")?;
+let mut store = GitVersionedKvStore::<32>::init("./data")?;
 
 // Version your data like Git
-store.set(b"config/api_key", b"secret123")?;
+store.insert(b"config/api_key".to_vec(), b"secret123".to_vec())?;
 store.commit("Initial config")?;
 
-// Branch for experiments
-store.checkout_new_branch("feature/optimization")?;
-store.set(b"config/timeout", b"60")?;
+// Create and switch to a new branch for experiments
+store.create_branch("feature/optimization")?;
+// Use regular git to switch branches: git checkout feature/optimization
+store.insert(b"config/timeout".to_vec(), b"60".to_vec())?;
 store.commit("Increase timeout")?;
 
-// Three-way merge back to main
-store.checkout("main")?;
-store.merge("feature/optimization")?;
+// Switch back to main and merge
+// Use regular git to switch: git checkout main
+store.merge("feature/optimization", &IgnoreConflictsResolver)?;
 ```
 
-### SQL Interface with Time Travel
+### SQL Interface with ProllyTree
 
 ```rust
 use prollytree::sql::ProllyStorage;
 use gluesql_core::prelude::Glue;
 
-let storage = ProllyStorage::<32>::init("./data")?;
+// Create ProllyTree storage backend
+let storage = ProllyStorage::<32>::new("./data")?;
 let mut glue = Glue::new(storage);
 
-// Standard SQL operations
+// Execute SQL operations
 glue.execute("CREATE TABLE users (id INTEGER, name TEXT)").await?;
-glue.execute("INSERT INTO users VALUES (1, 'Alice')").await?;
+glue.execute("INSERT INTO users VALUES (1, 'Alice Johnson')").await?;
 
-// Time travel queries
-glue.storage.commit("v1.0").await?;
-glue.execute("UPDATE users SET name = 'Alice Smith' WHERE id = 1").await?;
-
-// Query historical data
-let v1_data = glue.storage.query_at_commit("v1.0",
-    "SELECT * FROM users WHERE id = 1").await?;
+// Query the data
+let result = glue.execute("SELECT * FROM users WHERE id = 1").await?;
+println!("Query result: {:?}", result);
 ```
 
 ### AI Agent Memory
@@ -126,7 +132,7 @@ let checkpoint = memory.checkpoint("Weather conversation").await?;
 
 ```toml
 [dependencies.prollytree]
-version = "0.2.0"
+version = "0.3.0"
 features = [
     "git",              # Git-backed versioned storage
     "sql",              # SQL interface via GlueSQL
@@ -159,11 +165,13 @@ Run benchmarks: `cargo bench`
 # Install git-prolly CLI
 cargo install prollytree --features git
 
-# Use like Git for key-value data
-git-prolly init my-data
+# First setup a git repository and then create a dataset
+git init my-repo && cd my-repo
+git-prolly init my-data  # Creates subdirectory for dataset
+cd my-data
 git-prolly set "user:alice" "Alice Johnson"
 git-prolly commit -m "Add user"
-git-prolly checkout -b feature/updates
+git checkout -b feature/updates  # Use regular git for branching
 git-prolly merge main
 ```
 
