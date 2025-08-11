@@ -84,6 +84,8 @@ impl MockEmbeddingGenerator {
 /// Advanced search functionality for memory stores
 pub struct MemorySearchEngine<T: SearchableMemoryStore> {
     store: T,
+    /// Cache for embeddings to reduce API calls
+    /// Note: Reserved for future optimization features
     #[allow(dead_code)]
     embedding_cache: HashMap<String, Vec<f32>>,
 }

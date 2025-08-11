@@ -607,12 +607,24 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         let is_valid = self.verify(proof.clone(), key, None);
 
         // Print the tree structure with proof path highlighted
+        #[cfg(feature = "tracing")]
+        tracing::debug!("root:");
+        #[cfg(not(feature = "tracing"))]
         println!("root:");
+
         self.root.print_tree_with_proof(&self.storage, &proof, key);
 
         // Print proof information
-        println!("\nProof for key {key:?} is valid: {is_valid}");
-        println!("Proof: {proof:#?}");
+        #[cfg(feature = "tracing")]
+        {
+            tracing::debug!("Proof for key {:?} is valid: {}", key, is_valid);
+            tracing::debug!("Proof: {:#?}", proof);
+        }
+        #[cfg(not(feature = "tracing"))]
+        {
+            println!("\nProof for key {key:?} is valid: {is_valid}");
+            println!("Proof: {proof:#?}");
+        }
 
         is_valid
     }
