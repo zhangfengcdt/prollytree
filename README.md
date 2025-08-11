@@ -9,13 +9,13 @@ A **probabilistic B-tree** implementation in Rust that combines B-tree efficienc
 
 ## Features
 
-- **🚀 High Performance**: O(log n) operations with cache-friendly probabilistic balancing
-- **🔐 Cryptographically Verifiable**: Merkle tree properties for data integrity and inclusion proofs
-- **📦 Multiple Storage Backends**: In-memory, RocksDB, and Git-backed persistence
-- **🌐 Distributed-Ready**: Efficient diff, sync, and three-way merge capabilities
-- **🐍 Python Bindings**: Full API coverage via PyO3 with async support
-- **📊 SQL Interface**: Query trees with SQL via GlueSQL integration
-- **🤖 AI Agent Memory**: Purpose-built for LLM applications and agent systems
+- **High Performance**: O(log n) operations with cache-friendly probabilistic balancing
+- **Cryptographically Verifiable**: Merkle tree properties for data integrity and inclusion proofs
+- **Multiple Storage Backends**: In-memory, RocksDB, and Git-backed persistence
+- **Distributed-Ready**: Efficient diff, sync, and three-way merge capabilities
+- **Python Bindings**: Full API coverage via PyO3 with async support
+- **SQL Interface**: Query trees with SQL via GlueSQL integration
+- **AI Agent Memory**: Purpose-built for LLM applications and agent systems
 
 ## Quick Start
 
