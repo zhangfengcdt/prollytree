@@ -2,7 +2,7 @@
 name = "prollytree"
 description = "A prolly (probabilistic) tree for efficient storage, retrieval, and modification of ordered data."
 authors = ["Feng Zhang <f.feng.zhang@gmail.com>"]
-version = "0.3.0"
+version = "0.3.1-beta"
 edition = "2021"
 
 license = "Apache-2.0"
