@@ -1,0 +1,302 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_rust:
+        description: 'Publish to crates.io'
+        required: true
+        type: boolean
+        default: true
+      publish_python:
+        description: 'Publish to PyPI'
+        required: true
+        type: boolean
+        default: true
+      dry_run:
+        description: 'Dry run (no actual publishing)'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  validate:
+    name: Validate Release Branch
+    runs-on: ubuntu-latest
+    outputs:
+      can_release: ${{ steps.check.outputs.can_release }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check branch name
+        id: check
+        run: |
+          BRANCH_NAME="${{ github.ref_name }}"
+          echo "Current branch: $BRANCH_NAME"
+
+          if [[ "$BRANCH_NAME" == release/* ]] || [[ "$BRANCH_NAME" == release-* ]]; then
+            echo "✅ Valid release branch: $BRANCH_NAME"
+            echo "can_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Not a release branch. Must start with 'release/' or 'release-'"
+            echo "can_release=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Extract version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          echo "Version found: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  publish-rust:
+    name: Publish Rust to crates.io
+    needs: validate
+    if: ${{ needs.validate.outputs.can_release == 'true' && github.event.inputs.publish_rust == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check package
+        run: |
+          cargo check --all-features
+          cargo test --all-features
+
+      - name: Dry run publish (validation)
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "🔍 Dry run - validating package..."
+          cargo publish --dry-run --all-features
+          echo "✅ Package validation successful"
+
+      - name: Publish to crates.io
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          echo "📦 Publishing version ${{ needs.validate.outputs.version }} to crates.io..."
+          cargo publish --all-features
+          echo "✅ Successfully published to crates.io"
+
+  build-python-wheels:
+    name: Build Python wheels on ${{ matrix.os }}
+    needs: validate
+    if: ${{ needs.validate.outputs.can_release == 'true' && github.event.inputs.publish_python == 'true' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: auto
+          # Linux aarch64
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: auto
+          # Windows x86_64
+          - os: windows-latest
+            target: x64
+            manylinux: false
+          # macOS x86_64
+          - os: macos-13
+            target: x86_64
+            manylinux: false
+          # macOS ARM64
+          - os: macos-14
+            target: aarch64
+            manylinux: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup QEMU
+        if: ${{ matrix.target == 'aarch64' && runner.os == 'Linux' }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --features python,git,sql,rig
+          manylinux: ${{ matrix.manylinux }}
+          before-script-linux: |
+            # Install any system dependencies if needed
+            if [ "${{ matrix.target }}" = "aarch64" ]; then
+              echo "Setting up for ARM64 build"
+            fi
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist
+
+  publish-python:
+    name: Publish Python to PyPI
+    needs: [validate, build-python-wheels]
+    if: ${{ needs.validate.outputs.can_release == 'true' && github.event.inputs.publish_python == 'true' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/prollytree/
+    permissions:
+      id-token: write  # Required for trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build source distribution
+        run: |
+          pip install maturin
+          maturin sdist
+          cp target/wheels/*.tar.gz dist/
+
+      - name: List distribution files
+        run: |
+          echo "📦 Distribution files to publish:"
+          ls -la dist/
+
+      - name: Dry run - validate packages
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "🔍 Dry run - validating packages..."
+          pip install twine
+          twine check dist/*
+          echo "✅ Package validation successful"
+
+      - name: Publish to TestPyPI (dry run)
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+          verbose: true
+
+      - name: Publish to PyPI
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          verbose: true
+
+  create-release:
+    name: Create GitHub Release
+    needs: [validate, publish-rust, publish-python]
+    if: |
+      always() &&
+      needs.validate.outputs.can_release == 'true' &&
+      github.event.inputs.dry_run == 'false' &&
+      (needs.publish-rust.result == 'success' || needs.publish-rust.result == 'skipped') &&
+      (needs.publish-python.result == 'success' || needs.publish-python.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Python wheels
+        if: ${{ github.event.inputs.publish_python == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "# ProllyTree v$VERSION" > release-notes.md
+          echo "" >> release-notes.md
+
+          # Add package info
+          echo "## 📦 Packages Published" >> release-notes.md
+
+          if [[ "${{ github.event.inputs.publish_rust }}" == "true" ]]; then
+            echo "- ✅ Rust package published to [crates.io](https://crates.io/crates/prollytree/$VERSION)" >> release-notes.md
+          fi
+
+          if [[ "${{ github.event.inputs.publish_python }}" == "true" ]]; then
+            echo "- ✅ Python package published to [PyPI](https://pypi.org/project/prollytree/$VERSION/)" >> release-notes.md
+          fi
+
+          echo "" >> release-notes.md
+          echo "## 📝 Installation" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "### Rust" >> release-notes.md
+          echo '```toml' >> release-notes.md
+          echo "prollytree = \"$VERSION\"" >> release-notes.md
+          echo '```' >> release-notes.md
+          echo "" >> release-notes.md
+          echo "### Python" >> release-notes.md
+          echo '```bash' >> release-notes.md
+          echo "pip install prollytree==$VERSION" >> release-notes.md
+          echo '```' >> release-notes.md
+          echo "" >> release-notes.md
+
+          # Try to extract changelog if exists
+          if [ -f CHANGELOG.md ]; then
+            echo "## 📋 Changes" >> release-notes.md
+            # Extract section for this version
+            awk "/^## \[$VERSION\]/,/^## \[/" CHANGELOG.md | head -n -1 >> release-notes.md || true
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.validate.outputs.version }}
+          name: Release v${{ needs.validate.outputs.version }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(needs.validate.outputs.version, 'beta') || contains(needs.validate.outputs.version, 'alpha') || contains(needs.validate.outputs.version, 'rc') }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          fail_on_unmatched_files: false
