@@ -605,6 +605,110 @@ where
 
         Ok(self.git_repo.path().join(staging_filename))
     }
+
+    /// Generate a cryptographic proof for a key's existence and value in the tree
+    /// This proof can be used to verify the integrity of the key-value pair without
+    /// requiring access to the entire tree structure.
+    ///
+    /// # Parameters
+    /// - `key`: The key to generate proof for
+    ///
+    /// # Returns
+    /// - A proof object containing the hash path from root to the target node
+    pub fn generate_proof(&self, key: &[u8]) -> crate::proof::Proof<N> {
+        self.tree.generate_proof(key)
+    }
+
+    /// Verify a cryptographic proof for a key-value pair
+    /// This checks that the proof is valid and optionally verifies the expected value
+    ///
+    /// # Parameters
+    /// - `proof`: The proof to verify
+    /// - `key`: The key that the proof claims to prove
+    /// - `expected_value`: Optional expected value to verify against
+    ///
+    /// # Returns
+    /// - `true` if the proof is valid, `false` otherwise
+    pub fn verify(
+        &self,
+        proof: crate::proof::Proof<N>,
+        key: &[u8],
+        expected_value: Option<&[u8]>,
+    ) -> bool {
+        self.tree.verify(proof, key, expected_value)
+    }
+}
+
+#[cfg(test)]
+mod proof_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_versioned_store_proof_methods() {
+        // Create a temporary directory for the test
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = temp_dir.path().to_str().unwrap();
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to initialize git repo");
+
+        // Set git config
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to set git user name");
+
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to set git user email");
+
+        // Create a subdirectory for the dataset (git-prolly requires this)
+        let dataset_path = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_path).expect("Failed to create dataset directory");
+
+        // Change to the dataset subdirectory
+        let original_dir = std::env::current_dir().expect("Failed to get current dir");
+        std::env::set_current_dir(&dataset_path).expect("Failed to change directory");
+
+        // Initialize the versioned store from the dataset subdirectory
+        let mut store =
+            GitVersionedKvStore::<32>::init(&dataset_path).expect("Failed to initialize store");
+
+        // Insert test data
+        let key = b"proof_test_key".to_vec();
+        let value = b"proof_test_value".to_vec();
+
+        store
+            .insert(key.clone(), value.clone())
+            .expect("Failed to insert");
+        store
+            .commit("Add test data for proof")
+            .expect("Failed to commit");
+
+        // Test generate_proof method exists and works
+        let proof = store.generate_proof(&key);
+
+        // Test verify method with correct value
+        assert!(store.verify(proof.clone(), &key, Some(&value)));
+
+        // Test verify method for existence only
+        assert!(store.verify(proof.clone(), &key, None));
+
+        // Test verify with wrong value should fail
+        let wrong_value = b"wrong_value".to_vec();
+        assert!(!store.verify(proof.clone(), &key, Some(&wrong_value)));
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).expect("Failed to restore directory");
+    }
 }
 
 // Generic diff functionality for all storage types

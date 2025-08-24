@@ -1123,6 +1123,42 @@ impl PyVersionedKvStore {
         let store = self.inner.lock().unwrap();
         Ok(store.storage_backend().clone().into())
     }
+
+    fn generate_proof(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Py<PyBytes>> {
+        let key_vec = key.as_bytes().to_vec();
+
+        let proof_bytes = py.allow_threads(|| {
+            let store = self.inner.lock().unwrap();
+            let proof = store.generate_proof(&key_vec);
+
+            bincode::serialize(&proof)
+                .map_err(|e| PyValueError::new_err(format!("Proof serialization failed: {}", e)))
+        })?;
+
+        Ok(PyBytes::new_bound(py, &proof_bytes).into())
+    }
+
+    #[pyo3(signature = (proof_bytes, key, expected_value=None))]
+    fn verify_proof(
+        &self,
+        py: Python,
+        proof_bytes: &Bound<'_, PyBytes>,
+        key: &Bound<'_, PyBytes>,
+        expected_value: Option<&Bound<'_, PyBytes>>,
+    ) -> PyResult<bool> {
+        let key_vec = key.as_bytes().to_vec();
+        let proof_vec = proof_bytes.as_bytes().to_vec();
+        let value_option = expected_value.map(|v| v.as_bytes().to_vec());
+
+        py.allow_threads(|| {
+            let proof: crate::proof::Proof<32> = bincode::deserialize(&proof_vec).map_err(|e| {
+                PyValueError::new_err(format!("Proof deserialization failed: {}", e))
+            })?;
+
+            let store = self.inner.lock().unwrap();
+            Ok(store.verify(proof, &key_vec, value_option.as_deref()))
+        })
+    }
 }
 
 #[cfg(feature = "git")]
