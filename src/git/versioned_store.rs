@@ -1181,6 +1181,15 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             )
         })?;
 
+        // Check if the store is already initialized by looking for config files
+        let config_path = path.join("prolly_config_tree_config");
+        let mappings_path = path.join("prolly_hash_mappings");
+
+        if config_path.exists() || mappings_path.exists() {
+            // Store already exists, use open instead to load existing configuration
+            return Self::open(path);
+        }
+
         // Open the existing git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
@@ -2671,6 +2680,46 @@ mod tests {
             }
             _ => panic!("Expected key3 to be added"),
         }
+    }
+
+    #[test]
+    fn test_init_with_existing_store() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Initialize git repository
+        gix::init(temp_dir.path()).unwrap();
+
+        // Create subdirectory for dataset
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+
+        // First init - creates new store
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        // Add some data and commit
+        store
+            .insert(b"test_key".to_vec(), b"test_value".to_vec())
+            .unwrap();
+        store.commit("Test data").unwrap();
+
+        // Drop the store to ensure we're testing a fresh init
+        drop(store);
+
+        // Second init - should load existing store, not create new one
+        let store2 = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        // Verify data still exists (wasn't overwritten)
+        assert_eq!(
+            store2.get(b"test_key"),
+            Some(b"test_value".to_vec()),
+            "Data should still exist after second init"
+        );
+
+        // Verify config files exist
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        let mapping_path = dataset_dir.join("prolly_hash_mappings");
+        assert!(config_path.exists(), "Config file should exist");
+        assert!(mapping_path.exists(), "Mapping file should exist");
     }
 
     #[test]
