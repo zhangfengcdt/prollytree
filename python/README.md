@@ -39,7 +39,7 @@ The full documentation includes:
 - **🌳 Probabilistic Trees** - High-performance data storage with automatic balancing
 - **🤖 AI Agent Memory** - Multi-layered memory systems for intelligent agents
 - **📚 Versioned Storage** - Git-like version control for key-value data
-- **🔐 Cryptographic Verification** - Merkle proofs for data integrity
+- **🔐 Cryptographic Verification** - Merkle proofs for data integrity across trees and versioned storage
 - **⚡ SQL Queries** - Query your data using SQL syntax
 
 ## 🔥 Key Use Cases
@@ -84,6 +84,10 @@ commit_id = store.commit("Add production config")
 store.create_branch("experiment")
 store.insert(b"feature", b"experimental_data")
 store.commit("Add experimental feature")
+
+# Cryptographic verification on versioned data
+proof = store.generate_proof(b"config")
+is_valid = store.verify_proof(proof, b"config", b"production_settings")
 ```
 
 ### SQL Queries
