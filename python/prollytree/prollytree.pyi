@@ -289,6 +289,35 @@ class StorageBackend:
 
     def __str__(self) -> str: ...
 
+class MergeConflict:
+    """Represents a merge conflict between branches"""
+
+    @property
+    def key(self) -> bytes:
+        """The key that has a conflict"""
+        ...
+
+    @property
+    def base_value(self) -> Optional[bytes]:
+        """The value in the common base commit"""
+        ...
+
+    @property
+    def source_value(self) -> Optional[bytes]:
+        """The value in the source branch"""
+        ...
+
+    @property
+    def destination_value(self) -> Optional[bytes]:
+        """The value in the destination branch"""
+        ...
+
+class ConflictResolution:
+    """Enum representing different conflict resolution strategies"""
+    IgnoreAll: "ConflictResolution"
+    TakeSource: "ConflictResolution"
+    TakeDestination: "ConflictResolution"
+
 class VersionedKvStore:
     """A versioned key-value store backed by Git and ProllyTree"""
 
@@ -442,11 +471,97 @@ class VersionedKvStore:
         """
         ...
 
+    def get_commits_for_key(self, key: bytes) -> List[Dict[str, Union[str, int]]]:
+        """
+        Get all commits that contain changes to a specific key.
+
+        Args:
+            key: The key to search for
+
+        Returns:
+            List of commit dictionaries with id, author, committer, message, and timestamp
+        """
+        ...
+
+    def get_commit_history(self) -> List[Dict[str, Union[str, int]]]:
+        """
+        Get the commit history for the repository.
+
+        Returns:
+            List of commit dictionaries with id, author, committer, message, and timestamp
+        """
+        ...
+
+    def merge(
+        self,
+        source_branch: str,
+        conflict_resolution: Optional[ConflictResolution] = None
+    ) -> str:
+        """
+        Merge another branch into the current branch.
+
+        Args:
+            source_branch: Name of the branch to merge from
+            conflict_resolution: Strategy for resolving conflicts (default: IgnoreAll)
+
+        Returns:
+            The commit ID of the merge commit
+
+        Raises:
+            ValueError: If merge fails or has unresolved conflicts
+        """
+        ...
+
+    def try_merge(self, source_branch: str) -> Tuple[bool, List[MergeConflict]]:
+        """
+        Attempt to merge another branch and return any conflicts.
+
+        Args:
+            source_branch: Name of the branch to merge from
+
+        Returns:
+            Tuple of (success, conflicts) where:
+            - success: True if merge succeeded, False if there were conflicts
+            - conflicts: List of MergeConflict objects if success is False
+        """
+        ...
+
     def storage_backend(self) -> StorageBackend:
         """
         Get the current storage backend type.
 
         Returns:
             Storage backend enum value
+        """
+        ...
+
+    def generate_proof(self, key: bytes) -> bytes:
+        """
+        Generate a cryptographic proof for a key's existence and value in the versioned store.
+
+        Args:
+            key: The key to generate proof for
+
+        Returns:
+            Serialized proof as bytes
+        """
+        ...
+
+    def verify_proof(
+        self,
+        proof: bytes,
+        key: bytes,
+        expected_value: Optional[bytes] = None
+    ) -> bool:
+        """
+        Verify a cryptographic proof for a key-value pair in the versioned store.
+
+        Args:
+            proof: The serialized proof to verify
+            key: The key that the proof claims to prove
+            expected_value: Optional expected value to verify against
+
+        Returns:
+            True if the proof is valid, False otherwise
         """
         ...
