@@ -709,6 +709,120 @@ mod proof_tests {
         // Restore original directory
         std::env::set_current_dir(original_dir).expect("Failed to restore directory");
     }
+
+    #[test]
+    fn test_get_keys_at_ref() {
+        // Create a temporary directory for the test
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = temp_dir.path().to_str().unwrap();
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to initialize git repo");
+
+        // Set git config
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to set git user name");
+
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to set git user email");
+
+        // Create a subdirectory for the dataset (git-prolly requires this)
+        let dataset_path = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_path).expect("Failed to create dataset directory");
+
+        // Change to the dataset subdirectory
+        let original_dir = std::env::current_dir().expect("Failed to get current dir");
+        std::env::set_current_dir(&dataset_path).expect("Failed to change directory");
+
+        // Initialize the versioned store from the dataset subdirectory
+        let mut store =
+            GitVersionedKvStore::<32>::init(&dataset_path).expect("Failed to initialize store");
+
+        // Add initial data and commit
+        store
+            .insert(b"key1".to_vec(), b"value1".to_vec())
+            .expect("Failed to insert key1");
+        store
+            .insert(b"key2".to_vec(), b"value2".to_vec())
+            .expect("Failed to insert key2");
+        let commit1 = store.commit("Initial commit").expect("Failed to commit");
+
+        // Get keys at HEAD (should have key1 and key2)
+        let keys_at_head = store
+            .get_keys_at_ref("HEAD")
+            .expect("Failed to get keys at HEAD");
+        assert_eq!(keys_at_head.len(), 2);
+        assert_eq!(
+            keys_at_head.get(&b"key1".to_vec()),
+            Some(&b"value1".to_vec())
+        );
+        assert_eq!(
+            keys_at_head.get(&b"key2".to_vec()),
+            Some(&b"value2".to_vec())
+        );
+
+        // Add more data and commit
+        store
+            .insert(b"key3".to_vec(), b"value3".to_vec())
+            .expect("Failed to insert key3");
+        store
+            .update(b"key1".to_vec(), b"updated1".to_vec())
+            .expect("Failed to update key1");
+        let _commit2 = store.commit("Second commit").expect("Failed to commit");
+
+        // Get keys at the first commit
+        let keys_at_commit1 = store
+            .get_keys_at_ref(&commit1.to_hex().to_string())
+            .expect("Failed to get keys at commit1");
+        assert_eq!(keys_at_commit1.len(), 2);
+        assert_eq!(
+            keys_at_commit1.get(&b"key1".to_vec()),
+            Some(&b"value1".to_vec())
+        );
+        assert_eq!(
+            keys_at_commit1.get(&b"key2".to_vec()),
+            Some(&b"value2".to_vec())
+        );
+        assert!(!keys_at_commit1.contains_key(&b"key3".to_vec()));
+
+        // Get keys at HEAD~1 (should be same as first commit)
+        // Note: HEAD~1 syntax might not work with gix library, use commit hash instead
+        // let keys_at_head_minus_1 = store
+        //     .get_keys_at_ref("HEAD~1")
+        //     .expect("Failed to get keys at HEAD~1");
+        // assert_eq!(keys_at_head_minus_1, keys_at_commit1);
+
+        // Get keys at current HEAD (should have all three keys with updated key1)
+        let keys_at_current_head = store
+            .get_keys_at_ref("HEAD")
+            .expect("Failed to get keys at current HEAD");
+        assert_eq!(keys_at_current_head.len(), 3);
+        assert_eq!(
+            keys_at_current_head.get(&b"key1".to_vec()),
+            Some(&b"updated1".to_vec())
+        );
+        assert_eq!(
+            keys_at_current_head.get(&b"key2".to_vec()),
+            Some(&b"value2".to_vec())
+        );
+        assert_eq!(
+            keys_at_current_head.get(&b"key3".to_vec()),
+            Some(&b"value3".to_vec())
+        );
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).expect("Failed to restore directory");
+    }
 }
 
 // Generic diff functionality for all storage types

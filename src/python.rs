@@ -22,7 +22,11 @@ use std::sync::{Arc, Mutex};
 use crate::{
     agent::{AgentMemorySystem, MemoryType},
     config::TreeConfig,
-    git::{types::StorageBackend, versioned_store::HistoricalCommitAccess, GitVersionedKvStore},
+    git::{
+        types::StorageBackend,
+        versioned_store::{HistoricalAccess, HistoricalCommitAccess},
+        GitVersionedKvStore,
+    },
     proof::Proof,
     storage::{FileNodeStorage, InMemoryNodeStorage},
     tree::{ProllyTree, Tree},
@@ -1158,6 +1162,29 @@ impl PyVersionedKvStore {
             let store = self.inner.lock().unwrap();
             Ok(store.verify(proof, &key_vec, value_option.as_deref()))
         })
+    }
+
+    fn get_keys_at_ref(
+        &self,
+        py: Python,
+        reference: String,
+    ) -> PyResult<Vec<(Py<PyBytes>, Py<PyBytes>)>> {
+        let store = self.inner.lock().unwrap();
+
+        let keys_map = HistoricalAccess::get_keys_at_ref(&*store, &reference)
+            .map_err(|e| PyValueError::new_err(format!("Failed to get keys at ref: {}", e)))?;
+
+        let py_pairs: Vec<(Py<PyBytes>, Py<PyBytes>)> = keys_map
+            .into_iter()
+            .map(|(key, value): (Vec<u8>, Vec<u8>)| {
+                (
+                    PyBytes::new_bound(py, &key).into(),
+                    PyBytes::new_bound(py, &value).into(),
+                )
+            })
+            .collect();
+
+        Ok(py_pairs)
     }
 }
 
