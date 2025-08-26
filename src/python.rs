@@ -22,7 +22,11 @@ use std::sync::{Arc, Mutex};
 use crate::{
     agent::{AgentMemorySystem, MemoryType},
     config::TreeConfig,
-    git::{types::StorageBackend, versioned_store::HistoricalCommitAccess, GitVersionedKvStore},
+    git::{
+        types::StorageBackend,
+        versioned_store::{HistoricalAccess, HistoricalCommitAccess},
+        GitVersionedKvStore,
+    },
     proof::Proof,
     storage::{FileNodeStorage, InMemoryNodeStorage},
     tree::{ProllyTree, Tree},
@@ -32,6 +36,9 @@ use crate::{
 use crate::sql::ProllyStorage;
 #[cfg(feature = "sql")]
 use gluesql_core::{data::Value as SqlValue, executor::Payload, prelude::Glue};
+
+// Maximum number of keys that can be retrieved in a single operation
+const MAX_KEYS_LIMIT: usize = 1024;
 
 #[pyclass(name = "TreeConfig")]
 struct PyTreeConfig {
@@ -880,8 +887,18 @@ impl PyVersionedKvStore {
         let store = self.inner.lock().unwrap();
         let keys = store.list_keys();
 
+        let total_keys = keys.len();
+        if total_keys > MAX_KEYS_LIMIT {
+            eprintln!(
+                "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
+                Consider using more specific queries or implementing pagination.",
+                total_keys, MAX_KEYS_LIMIT
+            );
+        }
+
         let py_keys: Vec<Py<PyBytes>> = keys
             .iter()
+            .take(MAX_KEYS_LIMIT)
             .map(|key| PyBytes::new_bound(py, key).into())
             .collect();
 
@@ -1159,6 +1176,39 @@ impl PyVersionedKvStore {
             Ok(store.verify(proof, &key_vec, value_option.as_deref()))
         })
     }
+
+    fn get_keys_at_ref(
+        &self,
+        py: Python,
+        reference: String,
+    ) -> PyResult<Vec<(Py<PyBytes>, Py<PyBytes>)>> {
+        let store = self.inner.lock().unwrap();
+
+        let keys_map = HistoricalAccess::get_keys_at_ref(&*store, &reference)
+            .map_err(|e| PyValueError::new_err(format!("Failed to get keys at ref: {}", e)))?;
+
+        let total_keys = keys_map.len();
+        if total_keys > MAX_KEYS_LIMIT {
+            eprintln!(
+                "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
+                Consider using more specific queries or implementing pagination.",
+                total_keys, MAX_KEYS_LIMIT
+            );
+        }
+
+        let py_pairs: Vec<(Py<PyBytes>, Py<PyBytes>)> = keys_map
+            .into_iter()
+            .take(MAX_KEYS_LIMIT)
+            .map(|(key, value): (Vec<u8>, Vec<u8>)| {
+                (
+                    PyBytes::new_bound(py, &key).into(),
+                    PyBytes::new_bound(py, &value).into(),
+                )
+            })
+            .collect();
+
+        Ok(py_pairs)
+    }
 }
 
 #[cfg(feature = "git")]
@@ -1392,7 +1442,18 @@ impl PyWorktreeVersionedKvStore {
 
     fn list_keys(&self) -> PyResult<Vec<Vec<u8>>> {
         let store = self.inner.lock().unwrap();
-        Ok(store.store().list_keys())
+        let keys = store.store().list_keys();
+
+        let total_keys = keys.len();
+        if total_keys > MAX_KEYS_LIMIT {
+            eprintln!(
+                "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
+                Consider using more specific queries or implementing pagination.",
+                total_keys, MAX_KEYS_LIMIT
+            );
+        }
+
+        Ok(keys.into_iter().take(MAX_KEYS_LIMIT).collect())
     }
 }
 

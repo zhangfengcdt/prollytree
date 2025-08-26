@@ -565,3 +565,33 @@ class VersionedKvStore:
             True if the proof is valid, False otherwise
         """
         ...
+
+    def get_keys_at_ref(self, reference: str) -> List[Tuple[bytes, bytes]]:
+        """
+        Get all key-value pairs at a specific reference (commit, branch, or tag).
+
+        This method provides historical access to the complete state of the store
+        at any point in its history.
+
+        Args:
+            reference: A git reference - can be a branch name (e.g., "main", "feature/xyz"),
+                      commit hash (full or abbreviated), tag name, or relative reference
+                      (e.g., "HEAD", "HEAD~1", "main^")
+
+        Returns:
+            List of (key, value) tuples representing all key-value pairs at that reference
+
+        Raises:
+            ValueError: If the reference cannot be resolved or accessed
+
+        Example:
+            # Get all keys at a specific commit
+            pairs = store.get_keys_at_ref("abc123def")
+
+            # Get all keys from the main branch
+            pairs = store.get_keys_at_ref("main")
+
+            # Get all keys from the previous commit
+            pairs = store.get_keys_at_ref("HEAD~1")
+        """
+        ...
