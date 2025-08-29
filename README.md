@@ -23,10 +23,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-prollytree = "0.3.0"
+prollytree = "0.3.1"
 
 # Optional features
-prollytree = { version = "0.3.0", features = ["git", "sql", "rig"] }
+prollytree = { version = "0.3.1", features = ["git", "sql", "rig"] }
 ```
 
 ## Examples
@@ -124,7 +124,7 @@ println!("Multiple storage backends working!");
 
 ```toml
 [dependencies.prollytree]
-version = "0.3.0"
+version = "0.3.1"
 features = [
     "git",              # Git-backed versioned storage
     "sql",              # SQL interface via GlueSQL

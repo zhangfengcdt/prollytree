@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "prollytree"
-version = "0.3.1-beta"
+version = "0.3.1"
 description = "Python bindings for ProllyTree - a probabilistic tree for efficient storage and retrieval"
 readme = "python/README.md"
 requires-python = ">=3.8"

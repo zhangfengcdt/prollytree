@@ -62,4 +62,4 @@ if sql_available:
 if git_available:
     __all__.extend(["WorktreeManager", "WorktreeVersionedKvStore"])
 
-__version__ = "0.3.1-beta"
+__version__ = "0.3.1"
