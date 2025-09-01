@@ -23,7 +23,7 @@ use crate::{
     agent::{AgentMemorySystem, MemoryType},
     config::TreeConfig,
     git::{
-        types::StorageBackend,
+        types::{DiffOperation, StorageBackend},
         versioned_store::{HistoricalAccess, HistoricalCommitAccess},
         GitVersionedKvStore,
     },
@@ -815,6 +815,96 @@ enum PyConflictResolution {
     TakeDestination,
 }
 
+/// Python wrapper for DiffOperation
+#[pyclass(name = "DiffOperation")]
+#[derive(Clone)]
+struct PyDiffOperation {
+    operation_type: String,
+    value: Option<Vec<u8>>,
+    old_value: Option<Vec<u8>>,
+    new_value: Option<Vec<u8>>,
+}
+
+#[pymethods]
+impl PyDiffOperation {
+    #[getter]
+    fn operation_type(&self) -> String {
+        self.operation_type.clone()
+    }
+
+    #[getter]
+    fn value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    #[getter]
+    fn old_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .old_value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    #[getter]
+    fn new_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .new_value
+            .as_ref()
+            .map(|v| PyBytes::new_bound(py, v).into()))
+    }
+
+    fn __repr__(&self) -> String {
+        match self.operation_type.as_str() {
+            "Added" => format!(
+                "DiffOperation.Added(value_size={})",
+                self.value.as_ref().map_or(0, |v| v.len())
+            ),
+            "Removed" => format!(
+                "DiffOperation.Removed(value_size={})",
+                self.value.as_ref().map_or(0, |v| v.len())
+            ),
+            "Modified" => format!(
+                "DiffOperation.Modified(old_size={}, new_size={})",
+                self.old_value.as_ref().map_or(0, |v| v.len()),
+                self.new_value.as_ref().map_or(0, |v| v.len())
+            ),
+            _ => "DiffOperation.Unknown".to_string(),
+        }
+    }
+}
+
+/// Python wrapper for KvDiff
+#[pyclass(name = "KvDiff")]
+#[derive(Clone)]
+struct PyKvDiff {
+    key: Vec<u8>,
+    operation: PyDiffOperation,
+}
+
+#[pymethods]
+impl PyKvDiff {
+    #[getter]
+    fn key(&self, py: Python) -> PyResult<Py<PyBytes>> {
+        Ok(PyBytes::new_bound(py, &self.key).into())
+    }
+
+    #[getter]
+    fn operation(&self) -> PyDiffOperation {
+        self.operation.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "KvDiff(key={:?}, operation={})",
+            String::from_utf8_lossy(&self.key),
+            self.operation.__repr__()
+        )
+    }
+}
+
 #[pyclass(name = "VersionedKvStore")]
 struct PyVersionedKvStore {
     inner: Arc<Mutex<GitVersionedKvStore<32>>>,
@@ -1208,6 +1298,69 @@ impl PyVersionedKvStore {
             .collect();
 
         Ok(py_pairs)
+    }
+
+    /// Compare two commits or branches and return all keys that are added, updated or deleted
+    ///
+    /// Args:
+    ///     from_ref: Reference (branch or commit) to compare from
+    ///     to_ref: Reference (branch or commit) to compare to
+    ///
+    /// Returns:
+    ///     List[KvDiff]: List of differences between the two references
+    fn diff(&self, from_ref: String, to_ref: String) -> PyResult<Vec<PyKvDiff>> {
+        let store = self.inner.lock().unwrap();
+
+        let diffs = store
+            .diff(&from_ref, &to_ref)
+            .map_err(|e| PyValueError::new_err(format!("Failed to compute diff: {}", e)))?;
+
+        let py_diffs: Vec<PyKvDiff> = diffs
+            .into_iter()
+            .map(|diff| {
+                let operation = match diff.operation {
+                    DiffOperation::Added(value) => PyDiffOperation {
+                        operation_type: "Added".to_string(),
+                        value: Some(value),
+                        old_value: None,
+                        new_value: None,
+                    },
+                    DiffOperation::Removed(value) => PyDiffOperation {
+                        operation_type: "Removed".to_string(),
+                        value: Some(value),
+                        old_value: None,
+                        new_value: None,
+                    },
+                    DiffOperation::Modified { old, new } => PyDiffOperation {
+                        operation_type: "Modified".to_string(),
+                        value: None,
+                        old_value: Some(old),
+                        new_value: Some(new),
+                    },
+                };
+
+                PyKvDiff {
+                    key: diff.key,
+                    operation,
+                }
+            })
+            .collect();
+
+        Ok(py_diffs)
+    }
+
+    /// Get the current commit's object ID
+    ///
+    /// Returns:
+    ///     str: The hexadecimal string representation of the current commit ID
+    fn current_commit(&self) -> PyResult<String> {
+        let store = self.inner.lock().unwrap();
+
+        let commit_id = store
+            .current_commit()
+            .map_err(|e| PyValueError::new_err(format!("Failed to get current commit: {}", e)))?;
+
+        Ok(commit_id.to_hex().to_string())
     }
 }
 
@@ -1852,6 +2005,8 @@ fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStorageBackend>()?;
     m.add_class::<PyMergeConflict>()?;
     m.add_class::<PyConflictResolution>()?;
+    m.add_class::<PyDiffOperation>()?;
+    m.add_class::<PyKvDiff>()?;
     m.add_class::<PyVersionedKvStore>()?;
     #[cfg(feature = "git")]
     m.add_class::<PyWorktreeManager>()?;
