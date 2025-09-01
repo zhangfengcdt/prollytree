@@ -318,6 +318,42 @@ class ConflictResolution:
     TakeSource: "ConflictResolution"
     TakeDestination: "ConflictResolution"
 
+class DiffOperation:
+    """Represents a difference operation (Added, Removed, or Modified)"""
+
+    @property
+    def operation_type(self) -> str:
+        """The type of operation: 'Added', 'Removed', or 'Modified'"""
+        ...
+
+    @property
+    def value(self) -> Optional[bytes]:
+        """For Added/Removed operations, the value involved"""
+        ...
+
+    @property
+    def old_value(self) -> Optional[bytes]:
+        """For Modified operations, the old value"""
+        ...
+
+    @property
+    def new_value(self) -> Optional[bytes]:
+        """For Modified operations, the new value"""
+        ...
+
+class KvDiff:
+    """Represents a key-value difference between two references"""
+
+    @property
+    def key(self) -> bytes:
+        """The key that changed"""
+        ...
+
+    @property
+    def operation(self) -> DiffOperation:
+        """The operation that occurred on this key"""
+        ...
+
 class VersionedKvStore:
     """A versioned key-value store backed by Git and ProllyTree"""
 
@@ -483,6 +519,7 @@ class VersionedKvStore:
         """
         ...
 
+
     def get_commit_history(self) -> List[Dict[str, Union[str, int]]]:
         """
         Get the commit history for the repository.
@@ -593,5 +630,41 @@ class VersionedKvStore:
 
             # Get all keys from the previous commit
             pairs = store.get_keys_at_ref("HEAD~1")
+        """
+        ...
+
+    def diff(self, from_ref: str, to_ref: str) -> List[KvDiff]:
+        """
+        Compare two commits or branches and return all keys that are added, updated or deleted.
+
+        Args:
+            from_ref: Reference (branch or commit) to compare from
+            to_ref: Reference (branch or commit) to compare to
+
+        Returns:
+            List of KvDiff objects representing the differences between the two references
+
+        Example:
+            # Compare two commits
+            diffs = store.diff("abc123", "def456")
+
+            # Compare two branches
+            diffs = store.diff("main", "feature-branch")
+
+            # Check what changed from last commit
+            diffs = store.diff("HEAD~1", "HEAD")
+        """
+        ...
+
+    def current_commit(self) -> str:
+        """
+        Get the current commit's object ID.
+
+        Returns:
+            The hexadecimal string representation of the current commit ID
+
+        Example:
+            commit_id = store.current_commit()
+            print(f"Current commit: {commit_id}")
         """
         ...

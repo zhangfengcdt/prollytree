@@ -15,6 +15,8 @@
 
 import tempfile
 import shutil
+import subprocess
+import os
 import pytest
 from pathlib import Path
 
@@ -27,12 +29,24 @@ class TestDiffFunctionality:
     def setup_method(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
-        self.store_path = Path(self.temp_dir) / "test_store"
-        # Create the directory
+
+        # Initialize git repository in the temp directory
+        subprocess.run(["git", "init"], cwd=self.temp_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.temp_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.temp_dir, check=True)
+
+        # Create subdirectory for the store (not in git root)
+        self.store_path = Path(self.temp_dir) / "data"
         self.store_path.mkdir(parents=True, exist_ok=True)
+
+        # Change working directory to the store path for git operations
+        self.original_cwd = os.getcwd()
+        os.chdir(str(self.store_path))
 
     def teardown_method(self):
         """Clean up test fixtures."""
+        # Restore original working directory
+        os.chdir(self.original_cwd)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_diff_between_commits(self):
@@ -123,10 +137,6 @@ class TestDiffFunctionality:
         # Initialize store
         store = prollytree.VersionedKvStore(str(self.store_path))
 
-        # Initially there should be no current commit (empty repo)
-        # This might raise an error or return a special value
-        # depending on implementation
-
         # Create first commit
         store.insert(b"key1", b"value1")
         commit1 = store.commit("First commit")
@@ -143,10 +153,14 @@ class TestDiffFunctionality:
         current = store.current_commit()
         assert current == commit2
 
-        # Checkout first commit
-        store.checkout(commit1)
+        # Test with branch operations
+        store.create_branch("test-branch")
+        store.insert(b"key3", b"value3")
+        commit3 = store.commit("Third commit on branch")
+
+        # Current commit should be updated
         current = store.current_commit()
-        assert current == commit1
+        assert current == commit3
 
         # Checkout back to main branch
         store.checkout("main")
@@ -196,6 +210,37 @@ class TestDiffFunctionality:
         assert "Modified" in op_repr
         assert "old_size" in op_repr
         assert "new_size" in op_repr
+
+    def test_get_commits_for_key_functionality(self):
+        """Test the get_commits_for_key function works correctly."""
+        # Initialize store
+        store = prollytree.VersionedKvStore(str(self.store_path))
+
+        # Create commits with changes to a specific key
+        store.insert(b"tracked_key", b"value1")
+        store.insert(b"other_key", b"other_value")
+        commit1 = store.commit("First commit")
+
+        store.update(b"tracked_key", b"value2")
+        commit2 = store.commit("Second commit - tracked_key changed")
+
+        store.insert(b"another_key", b"another_value")
+        commit3 = store.commit("Third commit - no tracked_key change")
+
+        # Test get_commits_for_key functionality
+        commits_for_key = store.get_commits_for_key(b"tracked_key")
+
+        # Should return 2 commits that modified tracked_key
+        assert len(commits_for_key) == 2
+
+        # Verify the commit IDs match what we expect
+        commit_ids = [commit['id'] for commit in commits_for_key]
+        assert commit2 in commit_ids  # Most recent change
+        assert commit1 in commit_ids  # First commit with this key
+        assert commit3 not in [c['id'] for c in commits_for_key]  # Third commit didn't touch tracked_key
+
+        # Verify commits are in reverse chronological order (newest first)
+        assert commits_for_key[0]['id'] == commit2  # Most recent first
 
 
 if __name__ == "__main__":
