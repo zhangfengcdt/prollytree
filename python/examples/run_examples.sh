@@ -11,10 +11,8 @@ get_example_file() {
         "basic") echo "basic_usage.py" ;;
         "sql") echo "sql_example.py" ;;
         "langgraph") echo "langgraph_example.py" ;;
-        "chronological") echo "langgraph_chronological.py" ;;
-        "multi-agent") echo "langgraph_multi_agent_branching.py" ;;
         "merge") echo "merge_example.py" ;;
-        "langmem") echo "langmem_integration.py" ;;
+        "langmem") echo "langmem_example.py" ;;
         *) echo "" ;;
     esac
 }
@@ -30,8 +28,6 @@ show_usage() {
     echo "  basic         - Basic memory usage example"
     echo "  sql           - SQL query example"
     echo "  langgraph     - LangGraph memory example"
-    echo "  chronological - LangGraph chronological memory example"
-    echo "  multi-agent   - Multi-agent system with branch isolation"
     echo "  merge         - Branch merging with conflict resolution example"
     echo "  langmem       - LangMem integration with ProllyTree backend"
     echo ""
@@ -95,10 +91,8 @@ if ./python/build_python.sh --all-features --install; then
         run_example "basic memory usage" "basic_usage.py"
         run_example "SQL" "sql_example.py"
         run_example "LangGraph memory" "langgraph_example.py"
-        run_example "LangGraph chronological memory" "langgraph_chronological.py"
-        run_example "Multi-agent branching" "langgraph_multi_agent_branching.py"
         run_example "merge with conflict resolution" "merge_example.py"
-        run_example "LangMem integration" "langmem_integration.py"
+        run_example "LangMem integration" "langmem_example.py"
     else
         # Run only the requested example
         EXAMPLE_FILE=$(get_example_file "$REQUESTED_EXAMPLE")
