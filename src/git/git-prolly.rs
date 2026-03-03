@@ -16,7 +16,9 @@ use clap::{Parser, Subcommand};
 #[cfg(feature = "sql")]
 use gluesql_core::{executor::Payload, prelude::Glue};
 use prollytree::git::versioned_store::{HistoricalAccess, HistoricalCommitAccess};
-use prollytree::git::{DiffOperation, GitOperations, GitVersionedKvStore, MergeResult};
+use prollytree::git::{
+    DiffOperation, GitOperations, GitVersionedKvStore, MergeResult, ThreadSafeGitVersionedKvStore,
+};
 #[cfg(feature = "sql")]
 use prollytree::sql::ProllyStorage;
 use prollytree::tree::Tree;
@@ -952,10 +954,10 @@ async fn handle_sql(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_dir = env::current_dir()?;
 
-    // Open the underlying GitVersionedKvStore first
-    let mut store = GitVersionedKvStore::<32>::open(&current_dir).map_err(|e| {
+    // Open the underlying ThreadSafeGitVersionedKvStore first
+    let store = ThreadSafeGitVersionedKvStore::<32>::open(&current_dir).map_err(|e| {
         if verbose {
-            format!("Failed to open GitVersionedKvStore: {e}")
+            format!("Failed to open ThreadSafeGitVersionedKvStore: {e}")
         } else {
             "Failed to open dataset. Make sure you're in a git-prolly directory.".to_string()
         }
@@ -963,14 +965,20 @@ async fn handle_sql(
 
     // Save original branch before any operations
     let original_branch = if branch.is_some() {
-        Some(store.current_branch().to_string())
+        Some(
+            store
+                .current_branch()
+                .map_err(|e| format!("Failed to get current branch: {e}"))?,
+        )
     } else {
         None
     };
 
     // If branch parameter is provided, ensure clean working directory and checkout
     if let Some(branch_or_commit) = &branch {
-        let current_status = store.status();
+        let current_status = store
+            .status()
+            .map_err(|e| format!("Failed to get status: {e}"))?;
         if !current_status.is_empty() {
             eprintln!("Error: Cannot use -b/--branch parameter with uncommitted staging changes");
             eprintln!(
@@ -1027,7 +1035,7 @@ struct SqlExecutionConfig {
 
 #[cfg(feature = "sql")]
 async fn execute_sql_with_restoration(
-    store: GitVersionedKvStore<32>,
+    store: ThreadSafeGitVersionedKvStore<32>,
     config: SqlExecutionConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create the ProllyTree storage
@@ -1250,7 +1258,7 @@ fn format_payload(payload: &Payload, format: &str) -> Result<(), Box<dyn std::er
         Payload::Create => {
             println!("✓ Table created successfully");
         }
-        Payload::DropTable => {
+        Payload::DropTable(_) => {
             println!("✓ Table dropped successfully");
         }
         _ => {

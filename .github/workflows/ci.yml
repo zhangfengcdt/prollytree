@@ -21,23 +21,37 @@ jobs:
     needs: pre-commit
     strategy:
       matrix:
-        feature_flags: ["no-default-features", "all-features"]
+        include:
+          - feature_flags: "--no-default-features"
+            name: "minimal"
+          - feature_flags: "--no-default-features --features git"
+            name: "git-only"
+          - feature_flags: "--no-default-features --features 'git agent'"
+            name: "git-agent"
+          - feature_flags: ""
+            name: "default"
     runs-on: ubuntu-latest
     steps:
 
     - uses: actions/checkout@v4
 
-    - name: build
-      run: cargo build --all --verbose
+    - name: build (${{ matrix.name }})
+      run: cargo build --all --verbose ${{ matrix.feature_flags }}
 
-    - name: test
-      run: cargo test --verbose
+    - name: test (${{ matrix.name }})
+      run: cargo test --verbose ${{ matrix.feature_flags }}
+
+    - name: clippy (${{ matrix.name }})
+      run: cargo clippy --all ${{ matrix.feature_flags }}
+
+  docs:
+    needs: pre-commit
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
 
     - name: build benchmarks
       run: cargo test --benches --no-run --verbose
-
-    - name: clippy
-      run: cargo clippy --all
 
     - name: docs
       run: cargo doc --document-private-items --no-deps

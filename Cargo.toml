@@ -33,10 +33,10 @@ gix = { version = "0.66", features = ["blocking-network-client"], optional = tru
 clap = { version = "4.0", features = ["derive"], optional = true }
 lru = { version = "0.16", optional = true }
 hex = { version = "0.4", optional = true }
-chrono = { version = "0.4", optional = true }
-gluesql-core = { version = "0.15", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
+gluesql-core = { version = "0.19", optional = true }
 async-trait = { version = "0.1", optional = true }
-uuid = { version = "1.0", optional = true }
+uuid = { version = "1.0", features = ["v4"], optional = true }
 futures = { version = "0.3", optional = true }
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync"], optional = true }
 rig-core = { version = "0.2.1", optional = true }
@@ -54,13 +54,14 @@ tempfile = "3.0"
 tokio = { version = "1.0", features = ["full"] }
 
 [features]
-default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql"]
+default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql", "agent"]
 tracing = ["dep:tracing"]
 digest_base64 = ["dep:base64"]
 prolly_balance_max_nodes = []
 prolly_balance_rolling_hash = []
 git = ["dep:gix", "dep:clap", "dep:lru", "dep:hex", "dep:chrono", "dep:uuid"]
 sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures", "dep:tokio"]
+agent = ["git", "dep:async-trait", "dep:tokio", "dep:futures"]
 rig = ["dep:rig-core", "dep:tokio", "dep:async-trait"]
 python = ["dep:pyo3"]
 rocksdb_storage = ["dep:rocksdb", "dep:lru"]

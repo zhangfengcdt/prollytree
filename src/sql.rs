@@ -29,25 +29,25 @@ use gluesql_core::{
     data::{Key, Schema},
     error::{Error, Result},
     store::{
-        AlterTable, CustomFunction, CustomFunctionMut, DataRow, Index, IndexMut, Metadata, RowIter,
-        Store, StoreMut, Transaction,
+        AlterTable, CustomFunction, CustomFunctionMut, DataRow, Index, IndexMut, Metadata, Planner,
+        RowIter, Store, StoreMut, Transaction,
     },
 };
 
 #[cfg(feature = "sql")]
-use crate::git::versioned_store::GitVersionedKvStore;
+use crate::git::versioned_store::ThreadSafeGitVersionedKvStore;
 
 /// GlueSQL storage backend using ProllyTree
 #[cfg(feature = "sql")]
 pub struct ProllyStorage<const D: usize> {
-    store: GitVersionedKvStore<D>,
+    store: ThreadSafeGitVersionedKvStore<D>,
     schemas: HashMap<String, Schema>,
 }
 
 #[cfg(feature = "sql")]
 impl<const D: usize> ProllyStorage<D> {
     /// Create a new ProllyStorage instance
-    pub fn new(store: GitVersionedKvStore<D>) -> Self {
+    pub fn new(store: ThreadSafeGitVersionedKvStore<D>) -> Self {
         Self {
             store,
             schemas: HashMap::new(),
@@ -59,7 +59,7 @@ impl<const D: usize> ProllyStorage<D> {
     pub fn init(path: &std::path::Path) -> Result<Self> {
         let dir = path.to_path_buf();
         let dir_string = dir.to_string_lossy().to_string();
-        let store = GitVersionedKvStore::init(path).map_err(|e| {
+        let store = ThreadSafeGitVersionedKvStore::init(path).map_err(|e| {
             Error::StorageMsg(format!("Failed to initialize store: {e} from {dir_string}"))
         })?;
         Ok(Self::new(store))
@@ -68,13 +68,13 @@ impl<const D: usize> ProllyStorage<D> {
     /// Open an existing storage
     #[allow(clippy::result_large_err)]
     pub fn open(path: &std::path::Path) -> Result<Self> {
-        let store = GitVersionedKvStore::open(path)
+        let store = ThreadSafeGitVersionedKvStore::open(path)
             .map_err(|e| Error::StorageMsg(format!("Failed to open store: {e}")))?;
         Ok(Self::new(store))
     }
 
     // returns the underlying store
-    pub fn store(&self) -> &GitVersionedKvStore<D> {
+    pub fn store(&self) -> &ThreadSafeGitVersionedKvStore<D> {
         &self.store
     }
 
@@ -130,12 +130,17 @@ impl<const D: usize> Metadata for ProllyStorage<D> {}
 impl<const D: usize> CustomFunction for ProllyStorage<D> {}
 #[cfg(feature = "sql")]
 impl<const D: usize> CustomFunctionMut for ProllyStorage<D> {}
+#[cfg(feature = "sql")]
+impl<const D: usize> Planner for ProllyStorage<D> {}
 
 #[cfg(feature = "sql")]
-#[async_trait(?Send)]
+#[async_trait]
 impl<const D: usize> Store for ProllyStorage<D> {
     async fn fetch_all_schemas(&self) -> Result<Vec<Schema>> {
-        let all_keys = self.store.list_keys();
+        let all_keys = self
+            .store
+            .list_keys()
+            .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
         let mut schemas = Vec::new();
 
         for storage_key in all_keys {
@@ -183,7 +188,10 @@ impl<const D: usize> Store for ProllyStorage<D> {
         let table_name = table_name.to_string();
 
         // Get all keys that start with the table prefix
-        let all_keys = self.store.list_keys();
+        let all_keys = self
+            .store
+            .list_keys()
+            .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
         let mut rows = Vec::new();
 
         for storage_key in all_keys {
@@ -214,7 +222,7 @@ impl<const D: usize> Store for ProllyStorage<D> {
 }
 
 #[cfg(feature = "sql")]
-#[async_trait(?Send)]
+#[async_trait]
 impl<const D: usize> StoreMut for ProllyStorage<D> {
     async fn insert_schema(&mut self, schema: &Schema) -> Result<()> {
         let key = Self::schema_key(&schema.table_name);
@@ -300,7 +308,7 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
 }
 
 #[cfg(feature = "sql")]
-#[async_trait(?Send)]
+#[async_trait]
 impl<const D: usize> Transaction for ProllyStorage<D> {
     async fn begin(&mut self, autocommit: bool) -> Result<bool> {
         if autocommit {
@@ -364,6 +372,7 @@ mod tests {
                     nullable: false,
                     default: None,
                     unique: None,
+                    comment: None,
                 },
                 ColumnDef {
                     name: "name".to_string(),
@@ -371,10 +380,13 @@ mod tests {
                     nullable: false,
                     default: None,
                     unique: None,
+                    comment: None,
                 },
             ]),
             indexes: vec![],
             engine: None,
+            foreign_keys: vec![],
+            comment: None,
         };
 
         // Insert schema
