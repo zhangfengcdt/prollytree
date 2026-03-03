@@ -706,8 +706,8 @@ mod proof_tests {
         let wrong_value = b"wrong_value".to_vec();
         assert!(!store.verify(proof.clone(), &key, Some(&wrong_value)));
 
-        // Restore original directory
-        std::env::set_current_dir(original_dir).expect("Failed to restore directory");
+        // Restore original directory (best effort - may fail in parallel tests)
+        let _ = std::env::set_current_dir(original_dir);
     }
 
     #[test]
@@ -820,8 +820,8 @@ mod proof_tests {
             Some(&b"value3".to_vec())
         );
 
-        // Restore original directory
-        std::env::set_current_dir(original_dir).expect("Failed to restore directory");
+        // Restore original directory (best effort - may fail in parallel tests)
+        let _ = std::env::set_current_dir(original_dir);
     }
 }
 
