@@ -219,11 +219,13 @@ async fn main() -> Result<()> {
     }
 
     println!("Git keys:");
-    for key in kv_store.list_keys() {
-        // Convert Vec<u8> to String for display, or use debug format
-        match String::from_utf8(key.clone()) {
-            Ok(key_str) => println!("  - Key: {}", key_str),
-            Err(_) => println!("  - Key: {:?}", key),
+    if let Ok(keys) = kv_store.list_keys() {
+        for key in keys {
+            // Convert Vec<u8> to String for display, or use debug format
+            match String::from_utf8(key.clone()) {
+                Ok(key_str) => println!("  - Key: {}", key_str),
+                Err(_) => println!("  - Key: {:?}", key),
+            }
         }
     }
 
