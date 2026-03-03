@@ -35,14 +35,17 @@ jobs:
 
     - uses: actions/checkout@v4
 
+    - name: Check Cargo.lock is up to date
+      run: cargo check --locked
+
     - name: build (${{ matrix.name }})
-      run: cargo build --all --verbose ${{ matrix.feature_flags }}
+      run: cargo build --locked --all --verbose ${{ matrix.feature_flags }}
 
     - name: test (${{ matrix.name }})
-      run: cargo test --verbose ${{ matrix.feature_flags }}
+      run: cargo test --locked --verbose ${{ matrix.feature_flags }}
 
     - name: clippy (${{ matrix.name }})
-      run: cargo clippy --all ${{ matrix.feature_flags }}
+      run: cargo clippy --locked --all ${{ matrix.feature_flags }}
 
   docs:
     needs: pre-commit
@@ -51,7 +54,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: build benchmarks
-      run: cargo test --benches --no-run --verbose
+      run: cargo test --locked --benches --no-run --verbose
 
     - name: docs
-      run: cargo doc --document-private-items --no-deps
+      run: cargo doc --locked --document-private-items --no-deps
