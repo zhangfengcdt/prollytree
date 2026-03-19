@@ -1768,6 +1768,16 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
+        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize in-memory store in git root directory. \
+                Please use a subdirectory to create a dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
+
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
@@ -1848,6 +1858,16 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
+        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize file store in git root directory. \
+                Please use a subdirectory to create a dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
+
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
@@ -1900,6 +1920,16 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
         let dataset_dir = path.to_path_buf();
+
+        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot open file store in git root directory. \
+                Please use a subdirectory for your dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
 
         // Check if the dataset directory exists
         if !dataset_dir.exists() {
@@ -2011,6 +2041,16 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
+        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize RocksDB store in git root directory. \
+                Please use a subdirectory to create a dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
+
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
@@ -2064,6 +2104,16 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
         let dataset_dir = path.to_path_buf();
+
+        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot open RocksDB store in git root directory. \
+                Please use a subdirectory for your dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
 
         // Check if the dataset directory exists
         if !dataset_dir.exists() {
@@ -2566,56 +2616,31 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, InMemoryNodeStor
 // Specialized implementation for InMemoryNodeStorage
 impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
     /// Save tree config to git for InMemoryNodeStorage
+    ///
+    /// Writes only the config (with root hash) to dataset directory.
+    /// The config is committed to git for historical access.
+    /// Nodes are kept in memory - historical access works within the same session
+    /// by loading nodes from the in-memory storage using the root hash.
+    /// After restart, nodes are lost (expected for in-memory storage).
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // For InMemoryNodeStorage, we need to persist the current tree state to filesystem
-        // so it can be committed to git and accessed historically
-
         let dataset_dir = self
             .dataset_dir
             .as_ref()
             .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
 
-        // Get the current tree configuration
+        // Get the current tree configuration (includes root_hash)
         let config = self.tree.config.clone();
 
         // Serialize the config to JSON
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
 
-        // Write the config file to the dataset directory
+        // Write only the config file to the dataset directory
+        // No need for prolly_hash_mappings - nodes are in memory and accessed by root_hash
+        // Historical access uses root_hash to traverse the tree from in-memory storage
         let config_path = dataset_dir.join("prolly_config_tree_config");
         std::fs::write(&config_path, config_json)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
-
-        // Since InMemoryNodeStorage doesn't persist node mappings to disk like GitNodeStorage,
-        // we need to create a mapping from the current in-memory tree nodes.
-        // We'll serialize the entire tree structure as a mapping file.
-        let mut mappings_content = String::new();
-
-        // For InMemory storage, we can't get actual git object IDs for the nodes
-        // Instead, we'll create a synthetic mapping using the node hashes themselves
-        // This allows historical access to work by reconstructing the tree from its structure
-
-        // Get all keys from the current tree and find their values
-        let all_keys = self.tree.collect_keys();
-        for key in all_keys {
-            if let Some(node) = self.tree.find(&key) {
-                // Find the value in the node
-                if let Some(index) = node.keys.iter().position(|k| k == &key) {
-                    let value = &node.values[index];
-                    // Create a simple key-value mapping for historical access
-                    let key_hex = hex::encode(&key);
-                    let value_hex = hex::encode(value);
-                    mappings_content.push_str(&format!("key:{key_hex}:{value_hex}\n"));
-                }
-            }
-        }
-
-        // Write the synthetic mappings file
-        let mappings_path = dataset_dir.join("prolly_hash_mappings");
-        std::fs::write(&mappings_path, mappings_content).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write mappings file: {e}"))
-        })?;
 
         Ok(())
     }
@@ -2632,45 +2657,29 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, FileNodeStorage<
 impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     /// Save tree config to git for FileNodeStorage
     ///
-    /// Writes config to dataset directory (committed to git for history).
+    /// Writes only the config (with root hash) to dataset directory.
+    /// The config is committed to git for historical access.
     /// Nodes remain in .git/prolly/nodes/files/ (shared, content-addressed).
+    /// Historical access reconstructs tree by loading nodes from storage using root hash.
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
         let dataset_dir = self
             .dataset_dir
             .as_ref()
             .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
 
-        // Get the current tree configuration
+        // Get the current tree configuration (includes root_hash)
         let config = self.tree.config.clone();
 
         // Serialize the config to JSON
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
 
-        // Write the config file to the dataset directory
+        // Write only the config file to the dataset directory
+        // No need for prolly_hash_mappings - nodes are content-addressed in .git/prolly/nodes/files/
+        // Historical access uses root_hash to traverse the tree from node storage
         let config_path = dataset_dir.join("prolly_config_tree_config");
         std::fs::write(&config_path, config_json)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
-
-        // Create a synthetic mappings file for historical access
-        // Since File storage uses content hashes, we store key-value pairs directly
-        let mut mappings_content = String::new();
-        let all_keys = self.tree.collect_keys();
-        for key in all_keys {
-            if let Some(node) = self.tree.find(&key) {
-                if let Some(index) = node.keys.iter().position(|k| k == &key) {
-                    let value = &node.values[index];
-                    let key_hex = hex::encode(&key);
-                    let value_hex = hex::encode(value);
-                    mappings_content.push_str(&format!("key:{key_hex}:{value_hex}\n"));
-                }
-            }
-        }
-
-        let mappings_path = dataset_dir.join("prolly_hash_mappings");
-        std::fs::write(&mappings_path, mappings_content).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write mappings file: {e}"))
-        })?;
 
         Ok(())
     }
@@ -2689,45 +2698,29 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, RocksDBNodeStora
 impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     /// Save tree config to git for RocksDBNodeStorage
     ///
-    /// Writes config to dataset directory (committed to git for history).
+    /// Writes only the config (with root hash) to dataset directory.
+    /// The config is committed to git for historical access.
     /// Nodes remain in .git/prolly/nodes/rocksdb/ (shared, content-addressed).
+    /// Historical access reconstructs tree by loading nodes from storage using root hash.
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
         let dataset_dir = self
             .dataset_dir
             .as_ref()
             .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
 
-        // Get the current tree configuration
+        // Get the current tree configuration (includes root_hash)
         let config = self.tree.config.clone();
 
         // Serialize the config to JSON
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
 
-        // Write the config file to the dataset directory
+        // Write only the config file to the dataset directory
+        // No need for prolly_hash_mappings - nodes are content-addressed in .git/prolly/nodes/rocksdb/
+        // Historical access uses root_hash to traverse the tree from node storage
         let config_path = dataset_dir.join("prolly_config_tree_config");
         std::fs::write(&config_path, config_json)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
-
-        // Create a synthetic mappings file for historical access
-        // Since RocksDB storage uses content hashes, we store key-value pairs directly
-        let mut mappings_content = String::new();
-        let all_keys = self.tree.collect_keys();
-        for key in all_keys {
-            if let Some(node) = self.tree.find(&key) {
-                if let Some(index) = node.keys.iter().position(|k| k == &key) {
-                    let value = &node.values[index];
-                    let key_hex = hex::encode(&key);
-                    let value_hex = hex::encode(value);
-                    mappings_content.push_str(&format!("key:{key_hex}:{value_hex}\n"));
-                }
-            }
-        }
-
-        let mappings_path = dataset_dir.join("prolly_hash_mappings");
-        std::fs::write(&mappings_path, mappings_content).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write mappings file: {e}"))
-        })?;
 
         Ok(())
     }

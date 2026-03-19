@@ -433,8 +433,12 @@ mod tests {
             .output()
             .expect("Failed to initialize git repository");
 
+        // Use a subdirectory to avoid git root safety check
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+
         let mut store = BaseMemoryStore::init_with_thread_safe_inmemory(
-            temp_dir.path(),
+            &dataset_dir,
             "test_agent".to_string(),
             None,
         )
@@ -485,8 +489,12 @@ mod tests {
             .output()
             .expect("Failed to initialize git repository");
 
+        // Use a subdirectory to avoid git root safety check
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+
         let mut store = BaseMemoryStore::init_with_thread_safe_file(
-            temp_dir.path(),
+            &dataset_dir,
             "test_agent".to_string(),
             None,
         )
@@ -509,9 +517,9 @@ mod tests {
         // Test persistence across instances
         drop(store);
 
-        // Reopen the store
+        // Reopen the store using the same dataset directory
         let store_reopened = BaseMemoryStore::open_with_thread_safe_file(
-            temp_dir.path(),
+            &dataset_dir,
             "test_agent".to_string(),
             None,
         )
