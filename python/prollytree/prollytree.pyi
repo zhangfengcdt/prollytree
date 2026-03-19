@@ -511,10 +511,6 @@ class VersionedKvStore:
         """
         Switch to a different branch or commit.
 
-        This method is available for all storage backends since they all use Git
-        for version control. The storage layer only affects how tree chunks are
-        stored, not the versioning operations.
-
         Args:
             branch_or_commit: Branch name or commit hash
         """
@@ -551,10 +547,6 @@ class VersionedKvStore:
         """
         Get all commits that contain changes to a specific key.
 
-        This method is available for all storage backends. It reconstructs the
-        historical state at each commit using the root hash stored in the config
-        and traverses the tree to find changes to the key.
-
         For InMemory backend, historical access only works within the same session
         since nodes are not persisted.
 
@@ -583,10 +575,6 @@ class VersionedKvStore:
     ) -> str:
         """
         Merge another branch into the current branch.
-
-        This method is available for all storage backends since they all use Git
-        for version control. The storage layer only affects how tree chunks are
-        stored, not the versioning operations.
 
         Args:
             source_branch: Name of the branch to merge from
