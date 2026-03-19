@@ -167,16 +167,60 @@ where
     /// This is used to prevent initializing a dataset at the git root,
     /// which could cause `git add -A .` to stage unrelated files.
     fn is_in_git_root<P: AsRef<Path>>(path: P) -> Result<bool, GitKvError> {
-        let path = path
-            .as_ref()
-            .canonicalize()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve path: {e}")))?;
+        let path = path.as_ref();
 
-        if let Some(git_root) = Self::find_git_root(&path) {
+        // Try to canonicalize the path. If it doesn't exist, use the parent directory.
+        let canonical_path = if path.exists() {
+            path.canonicalize()
+                .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve path: {e}")))?
+        } else {
+            // Path doesn't exist yet (common for init). Use parent + last component.
+            let parent = path.parent().ok_or_else(|| {
+                GitKvError::GitObjectError("Invalid path: no parent directory".to_string())
+            })?;
+
+            // If parent doesn't exist either, we can't proceed
+            if !parent.exists() && !parent.as_os_str().is_empty() {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Parent directory does not exist: {}",
+                    parent.display()
+                )));
+            }
+
+            // Canonicalize parent and append the last component
+            let canonical_parent = if parent.as_os_str().is_empty() {
+                std::env::current_dir().map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
+                })?
+            } else {
+                parent.canonicalize().map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to resolve parent path: {e}"))
+                })?
+            };
+
+            // Append the file name to get the full path
+            if let Some(file_name) = path.file_name() {
+                canonical_parent.join(file_name)
+            } else {
+                canonical_parent
+            }
+        };
+
+        // Find git root from the path (or its parent if path doesn't exist)
+        let lookup_path = if path.exists() {
+            canonical_path.clone()
+        } else {
+            canonical_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or(canonical_path.clone())
+        };
+
+        if let Some(git_root) = Self::find_git_root(&lookup_path) {
             let git_root = git_root.canonicalize().map_err(|e| {
                 GitKvError::GitObjectError(format!("Failed to resolve git root: {e}"))
             })?;
-            Ok(path == git_root)
+            Ok(canonical_path == git_root)
         } else {
             Err(GitKvError::GitObjectError(
                 "Not inside a git repository. Please run from within a git repository.".to_string(),
@@ -296,12 +340,16 @@ where
         self.save_tree_config_to_git_internal()?;
 
         // Create tree object in Git using git commands
-        // Get the git root directory
-        let parent_path =
-            self.git_repo.path().parent().ok_or_else(|| {
-                GitKvError::GitObjectError("Repository path has no parent".into())
-            })?;
-        let git_root = Self::find_git_root(parent_path)
+        // Get the git root directory using work_dir() for worktree/submodule compatibility
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
+        let git_root = self
+            .git_repo
+            .work_dir()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
         // Stage all files in the current directory recursively
@@ -1339,7 +1387,17 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         self.save_tree_config_to_git_internal()?;
 
         // Create git tree and commit (similar to regular commit but with two parents)
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        // Use work_dir() for worktree/submodule compatibility
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
+        let git_root = self
+            .git_repo
+            .work_dir()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Self::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
         // Stage all files
         let add_output = std::process::Command::new("git")
@@ -1524,8 +1582,19 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         // Create GitNodeStorage with user-provided path for versioned files
         let storage = GitNodeStorage::new(git_repo.clone(), dataset_dir.clone())?;
 
-        // Load tree configuration from storage
-        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
+        // Load tree configuration from dataset directory
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        if !config_path.exists() {
+            return Err(GitKvError::GitObjectError(
+                "Config file not found. The store may not be initialized. \
+                Call init() to create a new store."
+                    .to_string(),
+            ));
+        }
+        let config_data = std::fs::read_to_string(&config_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to read config file: {e}")))?;
+        let config: TreeConfig<N> = serde_json::from_str(&config_data)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
         // Try to load existing tree from storage
         let tree = if let Some(existing_tree) =
@@ -1606,19 +1675,28 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
 
         // Try to load the prolly tree configuration from the tree
         // Since files are stored relative to git root, we need the relative path from git root to dataset
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
-        let dataset_relative_path = self
-            .tree
-            .storage
-            .dataset_dir()
+        // Use work_dir() for worktree root (handles worktrees/submodules correctly)
+        let dataset_dir = self.tree.storage.dataset_dir();
+        let git_root = self
+            .git_repo
+            .work_dir()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Self::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
+
+        let dataset_relative_path = dataset_dir
             .strip_prefix(&git_root)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get relative path: {e}")))?;
 
-        let config_path = format!(
-            "{}/prolly_config_tree_config",
-            dataset_relative_path.display()
-        );
-        let mapping_path = format!("{}/prolly_hash_mappings", dataset_relative_path.display());
+        // Build paths using '/' separators for git tree lookups (platform-independent)
+        let relative_path_str = dataset_relative_path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        let config_path = format!("{}/prolly_config_tree_config", relative_path_str);
+        let mapping_path = format!("{}/prolly_hash_mappings", relative_path_str);
 
         let config_result = self.read_file_from_tree(&tree_id, &config_path);
         let mapping_result = self.read_file_from_tree(&tree_id, &mapping_path);
@@ -1964,15 +2042,19 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
         let storage = FileNodeStorage::<N>::new(file_storage_path.clone());
 
         // Load tree configuration from dataset directory (not from storage)
+        // Config file must exist for open() - use init() to create new stores
         let config_path = dataset_dir.join("prolly_config_tree_config");
-        let config: TreeConfig<N> = if config_path.exists() {
-            let config_data = std::fs::read_to_string(&config_path).map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to read config file: {e}"))
-            })?;
-            serde_json::from_str(&config_data).unwrap_or_default()
-        } else {
-            TreeConfig::default()
-        };
+        if !config_path.exists() {
+            return Err(GitKvError::GitObjectError(
+                "Config file not found. The store may not be initialized. \
+                Call init() to create a new store."
+                    .to_string(),
+            ));
+        }
+        let config_data = std::fs::read_to_string(&config_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to read config file: {e}")))?;
+        let config: TreeConfig<N> = serde_json::from_str(&config_data)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
         // Try to load existing tree from storage using the config's root hash
         let tree =
@@ -2150,14 +2232,17 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
 
         // Load tree configuration from dataset directory (not from storage)
         let config_path = dataset_dir.join("prolly_config_tree_config");
-        let config: TreeConfig<N> = if config_path.exists() {
-            let config_data = std::fs::read_to_string(&config_path).map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to read config file: {e}"))
-            })?;
-            serde_json::from_str(&config_data).unwrap_or_default()
-        } else {
-            TreeConfig::default()
-        };
+        if !config_path.exists() {
+            return Err(GitKvError::GitObjectError(
+                "Config file not found. The store may not be initialized. \
+                Call init() to create a new store."
+                    .to_string(),
+            ));
+        }
+        let config_data = std::fs::read_to_string(&config_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to read config file: {e}")))?;
+        let config: TreeConfig<N> = serde_json::from_str(&config_data)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
         // Try to load existing tree from storage using the config's root hash
         let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
@@ -2262,22 +2347,34 @@ where
     /// Get the config file path relative to git root
     /// All backends now store dataset_dir, so this is consistent across all storage types
     fn get_config_file_path_relative_to_git_root(&self) -> Result<String, GitKvError> {
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap())
-            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
-
         let dataset_dir = self
             .dataset_dir
             .as_ref()
             .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
+
+        // Use work_dir() for worktree root (handles worktrees/submodules correctly),
+        // falling back to find_git_root(dataset_dir) if work_dir is not available
+        let git_root = self
+            .git_repo
+            .work_dir()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Self::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
 
         // Calculate relative path from git root to dataset dir
         let relative_path = dataset_dir.strip_prefix(&git_root).map_err(|_| {
             GitKvError::GitObjectError("Dataset directory is not inside git repository".to_string())
         })?;
 
-        // Construct the file path
+        // Construct the file path and use '/' separators for git tree paths
+        // (git uses forward slashes regardless of platform)
         let config_path = relative_path.join("prolly_config_tree_config");
-        Ok(config_path.to_string_lossy().to_string())
+        let path_str = config_path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        Ok(path_str)
     }
 
     /// Read the tree config from a specific commit
