@@ -2532,8 +2532,24 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, FileNodeStorage<
 impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     /// Save tree config to git for FileNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // For FileNodeStorage, the config is already saved to disk in the dataset directory.
-        // No need to duplicate it at the git root level.
+        // For FileNodeStorage, node data lives in `.git/prolly/nodes/files/` which is not
+        // tracked by git. Nodes are content-addressed (stored by hash), so sharing that
+        // directory across datasets is safe for node data. However, the tree config
+        // (which holds the root hash) must be written outside `.git/` so it gets staged
+        // by `git add -A .` and recorded in commits, enabling HistoricalAccess.
+        let config = self.tree.config.clone();
+        let config_json = serde_json::to_string_pretty(&config)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
+
+        let git_root = Self::find_git_root(self.git_repo.path().parent().ok_or_else(|| {
+            GitKvError::GitObjectError("Unable to determine parent of repository path".to_string())
+        })?)
+        .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
+
+        let config_path = git_root.join("prolly_config_tree_config");
+        std::fs::write(&config_path, config_json)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
+
         Ok(())
     }
 }
