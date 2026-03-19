@@ -160,6 +160,27 @@ where
         Ok(prolly_dir)
     }
 
+    /// Check if the given path is the git repository root directory
+    /// This is used to prevent initializing a dataset at the git root,
+    /// which could cause `git add -A .` to stage unrelated files.
+    fn is_in_git_root<P: AsRef<Path>>(path: P) -> Result<bool, GitKvError> {
+        let path = path
+            .as_ref()
+            .canonicalize()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve path: {e}")))?;
+
+        if let Some(git_root) = Self::find_git_root(&path) {
+            let git_root = git_root.canonicalize().map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to resolve git root: {e}"))
+            })?;
+            Ok(path == git_root)
+        } else {
+            Err(GitKvError::GitObjectError(
+                "Not inside a git repository. Please run from within a git repository.".to_string(),
+            ))
+        }
+    }
+
     /// Insert a key-value pair (stages the change)
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
         self.staging_area.insert(key, Some(value));
@@ -1408,6 +1429,16 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
+        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize git-prolly in git root directory. \
+                Please use a subdirectory to create a dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
+
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
@@ -1461,6 +1492,16 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     /// Open an existing versioned KV store with Git storage (default)
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
+
+        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot open git-prolly in git root directory. \
+                Please use a subdirectory for your dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
 
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {

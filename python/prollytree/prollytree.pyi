@@ -550,11 +550,19 @@ class VersionedKvStore:
         """
         Get all commits that contain changes to a specific key.
 
+        Note: This method is only available with the Git storage backend.
+        Other backends (File, InMemory, RocksDB) will raise an error because
+        they do not store tree config in git commits, making historical
+        queries impossible.
+
         Args:
             key: The key to search for
 
         Returns:
             List of commit dictionaries with id, author, committer, message, and timestamp
+
+        Raises:
+            ValueError: If called on a non-Git storage backend
         """
         ...
 
@@ -655,6 +663,11 @@ class VersionedKvStore:
         This method provides historical access to the complete state of the store
         at any point in its history.
 
+        Note: This method is only available with the Git storage backend.
+        Other backends (File, InMemory, RocksDB) will raise an error because
+        they do not store tree config in git commits, making historical
+        queries impossible.
+
         Args:
             reference: A git reference - can be a branch name (e.g., "main", "feature/xyz"),
                       commit hash (full or abbreviated), tag name, or relative reference
@@ -664,7 +677,8 @@ class VersionedKvStore:
             List of (key, value) tuples representing all key-value pairs at that reference
 
         Raises:
-            ValueError: If the reference cannot be resolved or accessed
+            ValueError: If the reference cannot be resolved or if called on a
+                non-Git storage backend
 
         Example:
             # Get all keys at a specific commit
