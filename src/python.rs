@@ -1232,38 +1232,29 @@ impl PyVersionedKvStore {
     ) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
         let key_vec = key.as_bytes().to_vec();
 
-        // get_commits_for_key requires Git backend because it reads tree config from git commits.
-        // Non-Git backends store config in .git/prolly/ which is not part of git commits.
+        // All backends now support get_commits_for_key because they all write config to dataset_dir
+        // which is tracked in git commits
         let commits_data: Vec<(String, String, String, String, i64)> = {
             let guard = self.inner.lock().unwrap();
-            match &*guard {
-                VersionedKvStoreWrapper::Git(store) => {
-                    let commits = store.get_commits_for_key(&key_vec).map_err(|e| {
-                        PyValueError::new_err(format!("Failed to get commits for key: {}", e))
-                    })?;
+            with_versioned_store!(&*guard, store, {
+                let commits = store.get_commits_for_key(&key_vec).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to get commits for key: {}", e))
+                })?;
 
-                    let data: Vec<_> = commits
-                        .iter()
-                        .map(|commit| {
-                            (
-                                commit.id.to_hex().to_string(),
-                                commit.author.clone(),
-                                commit.committer.clone(),
-                                commit.message.clone(),
-                                commit.timestamp,
-                            )
-                        })
-                        .collect();
-                    Ok::<_, PyErr>(data)
-                }
-                _ => {
-                    return Err(PyValueError::new_err(
-                        "get_commits_for_key is only supported with Git storage backend. \
-                        Non-Git backends (File, InMemory, RocksDB) do not support historical queries \
-                        because their config is not committed to git history.",
-                    ))
-                }
-            }?
+                let data: Vec<_> = commits
+                    .iter()
+                    .map(|commit| {
+                        (
+                            commit.id.to_hex().to_string(),
+                            commit.author.clone(),
+                            commit.committer.clone(),
+                            commit.message.clone(),
+                            commit.timestamp,
+                        )
+                    })
+                    .collect();
+                Ok::<_, PyErr>(data)
+            })?
         };
 
         // Now convert to Python objects without holding the store lock
@@ -1479,43 +1470,34 @@ impl PyVersionedKvStore {
     ) -> PyResult<Vec<(Py<PyBytes>, Py<PyBytes>)>> {
         let guard = self.inner.lock().unwrap();
 
-        // get_keys_at_ref requires Git backend because it reads tree config from git commits.
-        // Non-Git backends store config in .git/prolly/ which is not part of git commits.
-        match &*guard {
-            VersionedKvStoreWrapper::Git(store) => {
-                let keys_map =
-                    HistoricalAccess::get_keys_at_ref(store, &reference).map_err(|e| {
-                        PyValueError::new_err(format!("Failed to get keys at ref: {}", e))
-                    })?;
+        // All backends now support get_keys_at_ref because they all write config to dataset_dir
+        // which is committed to git history.
+        with_versioned_store!(&*guard, store, {
+            let keys_map = HistoricalAccess::get_keys_at_ref(store, &reference)
+                .map_err(|e| PyValueError::new_err(format!("Failed to get keys at ref: {}", e)))?;
 
-                let total_keys = keys_map.len();
-                if total_keys > MAX_KEYS_LIMIT {
-                    eprintln!(
-                        "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
-                        Consider using more specific queries or implementing pagination.",
-                        total_keys, MAX_KEYS_LIMIT
-                    );
-                }
-
-                let py_pairs: Vec<(Py<PyBytes>, Py<PyBytes>)> = keys_map
-                    .into_iter()
-                    .take(MAX_KEYS_LIMIT)
-                    .map(|(key, value): (Vec<u8>, Vec<u8>)| {
-                        (
-                            PyBytes::new_bound(py, &key).into(),
-                            PyBytes::new_bound(py, &value).into(),
-                        )
-                    })
-                    .collect();
-
-                Ok(py_pairs)
+            let total_keys = keys_map.len();
+            if total_keys > MAX_KEYS_LIMIT {
+                eprintln!(
+                    "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
+                    Consider using more specific queries or implementing pagination.",
+                    total_keys, MAX_KEYS_LIMIT
+                );
             }
-            _ => Err(PyValueError::new_err(
-                "get_keys_at_ref is only supported with Git storage backend. \
-                Non-Git backends (File, InMemory, RocksDB) do not support historical queries \
-                because their config is not committed to git history.",
-            )),
-        }
+
+            let py_pairs: Vec<(Py<PyBytes>, Py<PyBytes>)> = keys_map
+                .into_iter()
+                .take(MAX_KEYS_LIMIT)
+                .map(|(key, value): (Vec<u8>, Vec<u8>)| {
+                    (
+                        PyBytes::new_bound(py, &key).into(),
+                        PyBytes::new_bound(py, &value).into(),
+                    )
+                })
+                .collect();
+
+            Ok(py_pairs)
+        })
     }
 
     /// Compare two commits or branches and return all keys that are added, updated or deleted
