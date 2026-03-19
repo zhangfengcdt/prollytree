@@ -1163,7 +1163,7 @@ impl PyVersionedKvStore {
                 Ok(())
             }
             _ => Err(PyValueError::new_err(
-                "checkout is only fully supported with Git storage backend. Use create_branch instead.",
+                "checkout is only supported when using the Git storage backend in this Python API.",
             )),
         }
     }
