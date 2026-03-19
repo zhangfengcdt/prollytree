@@ -1472,7 +1472,7 @@ impl PyVersionedKvStore {
 
         // All backends now support get_keys_at_ref because they all write config to dataset_dir
         // which is committed to git history.
-        with_versioned_store!(&*guard, store, {
+        with_versioned_store!(guard, store, {
             let keys_map = HistoricalAccess::get_keys_at_ref(store, &reference)
                 .map_err(|e| PyValueError::new_err(format!("Failed to get keys at ref: {}", e)))?;
 
