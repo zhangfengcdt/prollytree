@@ -361,13 +361,8 @@ where
             }
         }
 
-        // Persist the tree state
+        // Persist the tree state (including updating root hash and saving config)
         self.tree.persist_root();
-
-        // Save the updated configuration with the new root hash
-        self.tree
-            .save_config()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
 
         // For all storage types, also save the tree config to git for historical access
         self.save_tree_config_to_git_internal()?;
