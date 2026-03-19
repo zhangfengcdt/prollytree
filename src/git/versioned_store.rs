@@ -59,6 +59,10 @@ pub struct VersionedKvStore<const N: usize, S: NodeStorage<N>> {
     staging_area: HashMap<Vec<u8>, Option<Vec<u8>>>, // None = deleted
     current_branch: String,
     storage_backend: StorageBackend,
+    /// Dataset directory for storing config and other metadata for all backends
+    /// (File/RocksDB/InMemory/Git). Git init/open paths set this from
+    /// `storage.dataset_dir()`, and commit()/merge rely on this field being `Some`.
+    dataset_dir: Option<std::path::PathBuf>,
 }
 
 /// Type alias for backward compatibility (Git storage)
@@ -118,18 +122,138 @@ where
         None
     }
 
-    /// Check if we're running in the git repository root directory
-    fn is_in_git_root<P: AsRef<Path>>(path: P) -> Result<bool, GitKvError> {
-        let path = path
-            .as_ref()
-            .canonicalize()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve path: {e}")))?;
+    /// Get the common git directory path, handling worktrees and submodules.
+    /// For worktrees, this resolves to the main .git directory (not the per-worktree gitdir)
+    /// to ensure shared node storage is placed in a common location.
+    fn resolve_git_dir<P: AsRef<Path>>(git_root: P) -> std::path::PathBuf {
+        let git_path = git_root.as_ref().join(".git");
 
-        if let Some(git_root) = Self::find_git_root(&path) {
+        // If .git is a file (worktree or submodule), read the gitdir path from it
+        let gitdir = if git_path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&git_path) {
+                let mut resolved_gitdir = None;
+                for line in content.lines() {
+                    if let Some(gitdir_str) = line.strip_prefix("gitdir:") {
+                        let gitdir_str = gitdir_str.trim();
+                        // Handle both absolute and relative paths
+                        let gitdir_path = std::path::Path::new(gitdir_str);
+                        resolved_gitdir = Some(if gitdir_path.is_absolute() {
+                            gitdir_path.to_path_buf()
+                        } else {
+                            git_root.as_ref().join(gitdir_str)
+                        });
+                        break;
+                    }
+                }
+                resolved_gitdir.unwrap_or(git_path)
+            } else {
+                git_path
+            }
+        } else {
+            // Default: .git is a directory
+            git_path
+        };
+
+        // For linked worktrees, resolve to the common git directory
+        // The commondir file contains the path to the main .git directory
+        let commondir_path = gitdir.join("commondir");
+        if commondir_path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&commondir_path) {
+                let commondir_str = content.trim();
+                if !commondir_str.is_empty() {
+                    let commondir = std::path::Path::new(commondir_str);
+                    // Handle both absolute and relative paths
+                    let resolved_commondir = if commondir.is_absolute() {
+                        commondir.to_path_buf()
+                    } else {
+                        // Relative path is relative to the gitdir
+                        gitdir.join(commondir)
+                    };
+                    // Canonicalize to resolve .. components
+                    if let Ok(canonical) = resolved_commondir.canonicalize() {
+                        return canonical;
+                    }
+                    return resolved_commondir;
+                }
+            }
+        }
+
+        gitdir
+    }
+
+    /// Get the prolly directory path inside the git directory
+    /// This is where all ProllyTree data is stored to avoid accidental git versioning
+    fn get_prolly_dir<P: AsRef<Path>>(git_root: P) -> std::path::PathBuf {
+        Self::resolve_git_dir(git_root).join("prolly")
+    }
+
+    /// Ensure the prolly directory structure exists
+    fn ensure_prolly_dir<P: AsRef<Path>>(git_root: P) -> Result<std::path::PathBuf, GitKvError> {
+        let prolly_dir = Self::get_prolly_dir(&git_root);
+        std::fs::create_dir_all(&prolly_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create prolly directory: {e}"))
+        })?;
+        Ok(prolly_dir)
+    }
+
+    /// Check if the given path is the git repository root directory
+    /// This is used to prevent initializing a dataset at the git root,
+    /// which could cause `git add -A .` to stage unrelated files.
+    fn is_in_git_root<P: AsRef<Path>>(path: P) -> Result<bool, GitKvError> {
+        let path = path.as_ref();
+
+        // Try to canonicalize the path. If it doesn't exist, use the parent directory.
+        let canonical_path = if path.exists() {
+            path.canonicalize()
+                .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve path: {e}")))?
+        } else {
+            // Path doesn't exist yet (common for init). Use parent + last component.
+            let parent = path.parent().ok_or_else(|| {
+                GitKvError::GitObjectError("Invalid path: no parent directory".to_string())
+            })?;
+
+            // If parent doesn't exist either, we can't proceed
+            if !parent.exists() && !parent.as_os_str().is_empty() {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Parent directory does not exist: {}",
+                    parent.display()
+                )));
+            }
+
+            // Canonicalize parent and append the last component
+            let canonical_parent = if parent.as_os_str().is_empty() {
+                std::env::current_dir().map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
+                })?
+            } else {
+                parent.canonicalize().map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to resolve parent path: {e}"))
+                })?
+            };
+
+            // Append the file name to get the full path
+            if let Some(file_name) = path.file_name() {
+                canonical_parent.join(file_name)
+            } else {
+                canonical_parent
+            }
+        };
+
+        // Find git root from the path (or its parent if path doesn't exist)
+        let lookup_path = if path.exists() {
+            canonical_path.clone()
+        } else {
+            canonical_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or(canonical_path.clone())
+        };
+
+        if let Some(git_root) = Self::find_git_root(&lookup_path) {
             let git_root = git_root.canonicalize().map_err(|e| {
                 GitKvError::GitObjectError(format!("Failed to resolve git root: {e}"))
             })?;
-            Ok(path == git_root)
+            Ok(canonical_path == git_root)
         } else {
             Err(GitKvError::GitObjectError(
                 "Not inside a git repository. Please run from within a git repository.".to_string(),
@@ -237,24 +361,23 @@ where
             }
         }
 
-        // Persist the tree state
+        // Persist the tree state (including updating root hash and saving config)
         self.tree.persist_root();
-
-        // Save the updated configuration with the new root hash
-        self.tree
-            .save_config()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
 
         // For all storage types, also save the tree config to git for historical access
         self.save_tree_config_to_git_internal()?;
 
         // Create tree object in Git using git commands
-        // Get the git root directory
-        let parent_path =
-            self.git_repo.path().parent().ok_or_else(|| {
-                GitKvError::GitObjectError("Repository path has no parent".into())
-            })?;
-        let git_root = Self::find_git_root(parent_path)
+        // Get the git root directory using work_dir() for worktree/submodule compatibility
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
+        let git_root = self
+            .git_repo
+            .work_dir()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
         // Stage all files in the current directory recursively
@@ -1292,7 +1415,17 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         self.save_tree_config_to_git_internal()?;
 
         // Create git tree and commit (similar to regular commit but with two parents)
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
+        // Use work_dir() for worktree/submodule compatibility
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
+        let git_root = self
+            .git_repo
+            .work_dir()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Self::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
         // Stage all files
         let add_output = std::process::Command::new("git")
@@ -1385,10 +1518,13 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Reject if trying to initialize in git root directory
+        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
-                "Cannot initialize git-prolly in git root directory. Please run from a subdirectory to create a dataset.".to_string()
+                "Cannot initialize git-prolly in git root directory. \
+                Please use a subdirectory to create a dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
             ));
         }
 
@@ -1399,9 +1535,16 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             )
         })?;
 
+        // For GitVersionedKvStore, use the user-provided path as the dataset directory
+        // This allows config files to be versioned in git commits
+        let dataset_dir = path.to_path_buf();
+        std::fs::create_dir_all(&dataset_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create dataset directory: {e}"))
+        })?;
+
         // Check if the store is already initialized by looking for config files
-        let config_path = path.join("prolly_config_tree_config");
-        let mappings_path = path.join("prolly_hash_mappings");
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        let mappings_path = dataset_dir.join("prolly_hash_mappings");
 
         if config_path.exists() || mappings_path.exists() {
             // Store already exists, use open instead to load existing configuration
@@ -1411,8 +1554,8 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         // Open the existing git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create GitNodeStorage
-        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
+        // Create GitNodeStorage with user-provided path for versioned files
+        let storage = GitNodeStorage::new(git_repo.clone(), dataset_dir.clone())?;
 
         // Create ProllyTree with default config
         let config: TreeConfig<N> = TreeConfig::default();
@@ -1424,6 +1567,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             staging_area: HashMap::new(),
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::Git,
+            dataset_dir: Some(dataset_dir),
         };
 
         // Save initial configuration
@@ -1439,10 +1583,13 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Reject if trying to open in git root directory
+        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
-                "Cannot run git-prolly in git root directory. Please run from a subdirectory containing a dataset.".to_string()
+                "Cannot open git-prolly in git root directory. \
+                Please use a subdirectory for your dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
             ));
         }
 
@@ -1453,14 +1600,29 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             )
         })?;
 
+        // For GitVersionedKvStore, use the user-provided path as the dataset directory
+        // This allows config files to be versioned in git commits
+        let dataset_dir = path.to_path_buf();
+
         // Open existing Git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create GitNodeStorage
-        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
+        // Create GitNodeStorage with user-provided path for versioned files
+        let storage = GitNodeStorage::new(git_repo.clone(), dataset_dir.clone())?;
 
-        // Load tree configuration from storage
-        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
+        // Load tree configuration from dataset directory
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        if !config_path.exists() {
+            return Err(GitKvError::GitObjectError(
+                "Config file not found. The store may not be initialized. \
+                Call init() to create a new store."
+                    .to_string(),
+            ));
+        }
+        let config_data = std::fs::read_to_string(&config_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to read config file: {e}")))?;
+        let config: TreeConfig<N> = serde_json::from_str(&config_data)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
         // Try to load existing tree from storage
         let tree = if let Some(existing_tree) =
@@ -1493,6 +1655,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             staging_area: HashMap::new(),
             current_branch,
             storage_backend: StorageBackend::Git,
+            dataset_dir: Some(dataset_dir),
         };
 
         // Load staging area from file if it exists
@@ -1540,19 +1703,28 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
 
         // Try to load the prolly tree configuration from the tree
         // Since files are stored relative to git root, we need the relative path from git root to dataset
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
-        let dataset_relative_path = self
-            .tree
-            .storage
-            .dataset_dir()
+        // Use work_dir() for worktree root (handles worktrees/submodules correctly)
+        let dataset_dir = self.tree.storage.dataset_dir();
+        let git_root = self
+            .git_repo
+            .work_dir()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Self::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
+
+        let dataset_relative_path = dataset_dir
             .strip_prefix(&git_root)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get relative path: {e}")))?;
 
-        let config_path = format!(
-            "{}/prolly_config_tree_config",
-            dataset_relative_path.display()
-        );
-        let mapping_path = format!("{}/prolly_hash_mappings", dataset_relative_path.display());
+        // Build paths using '/' separators for git tree lookups (platform-independent)
+        let relative_path_str = dataset_relative_path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        let config_path = format!("{}/prolly_config_tree_config", relative_path_str);
+        let mapping_path = format!("{}/prolly_hash_mappings", relative_path_str);
 
         let config_result = self.read_file_from_tree(&tree_id, &config_path);
         let mapping_result = self.read_file_from_tree(&tree_id, &mapping_path);
@@ -1702,6 +1874,16 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
+        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize in-memory store in git root directory. \
+                Please use a subdirectory to create a dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
+
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
@@ -1711,6 +1893,12 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
 
         // Open the existing git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
+
+        // Create dataset directory for config files
+        let dataset_dir = path.to_path_buf();
+        std::fs::create_dir_all(&dataset_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create dataset directory: {e}"))
+        })?;
 
         // Create InMemoryNodeStorage
         let storage = InMemoryNodeStorage::<N>::new();
@@ -1725,9 +1913,9 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
             staging_area: HashMap::new(),
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::InMemory,
+            dataset_dir: Some(dataset_dir),
         };
 
-        // Note: InMemory storage doesn't persist config
         // Create initial commit
         store.commit("Initial commit")?;
 
@@ -1770,8 +1958,21 @@ impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, InMemoryN
 
 impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     /// Initialize a new versioned KV store with File storage
+    ///
+    /// Nodes are stored in `.git/prolly/nodes/files/` (shared, content-addressed).
+    /// Config is stored in the dataset directory (committed to git for history).
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
+
+        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize file store in git root directory. \
+                Please use a subdirectory to create a dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
 
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
@@ -1780,11 +1981,23 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
             )
         })?;
 
+        // Create prolly directory inside .git for node storage
+        let prolly_dir = Self::ensure_prolly_dir(&git_root)?;
+
+        // Create dataset directory for config files (will be committed to git)
+        let dataset_dir = path.to_path_buf();
+        std::fs::create_dir_all(&dataset_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create dataset directory: {e}"))
+        })?;
+
         // Open the existing git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create FileNodeStorage with a subdirectory for file storage
-        let file_storage_path = path.join("file_storage");
+        // Create FileNodeStorage inside .git/prolly/nodes/files/ (shared across datasets)
+        let file_storage_path = prolly_dir.join("nodes").join("files");
+        std::fs::create_dir_all(&file_storage_path).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create file storage directory: {e}"))
+        })?;
         let storage = FileNodeStorage::<N>::new(file_storage_path);
 
         // Create ProllyTree with default config
@@ -1797,20 +2010,39 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
             staging_area: HashMap::new(),
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::File,
+            dataset_dir: Some(dataset_dir),
         };
 
-        // Save initial configuration
-        let _ = store.tree.save_config();
-
-        // Create initial commit
+        // Create initial commit (which will save config to dataset_dir)
         store.commit("Initial commit")?;
 
         Ok(store)
     }
 
     /// Open an existing versioned KV store with File storage
+    ///
+    /// Nodes are loaded from `.git/prolly/nodes/files/` (shared, content-addressed).
+    /// Config is loaded from the dataset directory.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
+        let dataset_dir = path.to_path_buf();
+
+        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot open file store in git root directory. \
+                Please use a subdirectory for your dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
+
+        // Check if the dataset directory exists
+        if !dataset_dir.exists() {
+            return Err(GitKvError::GitObjectError(
+                "Dataset directory not found. Call init() first to create the store.".to_string(),
+            ));
+        }
 
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
@@ -1819,17 +2051,40 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
             )
         })?;
 
+        // Get prolly directory inside .git
+        let prolly_dir = Self::get_prolly_dir(&git_root);
+
         // Open existing Git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create FileNodeStorage with a subdirectory for file storage
-        let file_storage_path = path.join("file_storage");
+        // Open FileNodeStorage inside .git/prolly/nodes/files/
+        let file_storage_path = prolly_dir.join("nodes").join("files");
+
+        // Check if the file storage directory exists - if not, the store hasn't been initialized
+        if !file_storage_path.exists() {
+            return Err(GitKvError::GitObjectError(
+                "File store not initialized. Call init() first to create the store.".to_string(),
+            ));
+        }
+
         let storage = FileNodeStorage::<N>::new(file_storage_path.clone());
 
-        // Load tree configuration from storage
-        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
+        // Load tree configuration from dataset directory (not from storage)
+        // Config file must exist for open() - use init() to create new stores
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        if !config_path.exists() {
+            return Err(GitKvError::GitObjectError(
+                "Config file not found. The store may not be initialized. \
+                Call init() to create a new store."
+                    .to_string(),
+            ));
+        }
+        let config_data = std::fs::read_to_string(&config_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to read config file: {e}")))?;
+        let config: TreeConfig<N> = serde_json::from_str(&config_data)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
-        // Try to load existing tree from storage, or create new one
+        // Try to load existing tree from storage using the config's root hash
         let tree =
             if let Some(existing_tree) = ProllyTree::load_from_storage(storage, config.clone()) {
                 existing_tree
@@ -1852,12 +2107,11 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
             staging_area: HashMap::new(),
             current_branch,
             storage_backend: StorageBackend::File,
+            dataset_dir: Some(dataset_dir),
         };
 
         // Load staging area from file if it exists
         store.load_staging_area()?;
-
-        // Note: File storage data is loaded directly, no need to reload from HEAD
 
         Ok(store)
     }
@@ -1891,8 +2145,21 @@ impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, FileNodeS
 #[cfg(feature = "rocksdb_storage")]
 impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     /// Initialize a new versioned KV store with RocksDB storage
+    ///
+    /// Nodes are stored in `.git/prolly/nodes/rocksdb/` (shared, content-addressed).
+    /// Config is stored in the dataset directory (committed to git for history).
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
+
+        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot initialize RocksDB store in git root directory. \
+                Please use a subdirectory to create a dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
 
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
@@ -1901,11 +2168,23 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
             )
         })?;
 
+        // Create prolly directory inside .git for node storage
+        let prolly_dir = Self::ensure_prolly_dir(&git_root)?;
+
+        // Create dataset directory for config files (will be committed to git)
+        let dataset_dir = path.to_path_buf();
+        std::fs::create_dir_all(&dataset_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create dataset directory: {e}"))
+        })?;
+
         // Open the existing git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create RocksDBNodeStorage with a subdirectory for RocksDB
-        let rocksdb_path = path.join("rocksdb");
+        // Create RocksDBNodeStorage inside .git/prolly/nodes/rocksdb/ (shared across datasets)
+        let rocksdb_path = prolly_dir.join("nodes").join("rocksdb");
+        std::fs::create_dir_all(&rocksdb_path).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create RocksDB directory: {e}"))
+        })?;
         let storage = RocksDBNodeStorage::<N>::new(rocksdb_path)
             .map_err(|e| GitKvError::GitObjectError(format!("RocksDB creation failed: {e}")))?;
 
@@ -1919,20 +2198,39 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
             staging_area: HashMap::new(),
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::RocksDB,
+            dataset_dir: Some(dataset_dir),
         };
 
-        // Save initial configuration
-        let _ = store.tree.save_config();
-
-        // Create initial commit
+        // Create initial commit (which will save config to dataset_dir)
         store.commit("Initial commit")?;
 
         Ok(store)
     }
 
     /// Open an existing versioned KV store with RocksDB storage
+    ///
+    /// Nodes are loaded from `.git/prolly/nodes/rocksdb/` (shared, content-addressed).
+    /// Config is loaded from the dataset directory.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
+        let dataset_dir = path.to_path_buf();
+
+        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        if Self::is_in_git_root(path)? {
+            return Err(GitKvError::GitObjectError(
+                "Cannot open RocksDB store in git root directory. \
+                Please use a subdirectory for your dataset, or the commit operation \
+                may accidentally stage all files in the repository."
+                    .to_string(),
+            ));
+        }
+
+        // Check if the dataset directory exists
+        if !dataset_dir.exists() {
+            return Err(GitKvError::GitObjectError(
+                "Dataset directory not found. Call init() first to create the store.".to_string(),
+            ));
+        }
 
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
@@ -1941,18 +2239,40 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
             )
         })?;
 
+        // Get prolly directory inside .git
+        let prolly_dir = Self::get_prolly_dir(&git_root);
+
         // Open existing Git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create RocksDBNodeStorage with a subdirectory for RocksDB
-        let rocksdb_path = path.join("rocksdb");
+        // Open RocksDBNodeStorage inside .git/prolly/nodes/rocksdb/
+        let rocksdb_path = prolly_dir.join("nodes").join("rocksdb");
+
+        // Check if the RocksDB directory exists - if not, the store hasn't been initialized
+        if !rocksdb_path.exists() {
+            return Err(GitKvError::GitObjectError(
+                "RocksDB store not initialized. Call init() first to create the store.".to_string(),
+            ));
+        }
+
         let storage = RocksDBNodeStorage::<N>::new(rocksdb_path)
             .map_err(|e| GitKvError::GitObjectError(format!("RocksDB creation failed: {e}")))?;
 
-        // Load tree configuration from storage
-        let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
+        // Load tree configuration from dataset directory (not from storage)
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        if !config_path.exists() {
+            return Err(GitKvError::GitObjectError(
+                "Config file not found. The store may not be initialized. \
+                Call init() to create a new store."
+                    .to_string(),
+            ));
+        }
+        let config_data = std::fs::read_to_string(&config_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to read config file: {e}")))?;
+        let config: TreeConfig<N> = serde_json::from_str(&config_data)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
-        // Try to load existing tree from storage, or create new one
+        // Try to load existing tree from storage using the config's root hash
         let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
             .unwrap_or_else(|| ProllyTree::new(storage, config));
 
@@ -1969,12 +2289,11 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
             staging_area: HashMap::new(),
             current_branch,
             storage_backend: StorageBackend::RocksDB,
+            dataset_dir: Some(dataset_dir),
         };
 
         // Load staging area from file if it exists
         store.load_staging_area()?;
-
-        // Note: RocksDB storage data is loaded directly, no need to reload from HEAD
 
         Ok(store)
     }
@@ -2007,8 +2326,11 @@ impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, RocksDBNo
     }
 }
 
-// Generic implementations for all storage types
-impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
+// Generic implementations for all storage types that support historical access
+impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
+where
+    Self: TreeConfigSaver<N>,
+{
     /// Get the current storage backend type
     pub fn storage_backend(&self) -> &StorageBackend {
         &self.storage_backend
@@ -2050,12 +2372,48 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
         )))
     }
 
+    /// Get the config file path relative to git root
+    /// All backends now store dataset_dir, so this is consistent across all storage types
+    fn get_config_file_path_relative_to_git_root(&self) -> Result<String, GitKvError> {
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
+
+        // Use work_dir() for worktree root (handles worktrees/submodules correctly),
+        // falling back to find_git_root(dataset_dir) if work_dir is not available
+        let git_root = self
+            .git_repo
+            .work_dir()
+            .map(|p| p.to_path_buf())
+            .or_else(|| Self::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
+
+        // Calculate relative path from git root to dataset dir
+        let relative_path = dataset_dir.strip_prefix(&git_root).map_err(|_| {
+            GitKvError::GitObjectError("Dataset directory is not inside git repository".to_string())
+        })?;
+
+        // Construct the file path and use '/' separators for git tree paths
+        // (git uses forward slashes regardless of platform)
+        let config_path = relative_path.join("prolly_config_tree_config");
+        let path_str = config_path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        Ok(path_str)
+    }
+
     /// Read the tree config from a specific commit
     /// This gets the prolly_config_tree_config file from the commit to extract root hash
     fn read_tree_config_from_commit(
         &self,
         commit_id: &gix::ObjectId,
     ) -> Result<TreeConfig<N>, GitKvError> {
+        // Get the config file path relative to git root
+        let config_path = self.get_config_file_path_relative_to_git_root()?;
+
         // Get the commit object
         let mut commit_buffer = Vec::new();
         let commit_obj = self
@@ -2080,7 +2438,7 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
         let tree_id = commit.tree();
 
         // Try to read the config file, with fallback to current config if not found
-        match self.read_file_from_tree(&tree_id, "prolly_config_tree_config") {
+        match self.read_file_from_tree(&tree_id, &config_path) {
             Ok(config_data) => {
                 // Parse the config
                 let tree_config: TreeConfig<N> =
@@ -2371,6 +2729,381 @@ impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S> {
 
         Ok(commits_with_key_changes)
     }
+
+    // ============================================================================
+    // Generic checkout, merge, try_merge implementations for all storage backends
+    // All backends use Git for version control, so these operations work the same
+    // ============================================================================
+
+    /// Get commit ID for a branch (generic version)
+    fn get_branch_commit_generic(&self, branch: &str) -> Result<gix::ObjectId, GitKvError> {
+        let branch_ref = format!("refs/heads/{branch}");
+        match self.git_repo.refs.find(&branch_ref) {
+            Ok(reference) => match reference.target.try_id() {
+                Some(commit_id) => Ok(commit_id.to_owned()),
+                None => Err(GitKvError::GitObjectError(format!(
+                    "Branch {branch} does not point to a commit"
+                ))),
+            },
+            Err(_) => Err(GitKvError::BranchNotFound(branch.to_string())),
+        }
+    }
+
+    /// Get parents of a commit (generic version)
+    fn get_commit_parents_generic(
+        &self,
+        commit_id: &gix::ObjectId,
+    ) -> Result<Vec<gix::ObjectId>, GitKvError> {
+        let mut buffer = Vec::new();
+        let commit = self
+            .git_repo
+            .objects
+            .find(commit_id, &mut buffer)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to find commit: {e}")))?;
+
+        let commit_ref = commit
+            .decode()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode commit: {e}")))?
+            .into_commit()
+            .ok_or_else(|| GitKvError::GitObjectError("Object is not a commit".to_string()))?;
+
+        Ok(commit_ref.parents().collect())
+    }
+
+    /// Find the merge base (common ancestor) of two branches (generic version)
+    fn find_merge_base_generic(
+        &self,
+        branch1: &str,
+        branch2: &str,
+    ) -> Result<gix::ObjectId, GitKvError> {
+        let commit1 = self.get_branch_commit_generic(branch1)?;
+        let commit2 = self.get_branch_commit_generic(branch2)?;
+
+        let mut visited1 = std::collections::HashSet::new();
+        let mut queue1 = std::collections::VecDeque::new();
+        queue1.push_back(commit1);
+
+        while let Some(commit_id) = queue1.pop_front() {
+            if visited1.contains(&commit_id) {
+                continue;
+            }
+            visited1.insert(commit_id);
+
+            if let Ok(parents) = self.get_commit_parents_generic(&commit_id) {
+                for parent in parents {
+                    if !visited1.contains(&parent) {
+                        queue1.push_back(parent);
+                    }
+                }
+            }
+        }
+
+        let mut visited2 = std::collections::HashSet::new();
+        let mut queue2 = std::collections::VecDeque::new();
+        queue2.push_back(commit2);
+
+        while let Some(commit_id) = queue2.pop_front() {
+            if visited2.contains(&commit_id) {
+                continue;
+            }
+            visited2.insert(commit_id);
+
+            if visited1.contains(&commit_id) {
+                return Ok(commit_id);
+            }
+
+            if let Ok(parents) = self.get_commit_parents_generic(&commit_id) {
+                for parent in parents {
+                    if !visited2.contains(&parent) {
+                        queue2.push_back(parent);
+                    }
+                }
+            }
+        }
+
+        Err(GitKvError::GitObjectError(
+            "No common ancestor found".to_string(),
+        ))
+    }
+
+    /// Reload the tree state from the current HEAD commit (generic version)
+    fn reload_tree_from_head_generic(&mut self) -> Result<(), GitKvError>
+    where
+        Self: HistoricalAccess<N>,
+    {
+        // Get the current HEAD commit
+        let head = self
+            .git_repo
+            .head()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
+
+        let head_commit_id = head.id().ok_or_else(|| {
+            GitKvError::GitObjectError("HEAD does not point to a commit".to_string())
+        })?;
+
+        let head_object_id = head_commit_id.detach();
+
+        // Load all key-value pairs from the HEAD commit using HistoricalAccess
+        let keys_at_head = self.collect_keys_from_commit_generic(&head_object_id)?;
+
+        // Get the config from the commit
+        let config = self.read_tree_config_from_commit(&head_object_id)?;
+
+        // Clear and rebuild the tree
+        self.tree.config = config;
+
+        // Clear existing data and insert all keys from HEAD
+        // Note: This creates a new tree with the same storage
+        let storage = self.tree.storage.clone();
+        let tree_config = self.tree.config.clone();
+        self.tree = ProllyTree::new(storage, tree_config);
+
+        for (key, value) in keys_at_head {
+            self.tree.insert(key, value);
+        }
+
+        Ok(())
+    }
+
+    /// Collect all key-value pairs from a specific commit (generic version)
+    fn collect_keys_from_commit_generic(
+        &self,
+        commit_id: &gix::ObjectId,
+    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
+        // Read the tree config from the commit
+        let tree_config = self.read_tree_config_from_commit(commit_id)?;
+
+        // Use the generic collect_keys_from_config which works for all storage types
+        self.collect_keys_from_config(&tree_config)
+    }
+
+    /// Switch to a different branch or commit (generic version for all backends)
+    pub fn checkout_generic(&mut self, branch_or_commit: &str) -> Result<(), GitKvError>
+    where
+        Self: HistoricalAccess<N>,
+    {
+        // Clear staging area
+        self.staging_area.clear();
+        self.save_staging_area()?;
+
+        // Update HEAD to point to the new branch/commit
+        let target_ref = if branch_or_commit.starts_with("refs/") {
+            branch_or_commit.to_string()
+        } else {
+            format!("refs/heads/{branch_or_commit}")
+        };
+
+        // Check if the reference exists
+        match self.git_repo.refs.find(&target_ref) {
+            Ok(_reference) => {
+                self.current_branch = branch_or_commit.to_string();
+
+                // Update HEAD to point to the new branch
+                let head_file = self.git_repo.path().join("HEAD");
+                let head_content = format!("ref: refs/heads/{branch_or_commit}");
+                std::fs::write(&head_file, head_content).map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to update HEAD: {e}"))
+                })?;
+            }
+            Err(_) => {
+                return Err(GitKvError::BranchNotFound(branch_or_commit.to_string()));
+            }
+        }
+
+        // Reload the tree from the HEAD commit
+        self.reload_tree_from_head_generic()?;
+
+        Ok(())
+    }
+
+    /// Merge another branch into the current branch (generic version for all backends)
+    pub fn merge_generic<R: ConflictResolver>(
+        &mut self,
+        source_branch: &str,
+        resolver: &R,
+    ) -> Result<gix::ObjectId, GitKvError>
+    where
+        Self: HistoricalAccess<N>,
+    {
+        let dest_branch = self.current_branch.clone();
+
+        // Find common base commit
+        let base_commit = self.find_merge_base_generic(&dest_branch, source_branch)?;
+
+        // Get key-value data from each state
+        let base_kv = self.collect_keys_from_commit_generic(&base_commit)?;
+        let source_commit = self.get_branch_commit_generic(source_branch)?;
+        let source_kv = self.collect_keys_from_commit_generic(&source_commit)?;
+        let mut dest_kv = HashMap::new();
+
+        for key in self.tree.collect_keys() {
+            if let Some(value) = self.get(&key) {
+                dest_kv.insert(key, value);
+            }
+        }
+
+        // Perform three-way merge at key-value level
+        let mut merge_results = Vec::new();
+        let mut all_keys = std::collections::HashSet::new();
+
+        all_keys.extend(base_kv.keys().cloned());
+        all_keys.extend(source_kv.keys().cloned());
+        all_keys.extend(dest_kv.keys().cloned());
+
+        for key in all_keys {
+            let base_value = base_kv.get(&key);
+            let source_value = source_kv.get(&key);
+            let dest_value = dest_kv.get(&key);
+
+            match (base_value, source_value, dest_value) {
+                // Key exists in all three - check for modifications
+                (Some(base), Some(source), Some(dest)) => {
+                    if base == source && base == dest {
+                        // No changes, skip
+                        continue;
+                    } else if base == dest && base != source {
+                        // Only source changed - take source value
+                        merge_results.push(crate::diff::MergeResult::Modified(
+                            key.clone(),
+                            source.clone(),
+                        ));
+                    } else if base == source && base != dest {
+                        // Only dest changed - keep dest value (no-op)
+                        continue;
+                    } else if source == dest {
+                        // Both changed to same value - keep it (no-op)
+                        continue;
+                    } else {
+                        // Conflict: both branches modified differently
+                        let conflict = crate::diff::MergeConflict {
+                            key: key.clone(),
+                            base_value: Some(base.clone()),
+                            source_value: Some(source.clone()),
+                            destination_value: Some(dest.clone()),
+                        };
+                        merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                    }
+                }
+                // Key added in source, not in base or dest
+                (None, Some(source), None) => {
+                    merge_results
+                        .push(crate::diff::MergeResult::Added(key.clone(), source.clone()));
+                }
+                // Key added in dest, not in base or source - keep it (no-op)
+                (None, None, Some(_dest)) => {
+                    continue;
+                }
+                // Key added in both source and dest - potential conflict
+                (None, Some(source), Some(dest)) => {
+                    if source == dest {
+                        // Both added same value - keep it (no-op)
+                        continue;
+                    } else {
+                        // Conflict: both branches added different values
+                        let conflict = crate::diff::MergeConflict {
+                            key: key.clone(),
+                            base_value: None,
+                            source_value: Some(source.clone()),
+                            destination_value: Some(dest.clone()),
+                        };
+                        merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                    }
+                }
+                // Key deleted in source, still exists in dest
+                (Some(_base), None, Some(_dest)) => {
+                    // Source deleted it - apply deletion
+                    merge_results.push(crate::diff::MergeResult::Removed(key.clone()));
+                }
+                // Key deleted in dest, still exists in source - keep deletion (no-op)
+                (Some(_base), Some(_source), None) => {
+                    continue;
+                }
+                // Key deleted in both - no-op
+                (Some(_base), None, None) => {
+                    continue;
+                }
+                // All other cases - no action needed
+                _ => continue,
+            }
+        }
+
+        // Apply conflict resolution
+        let mut resolved_results = Vec::new();
+        let mut unresolved_conflicts = Vec::new();
+
+        for result in merge_results {
+            match result {
+                crate::diff::MergeResult::Conflict(conflict) => {
+                    if let Some(resolved_result) = resolver.resolve_conflict(&conflict) {
+                        resolved_results.push(resolved_result);
+                    } else {
+                        unresolved_conflicts.push(conflict);
+                    }
+                }
+                other => resolved_results.push(other),
+            }
+        }
+
+        // If there are unresolved conflicts, return them
+        if !unresolved_conflicts.is_empty() {
+            return Err(GitKvError::MergeConflictError(unresolved_conflicts));
+        }
+
+        // Apply resolved merge results directly to current tree
+        for result in resolved_results {
+            match result {
+                crate::diff::MergeResult::Added(key, value) => {
+                    self.tree.insert(key, value);
+                }
+                crate::diff::MergeResult::Removed(key) => {
+                    self.tree.delete(&key);
+                }
+                crate::diff::MergeResult::Modified(key, value) => {
+                    self.tree.insert(key, value);
+                }
+                crate::diff::MergeResult::Conflict(_) => {
+                    // Should not happen after resolution
+                }
+            }
+        }
+
+        // Persist tree changes
+        self.tree.persist_root();
+        self.tree
+            .save_config()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to save config: {e}")))?;
+
+        self.save_tree_config_to_git_internal()?;
+
+        // Commit the merge
+        let message = format!("Merge branch '{}' into {}", source_branch, dest_branch);
+        let commit_id = self.commit(&message)?;
+
+        Ok(commit_id)
+    }
+
+    /// Try to merge another branch and return conflicts (generic version)
+    ///
+    /// This method attempts to merge the source branch into the current branch.
+    /// If there are no conflicts, the merge is applied and committed.
+    /// If there are conflicts, the merge is not applied and the conflicts are returned.
+    pub fn try_merge_generic(&mut self, source_branch: &str) -> Result<gix::ObjectId, GitKvError>
+    where
+        Self: HistoricalAccess<N> + TreeConfigSaver<N>,
+    {
+        // Use a NoOpResolver that leaves all conflicts unresolved
+        struct NoOpResolver;
+        impl crate::diff::ConflictResolver for NoOpResolver {
+            fn resolve_conflict(
+                &self,
+                _conflict: &crate::diff::MergeConflict,
+            ) -> Option<crate::diff::MergeResult> {
+                None // Leave all conflicts unresolved
+            }
+        }
+
+        self.merge_generic(source_branch, &NoOpResolver)
+    }
 }
 
 // Implement TreeConfigSaver for InMemoryNodeStorage
@@ -2383,60 +3116,31 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, InMemoryNodeStor
 // Specialized implementation for InMemoryNodeStorage
 impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
     /// Save tree config to git for InMemoryNodeStorage
+    ///
+    /// Writes only the config (with root hash) to dataset directory.
+    /// The config is committed to git for historical access.
+    /// Nodes are kept in memory - historical access works within the same session
+    /// by loading nodes from the in-memory storage using the root hash.
+    /// After restart, nodes are lost (expected for in-memory storage).
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // For InMemoryNodeStorage, we need to persist the current tree state to filesystem
-        // so it can be committed to git and accessed historically
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
 
-        // Get the current tree configuration
+        // Get the current tree configuration (includes root_hash)
         let config = self.tree.config.clone();
 
         // Serialize the config to JSON
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
 
-        // Write the config file to the dataset directory
-        // For InMemoryNodeStorage, we need to determine the dataset directory from git repo path
-        let git_root = Self::find_git_root(self.git_repo.path().parent().unwrap()).unwrap();
-        let dataset_dir = if self.git_repo.path().parent().unwrap() == git_root {
-            // Dataset is at git root
-            git_root
-        } else {
-            // Dataset is in a subdirectory
-            self.git_repo.path().parent().unwrap().to_path_buf()
-        };
+        // Write only the config file to the dataset directory
+        // No need for prolly_hash_mappings - nodes are in memory and accessed by root_hash
+        // Historical access uses root_hash to traverse the tree from in-memory storage
         let config_path = dataset_dir.join("prolly_config_tree_config");
         std::fs::write(&config_path, config_json)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
-
-        // Since InMemoryNodeStorage doesn't persist node mappings to disk like GitNodeStorage,
-        // we need to create a mapping from the current in-memory tree nodes.
-        // We'll serialize the entire tree structure as a mapping file.
-        let mut mappings_content = String::new();
-
-        // For InMemory storage, we can't get actual git object IDs for the nodes
-        // Instead, we'll create a synthetic mapping using the node hashes themselves
-        // This allows historical access to work by reconstructing the tree from its structure
-
-        // Get all keys from the current tree and find their values
-        let all_keys = self.tree.collect_keys();
-        for key in all_keys {
-            if let Some(node) = self.tree.find(&key) {
-                // Find the value in the node
-                if let Some(index) = node.keys.iter().position(|k| k == &key) {
-                    let value = &node.values[index];
-                    // Create a simple key-value mapping for historical access
-                    let key_hex = hex::encode(&key);
-                    let value_hex = hex::encode(value);
-                    mappings_content.push_str(&format!("key:{key_hex}:{value_hex}\n"));
-                }
-            }
-        }
-
-        // Write the synthetic mappings file
-        let mappings_path = dataset_dir.join("prolly_hash_mappings");
-        std::fs::write(&mappings_path, mappings_content).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write mappings file: {e}"))
-        })?;
 
         Ok(())
     }
@@ -2452,9 +3156,31 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, FileNodeStorage<
 // Specialized implementation for FileNodeStorage
 impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
     /// Save tree config to git for FileNodeStorage
+    ///
+    /// Writes only the config (with root hash) to dataset directory.
+    /// The config is committed to git for historical access.
+    /// Nodes remain in .git/prolly/nodes/files/ (shared, content-addressed).
+    /// Historical access reconstructs tree by loading nodes from storage using root hash.
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // For FileNodeStorage, the config is already saved to disk in the dataset directory.
-        // No need to duplicate it at the git root level.
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
+
+        // Get the current tree configuration (includes root_hash)
+        let config = self.tree.config.clone();
+
+        // Serialize the config to JSON
+        let config_json = serde_json::to_string_pretty(&config)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
+
+        // Write only the config file to the dataset directory
+        // No need for prolly_hash_mappings - nodes are content-addressed in .git/prolly/nodes/files/
+        // Historical access uses root_hash to traverse the tree from node storage
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        std::fs::write(&config_path, config_json)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
+
         Ok(())
     }
 }
@@ -2471,9 +3197,31 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, RocksDBNodeStora
 #[cfg(feature = "rocksdb_storage")]
 impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
     /// Save tree config to git for RocksDBNodeStorage
+    ///
+    /// Writes only the config (with root hash) to dataset directory.
+    /// The config is committed to git for historical access.
+    /// Nodes remain in .git/prolly/nodes/rocksdb/ (shared, content-addressed).
+    /// Historical access reconstructs tree by loading nodes from storage using root hash.
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
-        // For RocksDBNodeStorage, the config is already persisted in the dataset directory.
-        // No need to duplicate it at the git root level.
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
+
+        // Get the current tree configuration (includes root_hash)
+        let config = self.tree.config.clone();
+
+        // Serialize the config to JSON
+        let config_json = serde_json::to_string_pretty(&config)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
+
+        // Write only the config file to the dataset directory
+        // No need for prolly_hash_mappings - nodes are content-addressed in .git/prolly/nodes/rocksdb/
+        // Historical access uses root_hash to traverse the tree from node storage
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        std::fs::write(&config_path, config_json)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
+
         Ok(())
     }
 }

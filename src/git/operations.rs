@@ -660,7 +660,7 @@ impl<const N: usize> GitOperations<N> {
 
     /// Simple hex decoder (replaces need for hex crate dependency)
     fn decode_hex(&self, hex_str: &str) -> Result<Vec<u8>, GitKvError> {
-        if hex_str.len() % 2 != 0 {
+        if !hex_str.len().is_multiple_of(2) {
             return Err(GitKvError::GitObjectError(
                 "Invalid hex string length".to_string(),
             ));

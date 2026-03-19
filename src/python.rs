@@ -24,13 +24,18 @@ use crate::{
     config::TreeConfig,
     git::{
         types::{DiffOperation, StorageBackend},
-        versioned_store::{HistoricalAccess, HistoricalCommitAccess},
-        GitVersionedKvStore,
+        versioned_store::{
+            FileVersionedKvStore, GitVersionedKvStore, HistoricalAccess, HistoricalCommitAccess,
+            InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
+        },
     },
     proof::Proof,
     storage::{FileNodeStorage, InMemoryNodeStorage},
     tree::{ProllyTree, Tree},
 };
+
+#[cfg(feature = "rocksdb_storage")]
+use crate::git::versioned_store::RocksDBVersionedKvStore;
 
 #[cfg(feature = "sql")]
 use crate::sql::ProllyStorage;
@@ -713,6 +718,7 @@ enum PyStorageBackend {
     InMemory,
     File,
     Git,
+    RocksDB,
 }
 
 #[pymethods]
@@ -722,19 +728,14 @@ impl PyStorageBackend {
             PyStorageBackend::InMemory => "InMemory",
             PyStorageBackend::File => "File",
             PyStorageBackend::Git => "Git",
+            PyStorageBackend::RocksDB => "RocksDB",
         }
     }
 }
 
-impl From<PyStorageBackend> for StorageBackend {
-    fn from(py_backend: PyStorageBackend) -> Self {
-        match py_backend {
-            PyStorageBackend::InMemory => StorageBackend::InMemory,
-            PyStorageBackend::File => StorageBackend::File,
-            PyStorageBackend::Git => StorageBackend::Git,
-        }
-    }
-}
+// Note: We don't implement From<PyStorageBackend> for StorageBackend because
+// the RocksDB case requires error handling when the feature is disabled.
+// Instead, the conversion is handled directly in PyVersionedKvStore::new() and open().
 
 impl From<StorageBackend> for PyStorageBackend {
     fn from(backend: StorageBackend) -> Self {
@@ -743,9 +744,44 @@ impl From<StorageBackend> for PyStorageBackend {
             StorageBackend::File => PyStorageBackend::File,
             StorageBackend::Git => PyStorageBackend::Git,
             #[cfg(feature = "rocksdb_storage")]
-            StorageBackend::RocksDB => PyStorageBackend::Git, // Fallback to Git for RocksDB
+            StorageBackend::RocksDB => PyStorageBackend::RocksDB,
         }
     }
+}
+
+/// Wrapper enum for different VersionedKvStore storage backends
+enum VersionedKvStoreWrapper {
+    Git(GitVersionedKvStore<32>),
+    File(FileVersionedKvStore<32>),
+    InMemory(InMemoryVersionedKvStore<32>),
+    #[cfg(feature = "rocksdb_storage")]
+    RocksDB(RocksDBVersionedKvStore<32>),
+}
+
+/// Macro for dispatching operations to the correct storage backend
+macro_rules! with_versioned_store {
+    ($self:expr, $store:ident, $body:expr) => {
+        match &*$self {
+            VersionedKvStoreWrapper::Git($store) => $body,
+            VersionedKvStoreWrapper::File($store) => $body,
+            VersionedKvStoreWrapper::InMemory($store) => $body,
+            #[cfg(feature = "rocksdb_storage")]
+            VersionedKvStoreWrapper::RocksDB($store) => $body,
+        }
+    };
+}
+
+/// Macro for dispatching mutable operations to the correct storage backend
+macro_rules! with_versioned_store_mut {
+    ($self:expr, $store:ident, $body:expr) => {
+        match &mut *$self {
+            VersionedKvStoreWrapper::Git($store) => $body,
+            VersionedKvStoreWrapper::File($store) => $body,
+            VersionedKvStoreWrapper::InMemory($store) => $body,
+            #[cfg(feature = "rocksdb_storage")]
+            VersionedKvStoreWrapper::RocksDB($store) => $body,
+        }
+    };
 }
 
 /// Python wrapper for MergeConflict
@@ -907,28 +943,94 @@ impl PyKvDiff {
 
 #[pyclass(name = "VersionedKvStore")]
 struct PyVersionedKvStore {
-    inner: Arc<Mutex<GitVersionedKvStore<32>>>,
+    inner: Arc<Mutex<VersionedKvStoreWrapper>>,
 }
 
 #[pymethods]
 impl PyVersionedKvStore {
     #[new]
-    fn new(path: String) -> PyResult<Self> {
-        let store = GitVersionedKvStore::<32>::init(path)
-            .map_err(|e| PyValueError::new_err(format!("Failed to initialize store: {}", e)))?;
+    #[pyo3(signature = (path, storage_backend=None))]
+    fn new(path: String, storage_backend: Option<PyStorageBackend>) -> PyResult<Self> {
+        let backend = storage_backend.unwrap_or(PyStorageBackend::Git);
+        let wrapper = match backend {
+            PyStorageBackend::Git => {
+                let store = GitVersionedKvStore::<32>::init(&path).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to initialize Git store: {}", e))
+                })?;
+                VersionedKvStoreWrapper::Git(store)
+            }
+            PyStorageBackend::File => {
+                let store = FileVersionedKvStore::<32>::init(&path).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to initialize File store: {}", e))
+                })?;
+                VersionedKvStoreWrapper::File(store)
+            }
+            PyStorageBackend::InMemory => {
+                let store = InMemoryVersionedKvStore::<32>::init(&path).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to initialize InMemory store: {}", e))
+                })?;
+                VersionedKvStoreWrapper::InMemory(store)
+            }
+            #[cfg(feature = "rocksdb_storage")]
+            PyStorageBackend::RocksDB => {
+                let store = RocksDBVersionedKvStore::<32>::init(&path).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to initialize RocksDB store: {}", e))
+                })?;
+                VersionedKvStoreWrapper::RocksDB(store)
+            }
+            #[cfg(not(feature = "rocksdb_storage"))]
+            PyStorageBackend::RocksDB => {
+                return Err(PyValueError::new_err(
+                    "RocksDB storage backend requires 'rocksdb_storage' feature to be enabled",
+                ));
+            }
+        };
 
         Ok(PyVersionedKvStore {
-            inner: Arc::new(Mutex::new(store)),
+            inner: Arc::new(Mutex::new(wrapper)),
         })
     }
 
     #[staticmethod]
-    fn open(path: String) -> PyResult<Self> {
-        let store = GitVersionedKvStore::<32>::open(path)
-            .map_err(|e| PyValueError::new_err(format!("Failed to open store: {}", e)))?;
+    #[pyo3(signature = (path, storage_backend=None))]
+    fn open(path: String, storage_backend: Option<PyStorageBackend>) -> PyResult<Self> {
+        let backend = storage_backend.unwrap_or(PyStorageBackend::Git);
+        let wrapper = match backend {
+            PyStorageBackend::Git => {
+                let store = GitVersionedKvStore::<32>::open(&path).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to open Git store: {}", e))
+                })?;
+                VersionedKvStoreWrapper::Git(store)
+            }
+            PyStorageBackend::File => {
+                let store = FileVersionedKvStore::<32>::open(&path).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to open File store: {}", e))
+                })?;
+                VersionedKvStoreWrapper::File(store)
+            }
+            PyStorageBackend::InMemory => {
+                let store = InMemoryVersionedKvStore::<32>::open(&path).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to open InMemory store: {}", e))
+                })?;
+                VersionedKvStoreWrapper::InMemory(store)
+            }
+            #[cfg(feature = "rocksdb_storage")]
+            PyStorageBackend::RocksDB => {
+                let store = RocksDBVersionedKvStore::<32>::open(&path).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to open RocksDB store: {}", e))
+                })?;
+                VersionedKvStoreWrapper::RocksDB(store)
+            }
+            #[cfg(not(feature = "rocksdb_storage"))]
+            PyStorageBackend::RocksDB => {
+                return Err(PyValueError::new_err(
+                    "RocksDB storage backend requires 'rocksdb_storage' feature to be enabled",
+                ));
+            }
+        };
 
         Ok(PyVersionedKvStore {
-            inner: Arc::new(Mutex::new(store)),
+            inner: Arc::new(Mutex::new(wrapper)),
         })
     }
 
@@ -936,144 +1038,183 @@ impl PyVersionedKvStore {
         let key_vec = key.as_bytes().to_vec();
         let value_vec = value.as_bytes().to_vec();
 
-        let mut store = self.inner.lock().unwrap();
-        store
-            .insert(key_vec, value_vec)
-            .map_err(|e| PyValueError::new_err(format!("Failed to insert: {}", e)))?;
-
-        Ok(())
+        let mut guard = self.inner.lock().unwrap();
+        with_versioned_store_mut!(guard, store, {
+            store
+                .insert(key_vec, value_vec)
+                .map_err(|e| PyValueError::new_err(format!("Failed to insert: {}", e)))?;
+            Ok(())
+        })
     }
 
     fn get(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
         let key_vec = key.as_bytes().to_vec();
 
-        let store = self.inner.lock().unwrap();
-        match store.get(&key_vec) {
-            Some(value) => Ok(Some(PyBytes::new_bound(py, &value).into())),
-            None => Ok(None),
-        }
+        let guard = self.inner.lock().unwrap();
+        with_versioned_store!(guard, store, {
+            match store.get(&key_vec) {
+                Some(value) => Ok(Some(PyBytes::new_bound(py, &value).into())),
+                None => Ok(None),
+            }
+        })
     }
 
     fn update(&self, key: &Bound<'_, PyBytes>, value: &Bound<'_, PyBytes>) -> PyResult<bool> {
         let key_vec = key.as_bytes().to_vec();
         let value_vec = value.as_bytes().to_vec();
 
-        let mut store = self.inner.lock().unwrap();
-        store
-            .update(key_vec, value_vec)
-            .map_err(|e| PyValueError::new_err(format!("Failed to update: {}", e)))
+        let mut guard = self.inner.lock().unwrap();
+        with_versioned_store_mut!(guard, store, {
+            store
+                .update(key_vec, value_vec)
+                .map_err(|e| PyValueError::new_err(format!("Failed to update: {}", e)))
+        })
     }
 
     fn delete(&self, key: &Bound<'_, PyBytes>) -> PyResult<bool> {
         let key_vec = key.as_bytes().to_vec();
 
-        let mut store = self.inner.lock().unwrap();
-        store
-            .delete(&key_vec)
-            .map_err(|e| PyValueError::new_err(format!("Failed to delete: {}", e)))
+        let mut guard = self.inner.lock().unwrap();
+        with_versioned_store_mut!(guard, store, {
+            store
+                .delete(&key_vec)
+                .map_err(|e| PyValueError::new_err(format!("Failed to delete: {}", e)))
+        })
     }
 
     fn list_keys(&self, py: Python) -> PyResult<Vec<Py<PyBytes>>> {
-        let store = self.inner.lock().unwrap();
-        let keys = store.list_keys();
+        let guard = self.inner.lock().unwrap();
+        with_versioned_store!(guard, store, {
+            let keys = store.list_keys();
 
-        let total_keys = keys.len();
-        if total_keys > MAX_KEYS_LIMIT {
-            eprintln!(
-                "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
-                Consider using more specific queries or implementing pagination.",
-                total_keys, MAX_KEYS_LIMIT
-            );
-        }
+            let total_keys = keys.len();
+            if total_keys > MAX_KEYS_LIMIT {
+                eprintln!(
+                    "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
+                    Consider using more specific queries or implementing pagination.",
+                    total_keys, MAX_KEYS_LIMIT
+                );
+            }
 
-        let py_keys: Vec<Py<PyBytes>> = keys
-            .iter()
-            .take(MAX_KEYS_LIMIT)
-            .map(|key| PyBytes::new_bound(py, key).into())
-            .collect();
+            let py_keys: Vec<Py<PyBytes>> = keys
+                .iter()
+                .take(MAX_KEYS_LIMIT)
+                .map(|key| PyBytes::new_bound(py, key).into())
+                .collect();
 
-        Ok(py_keys)
+            Ok(py_keys)
+        })
     }
 
     fn status(&self, py: Python) -> PyResult<Vec<(Py<PyBytes>, String)>> {
-        let store = self.inner.lock().unwrap();
-        let status = store.status();
+        let guard = self.inner.lock().unwrap();
+        with_versioned_store!(guard, store, {
+            let status = store.status();
 
-        let py_status: Vec<(Py<PyBytes>, String)> = status
-            .iter()
-            .map(|(key, status_str)| (PyBytes::new_bound(py, key).into(), status_str.clone()))
-            .collect();
+            let py_status: Vec<(Py<PyBytes>, String)> = status
+                .iter()
+                .map(|(key, status_str)| (PyBytes::new_bound(py, key).into(), status_str.clone()))
+                .collect();
 
-        Ok(py_status)
+            Ok(py_status)
+        })
     }
 
     fn commit(&self, message: String) -> PyResult<String> {
-        let mut store = self.inner.lock().unwrap();
-        let commit_id = store
-            .commit(&message)
-            .map_err(|e| PyValueError::new_err(format!("Failed to commit: {}", e)))?;
+        let mut guard = self.inner.lock().unwrap();
+        with_versioned_store_mut!(guard, store, {
+            let commit_id = store
+                .commit(&message)
+                .map_err(|e| PyValueError::new_err(format!("Failed to commit: {}", e)))?;
 
-        Ok(commit_id.to_hex().to_string())
+            Ok(commit_id.to_hex().to_string())
+        })
     }
 
     fn branch(&self, name: String) -> PyResult<()> {
-        let mut store = self.inner.lock().unwrap();
-        store
-            .branch(&name)
-            .map_err(|e| PyValueError::new_err(format!("Failed to create branch: {}", e)))?;
+        let mut guard = self.inner.lock().unwrap();
+        with_versioned_store_mut!(guard, store, {
+            store
+                .branch(&name)
+                .map_err(|e| PyValueError::new_err(format!("Failed to create branch: {}", e)))?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn create_branch(&self, name: String) -> PyResult<()> {
-        let mut store = self.inner.lock().unwrap();
-        store.create_branch(&name).map_err(|e| {
-            PyValueError::new_err(format!("Failed to create and switch branch: {}", e))
-        })?;
+        let mut guard = self.inner.lock().unwrap();
+        with_versioned_store_mut!(guard, store, {
+            store.create_branch(&name).map_err(|e| {
+                PyValueError::new_err(format!("Failed to create and switch branch: {}", e))
+            })?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn checkout(&self, branch_or_commit: String) -> PyResult<()> {
-        let mut store = self.inner.lock().unwrap();
-        store
-            .checkout(&branch_or_commit)
-            .map_err(|e| PyValueError::new_err(format!("Failed to checkout: {}", e)))?;
-
-        Ok(())
+        let mut guard = self.inner.lock().unwrap();
+        // All backends support checkout because they all use git for version control
+        with_versioned_store_mut!(guard, store, {
+            store
+                .checkout_generic(&branch_or_commit)
+                .map_err(|e| PyValueError::new_err(format!("Failed to checkout: {}", e)))?;
+            Ok(())
+        })
     }
 
     fn current_branch(&self) -> PyResult<String> {
-        let store = self.inner.lock().unwrap();
-        Ok(store.current_branch().to_string())
+        let guard = self.inner.lock().unwrap();
+        with_versioned_store!(guard, store, { Ok(store.current_branch().to_string()) })
     }
 
     fn list_branches(&self) -> PyResult<Vec<String>> {
-        let store = self.inner.lock().unwrap();
-        store
-            .list_branches()
-            .map_err(|e| PyValueError::new_err(format!("Failed to list branches: {}", e)))
+        let guard = self.inner.lock().unwrap();
+        with_versioned_store!(guard, store, {
+            store
+                .list_branches()
+                .map_err(|e| PyValueError::new_err(format!("Failed to list branches: {}", e)))
+        })
     }
 
     fn log(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
-        let store = self.inner.lock().unwrap();
-        let history = store
-            .log()
-            .map_err(|e| PyValueError::new_err(format!("Failed to get log: {}", e)))?;
+        // Collect commit data under lock, then release before Python GIL operations
+        // to avoid potential deadlock between mutex and GIL
+        let commits_data: Vec<(String, String, String, String, i64)> = {
+            let guard = self.inner.lock().unwrap();
+            with_versioned_store!(guard, store, {
+                let history = store
+                    .log()
+                    .map_err(|e| PyValueError::new_err(format!("Failed to get log: {}", e)))?;
 
+                let data: Vec<_> = history
+                    .iter()
+                    .map(|commit| {
+                        (
+                            commit.id.to_hex().to_string(),
+                            commit.author.clone(),
+                            commit.committer.clone(),
+                            commit.message.clone(),
+                            commit.timestamp,
+                        )
+                    })
+                    .collect();
+                Ok::<_, PyErr>(data)
+            })?
+        };
+
+        // Now convert to Python objects without holding the store lock
         Python::with_gil(|py| {
-            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = history
-                .iter()
-                .map(|commit| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
+                .into_iter()
+                .map(|(id, author, committer, message, timestamp)| {
                     let mut map = HashMap::new();
-                    map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
-                    map.insert("author".to_string(), commit.author.clone().into_py(py));
-                    map.insert(
-                        "committer".to_string(),
-                        commit.committer.clone().into_py(py),
-                    );
-                    map.insert("message".to_string(), commit.message.clone().into_py(py));
-                    map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
+                    map.insert("id".to_string(), id.into_py(py));
+                    map.insert("author".to_string(), author.into_py(py));
+                    map.insert("committer".to_string(), committer.into_py(py));
+                    map.insert("message".to_string(), message.into_py(py));
+                    map.insert("timestamp".to_string(), timestamp.into_py(py));
                     Ok(map)
                 })
                 .collect();
@@ -1086,25 +1227,43 @@ impl PyVersionedKvStore {
         key: &Bound<'_, PyBytes>,
     ) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
         let key_vec = key.as_bytes().to_vec();
-        let store = self.inner.lock().unwrap();
 
-        let commits = store
-            .get_commits_for_key(&key_vec)
-            .map_err(|e| PyValueError::new_err(format!("Failed to get commits for key: {}", e)))?;
+        // All backends now support get_commits_for_key because they all write config to dataset_dir
+        // which is tracked in git commits
+        let commits_data: Vec<(String, String, String, String, i64)> = {
+            let guard = self.inner.lock().unwrap();
+            with_versioned_store!(guard, store, {
+                let commits = store.get_commits_for_key(&key_vec).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to get commits for key: {}", e))
+                })?;
 
+                let data: Vec<_> = commits
+                    .iter()
+                    .map(|commit| {
+                        (
+                            commit.id.to_hex().to_string(),
+                            commit.author.clone(),
+                            commit.committer.clone(),
+                            commit.message.clone(),
+                            commit.timestamp,
+                        )
+                    })
+                    .collect();
+                Ok::<_, PyErr>(data)
+            })?
+        };
+
+        // Now convert to Python objects without holding the store lock
         Python::with_gil(|py| {
-            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits
-                .iter()
-                .map(|commit| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
+                .into_iter()
+                .map(|(id, author, committer, message, timestamp)| {
                     let mut map = HashMap::new();
-                    map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
-                    map.insert("author".to_string(), commit.author.clone().into_py(py));
-                    map.insert(
-                        "committer".to_string(),
-                        commit.committer.clone().into_py(py),
-                    );
-                    map.insert("message".to_string(), commit.message.clone().into_py(py));
-                    map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
+                    map.insert("id".to_string(), id.into_py(py));
+                    map.insert("author".to_string(), author.into_py(py));
+                    map.insert("committer".to_string(), committer.into_py(py));
+                    map.insert("message".to_string(), message.into_py(py));
+                    map.insert("timestamp".to_string(), timestamp.into_py(py));
                     Ok(map)
                 })
                 .collect();
@@ -1113,25 +1272,42 @@ impl PyVersionedKvStore {
     }
 
     fn get_commit_history(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
-        let store = self.inner.lock().unwrap();
+        // Collect commit data under lock, then release before Python GIL operations
+        // to avoid potential deadlock between mutex and GIL
+        let commits_data: Vec<(String, String, String, String, i64)> = {
+            let guard = self.inner.lock().unwrap();
+            with_versioned_store!(guard, store, {
+                let commits = store.get_commit_history().map_err(|e| {
+                    PyValueError::new_err(format!("Failed to get commit history: {}", e))
+                })?;
 
-        let commits = store
-            .get_commit_history()
-            .map_err(|e| PyValueError::new_err(format!("Failed to get commit history: {}", e)))?;
+                let data: Vec<_> = commits
+                    .iter()
+                    .map(|commit| {
+                        (
+                            commit.id.to_hex().to_string(),
+                            commit.author.clone(),
+                            commit.committer.clone(),
+                            commit.message.clone(),
+                            commit.timestamp,
+                        )
+                    })
+                    .collect();
+                Ok::<_, PyErr>(data)
+            })?
+        };
 
+        // Now convert to Python objects without holding the store lock
         Python::with_gil(|py| {
-            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits
-                .iter()
-                .map(|commit| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
+                .into_iter()
+                .map(|(id, author, committer, message, timestamp)| {
                     let mut map = HashMap::new();
-                    map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
-                    map.insert("author".to_string(), commit.author.clone().into_py(py));
-                    map.insert(
-                        "committer".to_string(),
-                        commit.committer.clone().into_py(py),
-                    );
-                    map.insert("message".to_string(), commit.message.clone().into_py(py));
-                    map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
+                    map.insert("id".to_string(), id.into_py(py));
+                    map.insert("author".to_string(), author.into_py(py));
+                    map.insert("committer".to_string(), committer.into_py(py));
+                    map.insert("message".to_string(), message.into_py(py));
+                    map.insert("timestamp".to_string(), timestamp.into_py(py));
                     Ok(map)
                 })
                 .collect();
@@ -1149,36 +1325,40 @@ impl PyVersionedKvStore {
     ///     str: The commit ID of the merge commit
     ///
     /// Raises:
-    ///     ValueError: If merge fails or has unresolved conflicts
+    ///     ValueError: If merge fails, has unresolved conflicts, or storage backend doesn't support merge
     #[pyo3(signature = (source_branch, conflict_resolution=None))]
     fn merge(
         &self,
         source_branch: String,
         conflict_resolution: Option<PyConflictResolution>,
     ) -> PyResult<String> {
-        let mut store = self.inner.lock().unwrap();
-
+        let mut guard = self.inner.lock().unwrap();
         let resolution = conflict_resolution.unwrap_or(PyConflictResolution::IgnoreAll);
 
-        let commit_id = match resolution {
-            PyConflictResolution::IgnoreAll => store
-                .merge_ignore_conflicts(&source_branch)
-                .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?,
-            PyConflictResolution::TakeSource => {
-                let resolver = crate::diff::TakeSourceResolver;
-                store
-                    .merge(&source_branch, &resolver)
-                    .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
-            }
-            PyConflictResolution::TakeDestination => {
-                let resolver = crate::diff::TakeDestinationResolver;
-                store
-                    .merge(&source_branch, &resolver)
-                    .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
-            }
-        };
-
-        Ok(commit_id.to_hex().to_string())
+        // All backends support merge because they all use git for version control
+        with_versioned_store_mut!(guard, store, {
+            let commit_id = match resolution {
+                PyConflictResolution::IgnoreAll => {
+                    let resolver = crate::diff::IgnoreConflictsResolver;
+                    store
+                        .merge_generic(&source_branch, &resolver)
+                        .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+                }
+                PyConflictResolution::TakeSource => {
+                    let resolver = crate::diff::TakeSourceResolver;
+                    store
+                        .merge_generic(&source_branch, &resolver)
+                        .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+                }
+                PyConflictResolution::TakeDestination => {
+                    let resolver = crate::diff::TakeDestinationResolver;
+                    store
+                        .merge_generic(&source_branch, &resolver)
+                        .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+                }
+            };
+            Ok(commit_id.to_hex().to_string())
+        })
     }
 
     /// Attempt to merge another branch and return any conflicts
@@ -1191,55 +1371,49 @@ impl PyVersionedKvStore {
     ///            If success is True, conflicts will be empty and merge was applied
     ///            If success is False, conflicts contains unresolved conflicts and merge was not applied
     fn try_merge(&self, source_branch: String) -> PyResult<(bool, Vec<PyMergeConflict>)> {
-        let mut store = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap();
 
-        // Try to merge with a no-op resolver that leaves all conflicts unresolved
-        struct NoOpResolver;
-        impl crate::diff::ConflictResolver for NoOpResolver {
-            fn resolve_conflict(
-                &self,
-                _conflict: &crate::diff::MergeConflict,
-            ) -> Option<crate::diff::MergeResult> {
-                None // Leave all conflicts unresolved
+        // All backends support try_merge because they all use git for version control
+        with_versioned_store_mut!(guard, store, {
+            match store.try_merge_generic(&source_branch) {
+                Ok(_commit_id) => {
+                    // Merge succeeded with no conflicts
+                    Ok((true, Vec::new()))
+                }
+                Err(crate::git::types::GitKvError::MergeConflictError(conflicts)) => {
+                    // Convert conflicts to Python format
+                    let py_conflicts: Vec<PyMergeConflict> = conflicts
+                        .into_iter()
+                        .map(|c| PyMergeConflict {
+                            key: c.key,
+                            base_value: c.base_value,
+                            source_value: c.source_value,
+                            destination_value: c.destination_value,
+                        })
+                        .collect();
+                    Ok((false, py_conflicts))
+                }
+                Err(e) => Err(PyValueError::new_err(format!("Merge failed: {}", e))),
             }
-        }
-
-        match store.merge(&source_branch, &NoOpResolver) {
-            Ok(_commit_id) => {
-                // Merge succeeded with no conflicts
-                Ok((true, Vec::new()))
-            }
-            Err(crate::git::types::GitKvError::MergeConflictError(conflicts)) => {
-                // Convert conflicts to Python format
-                let py_conflicts: Vec<PyMergeConflict> = conflicts
-                    .into_iter()
-                    .map(|c| PyMergeConflict {
-                        key: c.key,
-                        base_value: c.base_value,
-                        source_value: c.source_value,
-                        destination_value: c.destination_value,
-                    })
-                    .collect();
-                Ok((false, py_conflicts))
-            }
-            Err(e) => Err(PyValueError::new_err(format!("Merge failed: {}", e))),
-        }
+        })
     }
 
     fn storage_backend(&self) -> PyResult<PyStorageBackend> {
-        let store = self.inner.lock().unwrap();
-        Ok(store.storage_backend().clone().into())
+        let guard = self.inner.lock().unwrap();
+        with_versioned_store!(guard, store, { Ok(store.storage_backend().clone().into()) })
     }
 
     fn generate_proof(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Py<PyBytes>> {
         let key_vec = key.as_bytes().to_vec();
 
         let proof_bytes = py.allow_threads(|| {
-            let store = self.inner.lock().unwrap();
-            let proof = store.generate_proof(&key_vec);
-
-            bincode::serialize(&proof)
-                .map_err(|e| PyValueError::new_err(format!("Proof serialization failed: {}", e)))
+            let guard = self.inner.lock().unwrap();
+            with_versioned_store!(guard, store, {
+                let proof = store.generate_proof(&key_vec);
+                bincode::serialize(&proof).map_err(|e| {
+                    PyValueError::new_err(format!("Proof serialization failed: {}", e))
+                })
+            })
         })?;
 
         Ok(PyBytes::new_bound(py, &proof_bytes).into())
@@ -1262,8 +1436,10 @@ impl PyVersionedKvStore {
                 PyValueError::new_err(format!("Proof deserialization failed: {}", e))
             })?;
 
-            let store = self.inner.lock().unwrap();
-            Ok(store.verify(proof, &key_vec, value_option.as_deref()))
+            let guard = self.inner.lock().unwrap();
+            with_versioned_store!(guard, store, {
+                Ok(store.verify(proof, &key_vec, value_option.as_deref()))
+            })
         })
     }
 
@@ -1272,32 +1448,36 @@ impl PyVersionedKvStore {
         py: Python,
         reference: String,
     ) -> PyResult<Vec<(Py<PyBytes>, Py<PyBytes>)>> {
-        let store = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap();
 
-        let keys_map = HistoricalAccess::get_keys_at_ref(&*store, &reference)
-            .map_err(|e| PyValueError::new_err(format!("Failed to get keys at ref: {}", e)))?;
+        // All backends now support get_keys_at_ref because they all write config to dataset_dir
+        // which is committed to git history.
+        with_versioned_store!(guard, store, {
+            let keys_map = HistoricalAccess::get_keys_at_ref(store, &reference)
+                .map_err(|e| PyValueError::new_err(format!("Failed to get keys at ref: {}", e)))?;
 
-        let total_keys = keys_map.len();
-        if total_keys > MAX_KEYS_LIMIT {
-            eprintln!(
-                "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
-                Consider using more specific queries or implementing pagination.",
-                total_keys, MAX_KEYS_LIMIT
-            );
-        }
+            let total_keys = keys_map.len();
+            if total_keys > MAX_KEYS_LIMIT {
+                eprintln!(
+                    "Warning: Tree contains {} keys, but only returning first {} keys due to limit. \
+                    Consider using more specific queries or implementing pagination.",
+                    total_keys, MAX_KEYS_LIMIT
+                );
+            }
 
-        let py_pairs: Vec<(Py<PyBytes>, Py<PyBytes>)> = keys_map
-            .into_iter()
-            .take(MAX_KEYS_LIMIT)
-            .map(|(key, value): (Vec<u8>, Vec<u8>)| {
-                (
-                    PyBytes::new_bound(py, &key).into(),
-                    PyBytes::new_bound(py, &value).into(),
-                )
-            })
-            .collect();
+            let py_pairs: Vec<(Py<PyBytes>, Py<PyBytes>)> = keys_map
+                .into_iter()
+                .take(MAX_KEYS_LIMIT)
+                .map(|(key, value): (Vec<u8>, Vec<u8>)| {
+                    (
+                        PyBytes::new_bound(py, &key).into(),
+                        PyBytes::new_bound(py, &value).into(),
+                    )
+                })
+                .collect();
 
-        Ok(py_pairs)
+            Ok(py_pairs)
+        })
     }
 
     /// Compare two commits or branches and return all keys that are added, updated or deleted
@@ -1309,44 +1489,48 @@ impl PyVersionedKvStore {
     /// Returns:
     ///     List[KvDiff]: List of differences between the two references
     fn diff(&self, from_ref: String, to_ref: String) -> PyResult<Vec<PyKvDiff>> {
-        let store = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap();
 
-        let diffs = store
-            .diff(&from_ref, &to_ref)
-            .map_err(|e| PyValueError::new_err(format!("Failed to compute diff: {}", e)))?;
+        // All backends support diff because they all implement HistoricalAccess
+        // which provides get_keys_at_ref, and diff is built on top of that.
+        with_versioned_store!(guard, store, {
+            let diffs = store
+                .diff(&from_ref, &to_ref)
+                .map_err(|e| PyValueError::new_err(format!("Failed to compute diff: {}", e)))?;
 
-        let py_diffs: Vec<PyKvDiff> = diffs
-            .into_iter()
-            .map(|diff| {
-                let operation = match diff.operation {
-                    DiffOperation::Added(value) => PyDiffOperation {
-                        operation_type: "Added".to_string(),
-                        value: Some(value),
-                        old_value: None,
-                        new_value: None,
-                    },
-                    DiffOperation::Removed(value) => PyDiffOperation {
-                        operation_type: "Removed".to_string(),
-                        value: Some(value),
-                        old_value: None,
-                        new_value: None,
-                    },
-                    DiffOperation::Modified { old, new } => PyDiffOperation {
-                        operation_type: "Modified".to_string(),
-                        value: None,
-                        old_value: Some(old),
-                        new_value: Some(new),
-                    },
-                };
+            let py_diffs: Vec<PyKvDiff> = diffs
+                .into_iter()
+                .map(|diff| {
+                    let operation = match diff.operation {
+                        DiffOperation::Added(value) => PyDiffOperation {
+                            operation_type: "Added".to_string(),
+                            value: Some(value),
+                            old_value: None,
+                            new_value: None,
+                        },
+                        DiffOperation::Removed(value) => PyDiffOperation {
+                            operation_type: "Removed".to_string(),
+                            value: Some(value),
+                            old_value: None,
+                            new_value: None,
+                        },
+                        DiffOperation::Modified { old, new } => PyDiffOperation {
+                            operation_type: "Modified".to_string(),
+                            value: None,
+                            old_value: Some(old),
+                            new_value: Some(new),
+                        },
+                    };
 
-                PyKvDiff {
-                    key: diff.key,
-                    operation,
-                }
-            })
-            .collect();
+                    PyKvDiff {
+                        key: diff.key,
+                        operation,
+                    }
+                })
+                .collect();
 
-        Ok(py_diffs)
+            Ok(py_diffs)
+        })
     }
 
     /// Get the current commit's object ID
@@ -1354,13 +1538,15 @@ impl PyVersionedKvStore {
     /// Returns:
     ///     str: The hexadecimal string representation of the current commit ID
     fn current_commit(&self) -> PyResult<String> {
-        let store = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap();
 
-        let commit_id = store
-            .current_commit()
-            .map_err(|e| PyValueError::new_err(format!("Failed to get current commit: {}", e)))?;
+        with_versioned_store!(guard, store, {
+            let commit_id = store.current_commit().map_err(|e| {
+                PyValueError::new_err(format!("Failed to get current commit: {}", e))
+            })?;
 
-        Ok(commit_id.to_hex().to_string())
+            Ok(commit_id.to_hex().to_string())
+        })
     }
 }
 
@@ -1621,7 +1807,7 @@ struct PyProllySQLStore {
 impl PyProllySQLStore {
     #[new]
     fn new(path: String) -> PyResult<Self> {
-        let store = GitVersionedKvStore::<32>::init(path)
+        let store = ThreadSafeGitVersionedKvStore::<32>::init(path)
             .map_err(|e| PyValueError::new_err(format!("Failed to initialize store: {}", e)))?;
 
         let storage = ProllyStorage::<32>::new(store);
@@ -1634,7 +1820,7 @@ impl PyProllySQLStore {
 
     #[staticmethod]
     fn open(path: String) -> PyResult<Self> {
-        let store = GitVersionedKvStore::<32>::open(path)
+        let store = ThreadSafeGitVersionedKvStore::<32>::open(path)
             .map_err(|e| PyValueError::new_err(format!("Failed to open store: {}", e)))?;
 
         let storage = ProllyStorage::<32>::new(store);
@@ -1775,7 +1961,7 @@ impl PyProllySQLStore {
                             dict.set_item("success", true)?;
                             Ok(dict.into())
                         }
-                        Payload::DropTable => {
+                        Payload::DropTable(_) => {
                             let dict = PyDict::new_bound(py);
                             dict.set_item("type", "drop_table")?;
                             dict.set_item("success", true)?;

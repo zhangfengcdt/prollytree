@@ -5,7 +5,7 @@
 
 Python bindings for ProllyTree - a probabilistic tree data structure that combines B-trees and Merkle trees for efficient, verifiable data storage.
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -24,9 +24,9 @@ tree.insert(b"hello", b"world")
 value = tree.find(b"hello")  # Returns b"world"
 ```
 
-## 📚 Documentation
+## Documentation
 
-**👉 [Complete Documentation](https://prollytree.readthedocs.io/en/latest/)**
+**[Complete Documentation](https://prollytree.readthedocs.io/en/latest/)**
 
 The full documentation includes:
 - [Quickstart Guide](https://prollytree.readthedocs.io/en/latest/quickstart.html)
@@ -34,15 +34,16 @@ The full documentation includes:
 - [Examples](https://prollytree.readthedocs.io/en/latest/examples.html)
 - [Advanced Usage](https://prollytree.readthedocs.io/en/latest/advanced.html)
 
-## ✨ Features
+## Features
 
-- **🌳 Probabilistic Trees** - High-performance data storage with automatic balancing
-- **🤖 AI Agent Memory** - Multi-layered memory systems for intelligent agents
-- **📚 Versioned Storage** - Git-like version control for key-value data
-- **🔐 Cryptographic Verification** - Merkle proofs for data integrity across trees and versioned storage
-- **⚡ SQL Queries** - Query your data using SQL syntax
+- **Probabilistic Trees** - High-performance data storage with automatic balancing
+- **AI Agent Memory** - Multi-layered memory systems for intelligent agents
+- **Versioned Storage** - Git-like version control for key-value data
+- **Multiple Storage Backends** - Choose from Git, File, InMemory, or RocksDB storage
+- **Cryptographic Verification** - Merkle proofs for data integrity across trees and versioned storage
+- **SQL Queries** - Query your data using SQL syntax
 
-## 🔥 Key Use Cases
+## Key Use Cases
 
 ### Probabilistic Trees
 ```python
@@ -74,9 +75,18 @@ memory.store_fact("person", "john", '{"name": "John", "age": 30}',
 
 ### Versioned Storage
 ```python
-from prollytree import VersionedKvStore
+from prollytree import VersionedKvStore, StorageBackend
 
+# Default Git backend (recommended for full version control)
 store = VersionedKvStore("./data")
+
+# Or explicitly choose a storage backend
+store = VersionedKvStore("./data", StorageBackend.Git)      # Full git versioning
+store = VersionedKvStore("./data", StorageBackend.File)     # File-based storage
+store = VersionedKvStore("./data", StorageBackend.InMemory) # In-memory (volatile)
+store = VersionedKvStore("./data", StorageBackend.RocksDB)  # RocksDB (requires rocksdb_storage feature)
+
+# Basic operations
 store.insert(b"config", b"production_settings")
 commit_id = store.commit("Add production config")
 
@@ -84,6 +94,15 @@ commit_id = store.commit("Add production config")
 store.create_branch("experiment")
 store.insert(b"feature", b"experimental_data")
 store.commit("Add experimental feature")
+
+# Merge branches (Git backend only)
+store.checkout("main")
+store.merge("experiment")
+
+# Diff between branches (Git backend only)
+diffs = store.diff("main", "experiment")
+for diff in diffs:
+    print(f"Key: {diff.key}, Operation: {diff.operation}")
 
 # Cryptographic verification on versioned data
 proof = store.generate_proof(b"config")
@@ -100,7 +119,7 @@ sql_store.execute("INSERT INTO users VALUES (1, 'Alice')")
 results = sql_store.execute("SELECT * FROM users WHERE name = 'Alice'")
 ```
 
-## 🛠️ Development
+## Development
 
 ### Building from Source
 ```bash
@@ -115,6 +134,6 @@ cd python/tests
 python test_prollytree.py
 ```
 
-## 📄 License
+## License
 
 Licensed under the Apache License, Version 2.0

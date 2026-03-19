@@ -282,10 +282,18 @@ class AgentMemorySystem:
         ...
 
 class StorageBackend:
-    """Enum representing different storage backend types"""
+    """Enum representing different storage backend types for VersionedKvStore.
+
+    Available backends:
+        - Git: Full git versioning with branch/merge support (default)
+        - File: File-based persistent storage in .git/prolly/nodes/files/
+        - InMemory: Volatile in-memory storage (data lost on exit)
+        - RocksDB: High-performance persistent storage (requires rocksdb_storage feature)
+    """
     InMemory: "StorageBackend"
     File: "StorageBackend"
     Git: "StorageBackend"
+    RocksDB: "StorageBackend"
 
     def __str__(self) -> str: ...
 
@@ -355,24 +363,52 @@ class KvDiff:
         ...
 
 class VersionedKvStore:
-    """A versioned key-value store backed by Git and ProllyTree"""
+    """A versioned key-value store backed by Git and ProllyTree.
 
-    def __init__(self, path: str) -> None:
+    Supports multiple storage backends for different use cases:
+    - Git (default): Full git versioning with branch/merge/diff support
+    - File: Persistent file-based storage without full git features
+    - InMemory: Fast volatile storage for testing
+    - RocksDB: High-performance persistent storage
+    """
+
+    def __init__(
+        self,
+        path: str,
+        storage_backend: Optional[StorageBackend] = None
+    ) -> None:
         """
         Initialize a new versioned key-value store.
 
         Args:
             path: Directory path for the store (must be within a git repository)
+            storage_backend: Storage backend to use. Options:
+                - StorageBackend.Git (default): Full git versioning with branch/merge
+                - StorageBackend.File: File-based storage in .git/prolly/nodes/files/
+                - StorageBackend.InMemory: Volatile in-memory storage
+                - StorageBackend.RocksDB: RocksDB storage (requires rocksdb_storage feature)
+
+        Example:
+            # Default Git backend
+            store = VersionedKvStore("./data")
+
+            # Explicit backend selection
+            store = VersionedKvStore("./data", StorageBackend.File)
+            store = VersionedKvStore("./data", StorageBackend.InMemory)
         """
         ...
 
     @staticmethod
-    def open(path: str) -> "VersionedKvStore":
+    def open(
+        path: str,
+        storage_backend: Optional[StorageBackend] = None
+    ) -> "VersionedKvStore":
         """
         Open an existing versioned key-value store.
 
         Args:
             path: Directory path where the store is located
+            storage_backend: Storage backend to use (default: Git)
         """
         ...
 
@@ -511,6 +547,9 @@ class VersionedKvStore:
         """
         Get all commits that contain changes to a specific key.
 
+        For InMemory backend, historical access only works within the same session
+        since nodes are not persisted.
+
         Args:
             key: The key to search for
 
@@ -610,6 +649,14 @@ class VersionedKvStore:
         This method provides historical access to the complete state of the store
         at any point in its history.
 
+        The method reconstructs the historical state by:
+        1. Reading the root hash from the committed config file
+        2. Loading the tree from the content-addressed node storage
+        3. Traversing the tree to collect all key-value pairs
+
+        For InMemory backend, historical access only works within the same session
+        since nodes are not persisted to disk.
+
         Args:
             reference: A git reference - can be a branch name (e.g., "main", "feature/xyz"),
                       commit hash (full or abbreviated), tag name, or relative reference
@@ -619,7 +666,7 @@ class VersionedKvStore:
             List of (key, value) tuples representing all key-value pairs at that reference
 
         Raises:
-            ValueError: If the reference cannot be resolved or accessed
+            ValueError: If the reference cannot be resolved
 
         Example:
             # Get all keys at a specific commit
