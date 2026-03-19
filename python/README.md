@@ -109,15 +109,6 @@ proof = store.generate_proof(b"config")
 is_valid = store.verify_proof(proof, b"config", b"production_settings")
 ```
 
-#### Storage Backend Comparison
-
-| Backend | Persistence | Git Versioning | Branch/Merge | Best For |
-|---------|-------------|----------------|--------------|----------|
-| `Git` | Yes | Full | Yes | Production, version control |
-| `File` | Yes | Commits only | No | Simple persistence |
-| `InMemory` | No | Commits only | No | Testing, temporary data |
-| `RocksDB` | Yes | Commits only | No | High-performance persistence |
-
 ### SQL Queries
 ```python
 from prollytree import ProllySQLStore

@@ -592,10 +592,6 @@ class VersionedKvStore:
         """
         Attempt to merge another branch and return any conflicts.
 
-        This method is available for all storage backends since they all use Git
-        for version control. The storage layer only affects how tree chunks are
-        stored, not the versioning operations.
-
         Args:
             source_branch: Name of the branch to merge from
 
@@ -651,7 +647,7 @@ class VersionedKvStore:
         Get all key-value pairs at a specific reference (commit, branch, or tag).
 
         This method provides historical access to the complete state of the store
-        at any point in its history. It is available for all storage backends.
+        at any point in its history.
 
         The method reconstructs the historical state by:
         1. Reading the root hash from the committed config file
@@ -687,9 +683,6 @@ class VersionedKvStore:
     def diff(self, from_ref: str, to_ref: str) -> List[KvDiff]:
         """
         Compare two commits or branches and return all keys that are added, updated or deleted.
-
-        This method is available for all storage backends. It uses the historical
-        access functionality to reconstruct tree states at each reference.
 
         Args:
             from_ref: Reference (branch or commit) to compare from
