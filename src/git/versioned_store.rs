@@ -122,31 +122,63 @@ where
         None
     }
 
-    /// Get the actual git directory path, handling worktrees and submodules
-    /// where .git may be a file containing "gitdir: /path/to/actual/git/dir"
+    /// Get the common git directory path, handling worktrees and submodules.
+    /// For worktrees, this resolves to the main .git directory (not the per-worktree gitdir)
+    /// to ensure shared node storage is placed in a common location.
     fn resolve_git_dir<P: AsRef<Path>>(git_root: P) -> std::path::PathBuf {
         let git_path = git_root.as_ref().join(".git");
 
         // If .git is a file (worktree or submodule), read the gitdir path from it
-        if git_path.is_file() {
+        let gitdir = if git_path.is_file() {
             if let Ok(content) = std::fs::read_to_string(&git_path) {
+                let mut resolved_gitdir = None;
                 for line in content.lines() {
-                    if let Some(gitdir) = line.strip_prefix("gitdir:") {
-                        let gitdir = gitdir.trim();
+                    if let Some(gitdir_str) = line.strip_prefix("gitdir:") {
+                        let gitdir_str = gitdir_str.trim();
                         // Handle both absolute and relative paths
-                        let gitdir_path = std::path::Path::new(gitdir);
-                        if gitdir_path.is_absolute() {
-                            return gitdir_path.to_path_buf();
+                        let gitdir_path = std::path::Path::new(gitdir_str);
+                        resolved_gitdir = Some(if gitdir_path.is_absolute() {
+                            gitdir_path.to_path_buf()
                         } else {
-                            return git_root.as_ref().join(gitdir);
-                        }
+                            git_root.as_ref().join(gitdir_str)
+                        });
+                        break;
                     }
+                }
+                resolved_gitdir.unwrap_or(git_path)
+            } else {
+                git_path
+            }
+        } else {
+            // Default: .git is a directory
+            git_path
+        };
+
+        // For linked worktrees, resolve to the common git directory
+        // The commondir file contains the path to the main .git directory
+        let commondir_path = gitdir.join("commondir");
+        if commondir_path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&commondir_path) {
+                let commondir_str = content.trim();
+                if !commondir_str.is_empty() {
+                    let commondir = std::path::Path::new(commondir_str);
+                    // Handle both absolute and relative paths
+                    let resolved_commondir = if commondir.is_absolute() {
+                        commondir.to_path_buf()
+                    } else {
+                        // Relative path is relative to the gitdir
+                        gitdir.join(commondir)
+                    };
+                    // Canonicalize to resolve .. components
+                    if let Ok(canonical) = resolved_commondir.canonicalize() {
+                        return canonical;
+                    }
+                    return resolved_commondir;
                 }
             }
         }
 
-        // Default: .git is a directory
-        git_path
+        gitdir
     }
 
     /// Get the prolly directory path inside the git directory
