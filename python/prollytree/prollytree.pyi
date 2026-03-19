@@ -511,8 +511,9 @@ class VersionedKvStore:
         """
         Switch to a different branch or commit.
 
-        Note: This method is only available with the Git storage backend.
-        Other backends will raise an error.
+        This method is available for all storage backends since they all use Git
+        for version control. The storage layer only affects how tree chunks are
+        stored, not the versioning operations.
 
         Args:
             branch_or_commit: Branch name or commit hash
@@ -583,8 +584,9 @@ class VersionedKvStore:
         """
         Merge another branch into the current branch.
 
-        Note: This method is only available with the Git storage backend.
-        Other backends will raise an error.
+        This method is available for all storage backends since they all use Git
+        for version control. The storage layer only affects how tree chunks are
+        stored, not the versioning operations.
 
         Args:
             source_branch: Name of the branch to merge from
@@ -602,8 +604,9 @@ class VersionedKvStore:
         """
         Attempt to merge another branch and return any conflicts.
 
-        Note: This method is only available with the Git storage backend.
-        Other backends will raise an error.
+        This method is available for all storage backends since they all use Git
+        for version control. The storage layer only affects how tree chunks are
+        stored, not the versioning operations.
 
         Args:
             source_branch: Name of the branch to merge from
@@ -697,8 +700,8 @@ class VersionedKvStore:
         """
         Compare two commits or branches and return all keys that are added, updated or deleted.
 
-        Note: This method is only available with the Git storage backend.
-        Other backends will raise an error.
+        This method is available for all storage backends. It uses the historical
+        access functionality to reconstruct tree states at each reference.
 
         Args:
             from_ref: Reference (branch or commit) to compare from

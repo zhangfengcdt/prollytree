@@ -95,6 +95,9 @@ cargo doc --document-private-items --no-deps
 ```
 
 ### Python Development
+
+Please use local venv environment for Python development to avoid conflicts with system packages. Ensure you have `maturin` installed for building Python extensions.
+
 ```bash
 # Build Python bindings
 ./python/build_python.sh

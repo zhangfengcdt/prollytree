@@ -1155,17 +1155,13 @@ impl PyVersionedKvStore {
 
     fn checkout(&self, branch_or_commit: String) -> PyResult<()> {
         let mut guard = self.inner.lock().unwrap();
-        match &mut *guard {
-            VersionedKvStoreWrapper::Git(store) => {
-                store
-                    .checkout(&branch_or_commit)
-                    .map_err(|e| PyValueError::new_err(format!("Failed to checkout: {}", e)))?;
-                Ok(())
-            }
-            _ => Err(PyValueError::new_err(
-                "checkout is only supported when using the Git storage backend in this Python API.",
-            )),
-        }
+        // All backends support checkout because they all use git for version control
+        with_versioned_store_mut!(guard, store, {
+            store
+                .checkout_generic(&branch_or_commit)
+                .map_err(|e| PyValueError::new_err(format!("Failed to checkout: {}", e)))?;
+            Ok(())
+        })
     }
 
     fn current_branch(&self) -> PyResult<String> {
@@ -1339,31 +1335,30 @@ impl PyVersionedKvStore {
         let mut guard = self.inner.lock().unwrap();
         let resolution = conflict_resolution.unwrap_or(PyConflictResolution::IgnoreAll);
 
-        match &mut *guard {
-            VersionedKvStoreWrapper::Git(store) => {
-                let commit_id = match resolution {
-                    PyConflictResolution::IgnoreAll => store
-                        .merge_ignore_conflicts(&source_branch)
-                        .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?,
-                    PyConflictResolution::TakeSource => {
-                        let resolver = crate::diff::TakeSourceResolver;
-                        store
-                            .merge(&source_branch, &resolver)
-                            .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
-                    }
-                    PyConflictResolution::TakeDestination => {
-                        let resolver = crate::diff::TakeDestinationResolver;
-                        store
-                            .merge(&source_branch, &resolver)
-                            .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
-                    }
-                };
-                Ok(commit_id.to_hex().to_string())
-            }
-            _ => Err(PyValueError::new_err(
-                "Merge is only supported with Git storage backend",
-            )),
-        }
+        // All backends support merge because they all use git for version control
+        with_versioned_store_mut!(guard, store, {
+            let commit_id = match resolution {
+                PyConflictResolution::IgnoreAll => {
+                    let resolver = crate::diff::IgnoreConflictsResolver;
+                    store
+                        .merge_generic(&source_branch, &resolver)
+                        .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+                }
+                PyConflictResolution::TakeSource => {
+                    let resolver = crate::diff::TakeSourceResolver;
+                    store
+                        .merge_generic(&source_branch, &resolver)
+                        .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+                }
+                PyConflictResolution::TakeDestination => {
+                    let resolver = crate::diff::TakeDestinationResolver;
+                    store
+                        .merge_generic(&source_branch, &resolver)
+                        .map_err(|e| PyValueError::new_err(format!("Merge failed: {}", e)))?
+                }
+            };
+            Ok(commit_id.to_hex().to_string())
+        })
     }
 
     /// Attempt to merge another branch and return any conflicts
@@ -1378,44 +1373,29 @@ impl PyVersionedKvStore {
     fn try_merge(&self, source_branch: String) -> PyResult<(bool, Vec<PyMergeConflict>)> {
         let mut guard = self.inner.lock().unwrap();
 
-        match &mut *guard {
-            VersionedKvStoreWrapper::Git(store) => {
-                // Try to merge with a no-op resolver that leaves all conflicts unresolved
-                struct NoOpResolver;
-                impl crate::diff::ConflictResolver for NoOpResolver {
-                    fn resolve_conflict(
-                        &self,
-                        _conflict: &crate::diff::MergeConflict,
-                    ) -> Option<crate::diff::MergeResult> {
-                        None // Leave all conflicts unresolved
-                    }
+        // All backends support try_merge because they all use git for version control
+        with_versioned_store_mut!(guard, store, {
+            match store.try_merge_generic(&source_branch) {
+                Ok(_commit_id) => {
+                    // Merge succeeded with no conflicts
+                    Ok((true, Vec::new()))
                 }
-
-                match store.merge(&source_branch, &NoOpResolver) {
-                    Ok(_commit_id) => {
-                        // Merge succeeded with no conflicts
-                        Ok((true, Vec::new()))
-                    }
-                    Err(crate::git::types::GitKvError::MergeConflictError(conflicts)) => {
-                        // Convert conflicts to Python format
-                        let py_conflicts: Vec<PyMergeConflict> = conflicts
-                            .into_iter()
-                            .map(|c| PyMergeConflict {
-                                key: c.key,
-                                base_value: c.base_value,
-                                source_value: c.source_value,
-                                destination_value: c.destination_value,
-                            })
-                            .collect();
-                        Ok((false, py_conflicts))
-                    }
-                    Err(e) => Err(PyValueError::new_err(format!("Merge failed: {}", e))),
+                Err(crate::git::types::GitKvError::MergeConflictError(conflicts)) => {
+                    // Convert conflicts to Python format
+                    let py_conflicts: Vec<PyMergeConflict> = conflicts
+                        .into_iter()
+                        .map(|c| PyMergeConflict {
+                            key: c.key,
+                            base_value: c.base_value,
+                            source_value: c.source_value,
+                            destination_value: c.destination_value,
+                        })
+                        .collect();
+                    Ok((false, py_conflicts))
                 }
+                Err(e) => Err(PyValueError::new_err(format!("Merge failed: {}", e))),
             }
-            _ => Err(PyValueError::new_err(
-                "try_merge is only supported with Git storage backend",
-            )),
-        }
+        })
     }
 
     fn storage_backend(&self) -> PyResult<PyStorageBackend> {
@@ -1511,49 +1491,46 @@ impl PyVersionedKvStore {
     fn diff(&self, from_ref: String, to_ref: String) -> PyResult<Vec<PyKvDiff>> {
         let guard = self.inner.lock().unwrap();
 
-        match &*guard {
-            VersionedKvStoreWrapper::Git(store) => {
-                let diffs = store
-                    .diff(&from_ref, &to_ref)
-                    .map_err(|e| PyValueError::new_err(format!("Failed to compute diff: {}", e)))?;
+        // All backends support diff because they all implement HistoricalAccess
+        // which provides get_keys_at_ref, and diff is built on top of that.
+        with_versioned_store!(guard, store, {
+            let diffs = store
+                .diff(&from_ref, &to_ref)
+                .map_err(|e| PyValueError::new_err(format!("Failed to compute diff: {}", e)))?;
 
-                let py_diffs: Vec<PyKvDiff> = diffs
-                    .into_iter()
-                    .map(|diff| {
-                        let operation = match diff.operation {
-                            DiffOperation::Added(value) => PyDiffOperation {
-                                operation_type: "Added".to_string(),
-                                value: Some(value),
-                                old_value: None,
-                                new_value: None,
-                            },
-                            DiffOperation::Removed(value) => PyDiffOperation {
-                                operation_type: "Removed".to_string(),
-                                value: Some(value),
-                                old_value: None,
-                                new_value: None,
-                            },
-                            DiffOperation::Modified { old, new } => PyDiffOperation {
-                                operation_type: "Modified".to_string(),
-                                value: None,
-                                old_value: Some(old),
-                                new_value: Some(new),
-                            },
-                        };
+            let py_diffs: Vec<PyKvDiff> = diffs
+                .into_iter()
+                .map(|diff| {
+                    let operation = match diff.operation {
+                        DiffOperation::Added(value) => PyDiffOperation {
+                            operation_type: "Added".to_string(),
+                            value: Some(value),
+                            old_value: None,
+                            new_value: None,
+                        },
+                        DiffOperation::Removed(value) => PyDiffOperation {
+                            operation_type: "Removed".to_string(),
+                            value: Some(value),
+                            old_value: None,
+                            new_value: None,
+                        },
+                        DiffOperation::Modified { old, new } => PyDiffOperation {
+                            operation_type: "Modified".to_string(),
+                            value: None,
+                            old_value: Some(old),
+                            new_value: Some(new),
+                        },
+                    };
 
-                        PyKvDiff {
-                            key: diff.key,
-                            operation,
-                        }
-                    })
-                    .collect();
+                    PyKvDiff {
+                        key: diff.key,
+                        operation,
+                    }
+                })
+                .collect();
 
-                Ok(py_diffs)
-            }
-            _ => Err(PyValueError::new_err(
-                "diff is only supported with Git storage backend",
-            )),
-        }
+            Ok(py_diffs)
+        })
     }
 
     /// Get the current commit's object ID

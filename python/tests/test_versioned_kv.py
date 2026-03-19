@@ -197,11 +197,12 @@ def test_storage_backends():
             os.chdir(original_dir)
 
 
-def test_git_only_operations_error_handling():
-    """Test that Git-only operations raise errors on non-Git backends.
+def test_versioning_operations_on_file_backend():
+    """Test that versioning operations work on File backend.
 
-    Note: All storage backends require being inside a git repository because
-    they all use git for version control metadata.
+    All storage backends use Git for version control, so checkout, merge,
+    try_merge, and diff should all work regardless of the storage layer.
+    The storage layer only affects how tree chunks are stored.
     """
 
     # Save original directory
@@ -209,7 +210,7 @@ def test_git_only_operations_error_handling():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            print(f"\n[DIR] Testing Git-only operation error handling in: {tmpdir}")
+            print(f"\n[DIR] Testing versioning operations on File backend in: {tmpdir}")
 
             # Initialize git repository (needed for all backends)
             subprocess.run(["git", "init"], cwd=tmpdir, check=True, capture_output=True)
@@ -222,45 +223,68 @@ def test_git_only_operations_error_handling():
             os.makedirs(file_dir)
             store = VersionedKvStore(file_dir, StorageBackend.File)
             store.insert(b"key1", b"value1")
-            store.commit("Initial")
+            store.commit("Initial commit on main")
 
-            # Test that checkout raises error on File backend
-            print("\n[TEST] Test: checkout raises error on File backend")
-            try:
-                store.checkout("main")
-                print("   [FAIL] Expected ValueError but checkout succeeded")
-                assert False, "Expected ValueError"
-            except ValueError as e:
-                print(f"   [OK] checkout raised ValueError as expected: {e}")
+            # Create a feature branch
+            print("\n[TEST] Test: create_branch on File backend")
+            store.create_branch("feature")
+            print(f"   [OK] Created and switched to branch: {store.current_branch()}")
 
-            # Test that merge raises error on File backend
-            print("\n[TEST] Test: merge raises error on File backend")
-            try:
-                store.merge("feature")
-                print("   [FAIL] Expected ValueError but merge succeeded")
-                assert False, "Expected ValueError"
-            except ValueError as e:
-                print(f"   [OK] merge raised ValueError as expected: {e}")
+            # Make changes on feature branch
+            store.insert(b"feature_key", b"feature_value")
+            store.commit("Add feature key")
 
-            # Test that diff raises error on File backend
-            print("\n[TEST] Test: diff raises error on File backend")
-            try:
-                store.diff("main", "feature")
-                print("   [FAIL] Expected ValueError but diff succeeded")
-                assert False, "Expected ValueError"
-            except ValueError as e:
-                print(f"   [OK] diff raised ValueError as expected: {e}")
+            # Test checkout back to main
+            print("\n[TEST] Test: checkout works on File backend")
+            store.checkout("main")
+            assert store.current_branch() == "main", "Should be on main branch"
+            assert store.get(b"feature_key") is None, "Feature key should not exist on main"
+            print(f"   [OK] Checkout to main succeeded, current branch: {store.current_branch()}")
 
-            # Test that try_merge raises error on File backend
-            print("\n[TEST] Test: try_merge raises error on File backend")
-            try:
-                store.try_merge("feature")
-                print("   [FAIL] Expected ValueError but try_merge succeeded")
-                assert False, "Expected ValueError"
-            except ValueError as e:
-                print(f"   [OK] try_merge raised ValueError as expected: {e}")
+            # Add a change on main
+            store.insert(b"main_key", b"main_value")
+            store.commit("Add main key")
 
-            print("\n[OK] All Git-only operation error handling tests completed successfully!")
+            # Test try_merge to detect conflicts (should succeed with no conflicts)
+            print("\n[TEST] Test: try_merge works on File backend")
+            success, conflicts = store.try_merge("feature")
+            assert success, "Merge should succeed with no conflicts"
+            assert len(conflicts) == 0, "Should have no conflicts"
+            print(f"   [OK] try_merge succeeded with no conflicts")
+
+            # Verify merge result
+            assert store.get(b"feature_key") == b"feature_value", "Feature key should exist after merge"
+            assert store.get(b"main_key") == b"main_value", "Main key should still exist"
+            print("   [OK] Merge result verified: both keys present")
+
+            # Test diff works on File backend
+            print("\n[TEST] Test: diff works on File backend")
+            history = store.log()
+            if len(history) >= 2:
+                diffs = store.diff(history[1]["id"], history[0]["id"])
+                print(f"   [OK] diff returned {len(diffs)} differences")
+            else:
+                print("   [SKIP] Not enough commits to test diff")
+
+            # Test merge with conflict resolution
+            print("\n[TEST] Test: merge with conflict resolution on File backend")
+            # Create another branch with conflicting change
+            store.create_branch("conflict-branch")
+            store.update(b"key1", b"conflict_value")
+            store.commit("Change key1 on conflict-branch")
+
+            # Go back to main and change the same key
+            store.checkout("main")
+            store.update(b"key1", b"main_updated_value")
+            store.commit("Change key1 on main")
+
+            # Merge with TakeDestination strategy (keep main's value)
+            from prollytree import ConflictResolution
+            merge_commit = store.merge("conflict-branch", ConflictResolution.TakeDestination)
+            assert store.get(b"key1") == b"main_updated_value", "Should keep main's value"
+            print(f"   [OK] Merge with conflict resolution succeeded, commit: {merge_commit[:8]}")
+
+            print("\n[OK] All versioning operations on File backend completed successfully!")
         finally:
             os.chdir(original_dir)
 
@@ -268,4 +292,4 @@ def test_git_only_operations_error_handling():
 if __name__ == "__main__":
     test_versioned_kv_store()
     test_storage_backends()
-    test_git_only_operations_error_handling()
+    test_versioning_operations_on_file_backend()
