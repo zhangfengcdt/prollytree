@@ -59,8 +59,9 @@ pub struct VersionedKvStore<const N: usize, S: NodeStorage<N>> {
     staging_area: HashMap<Vec<u8>, Option<Vec<u8>>>, // None = deleted
     current_branch: String,
     storage_backend: StorageBackend,
-    /// Dataset directory for storing config files (used by File/RocksDB/InMemory backends)
-    /// Git backend uses storage.dataset_dir() instead
+    /// Dataset directory for storing config and other metadata for all backends
+    /// (File/RocksDB/InMemory/Git). Git init/open paths set this from
+    /// `storage.dataset_dir()`, and commit()/merge rely on this field being `Some`.
     dataset_dir: Option<std::path::PathBuf>,
 }
 
