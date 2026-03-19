@@ -118,23 +118,19 @@ where
         None
     }
 
-    /// Check if we're running in the git repository root directory
-    fn is_in_git_root<P: AsRef<Path>>(path: P) -> Result<bool, GitKvError> {
-        let path = path
-            .as_ref()
-            .canonicalize()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve path: {e}")))?;
+    /// Get the prolly directory path inside .git
+    /// This is where all ProllyTree data is stored to avoid accidental git versioning
+    fn get_prolly_dir<P: AsRef<Path>>(git_root: P) -> std::path::PathBuf {
+        git_root.as_ref().join(".git").join("prolly")
+    }
 
-        if let Some(git_root) = Self::find_git_root(&path) {
-            let git_root = git_root.canonicalize().map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to resolve git root: {e}"))
-            })?;
-            Ok(path == git_root)
-        } else {
-            Err(GitKvError::GitObjectError(
-                "Not inside a git repository. Please run from within a git repository.".to_string(),
-            ))
-        }
+    /// Ensure the prolly directory structure exists
+    fn ensure_prolly_dir<P: AsRef<Path>>(git_root: P) -> Result<std::path::PathBuf, GitKvError> {
+        let prolly_dir = Self::get_prolly_dir(&git_root);
+        std::fs::create_dir_all(&prolly_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create prolly directory: {e}"))
+        })?;
+        Ok(prolly_dir)
     }
 
     /// Insert a key-value pair (stages the change)
@@ -1385,13 +1381,6 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Reject if trying to initialize in git root directory
-        if Self::is_in_git_root(path)? {
-            return Err(GitKvError::GitObjectError(
-                "Cannot initialize git-prolly in git root directory. Please run from a subdirectory to create a dataset.".to_string()
-            ));
-        }
-
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
@@ -1399,9 +1388,16 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             )
         })?;
 
+        // For GitVersionedKvStore, use the user-provided path as the dataset directory
+        // This allows config files to be versioned in git commits
+        let dataset_dir = path.to_path_buf();
+        std::fs::create_dir_all(&dataset_dir).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create dataset directory: {e}"))
+        })?;
+
         // Check if the store is already initialized by looking for config files
-        let config_path = path.join("prolly_config_tree_config");
-        let mappings_path = path.join("prolly_hash_mappings");
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        let mappings_path = dataset_dir.join("prolly_hash_mappings");
 
         if config_path.exists() || mappings_path.exists() {
             // Store already exists, use open instead to load existing configuration
@@ -1411,8 +1407,8 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         // Open the existing git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create GitNodeStorage
-        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
+        // Create GitNodeStorage with user-provided path for versioned files
+        let storage = GitNodeStorage::new(git_repo.clone(), dataset_dir)?;
 
         // Create ProllyTree with default config
         let config: TreeConfig<N> = TreeConfig::default();
@@ -1439,13 +1435,6 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Reject if trying to open in git root directory
-        if Self::is_in_git_root(path)? {
-            return Err(GitKvError::GitObjectError(
-                "Cannot run git-prolly in git root directory. Please run from a subdirectory containing a dataset.".to_string()
-            ));
-        }
-
         // Find the git repository
         let git_root = Self::find_git_root(path).ok_or_else(|| {
             GitKvError::GitObjectError(
@@ -1453,11 +1442,15 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             )
         })?;
 
+        // For GitVersionedKvStore, use the user-provided path as the dataset directory
+        // This allows config files to be versioned in git commits
+        let dataset_dir = path.to_path_buf();
+
         // Open existing Git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create GitNodeStorage
-        let storage = GitNodeStorage::new(git_repo.clone(), path.to_path_buf())?;
+        // Create GitNodeStorage with user-provided path for versioned files
+        let storage = GitNodeStorage::new(git_repo.clone(), dataset_dir)?;
 
         // Load tree configuration from storage
         let config: TreeConfig<N> = ProllyTree::load_config(&storage).unwrap_or_default();
@@ -1780,11 +1773,17 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
             )
         })?;
 
+        // Create prolly directory inside .git
+        let prolly_dir = Self::ensure_prolly_dir(&git_root)?;
+
         // Open the existing git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create FileNodeStorage with a subdirectory for file storage
-        let file_storage_path = path.join("file_storage");
+        // Create FileNodeStorage inside .git/prolly/nodes/files/
+        let file_storage_path = prolly_dir.join("nodes").join("files");
+        std::fs::create_dir_all(&file_storage_path).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create file storage directory: {e}"))
+        })?;
         let storage = FileNodeStorage::<N>::new(file_storage_path);
 
         // Create ProllyTree with default config
@@ -1819,11 +1818,14 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
             )
         })?;
 
+        // Get prolly directory inside .git
+        let prolly_dir = Self::get_prolly_dir(&git_root);
+
         // Open existing Git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create FileNodeStorage with a subdirectory for file storage
-        let file_storage_path = path.join("file_storage");
+        // Create FileNodeStorage inside .git/prolly/nodes/files/
+        let file_storage_path = prolly_dir.join("nodes").join("files");
         let storage = FileNodeStorage::<N>::new(file_storage_path.clone());
 
         // Load tree configuration from storage
@@ -1901,11 +1903,17 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
             )
         })?;
 
+        // Create prolly directory inside .git
+        let prolly_dir = Self::ensure_prolly_dir(&git_root)?;
+
         // Open the existing git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create RocksDBNodeStorage with a subdirectory for RocksDB
-        let rocksdb_path = path.join("rocksdb");
+        // Create RocksDBNodeStorage inside .git/prolly/nodes/rocksdb/
+        let rocksdb_path = prolly_dir.join("nodes").join("rocksdb");
+        std::fs::create_dir_all(&rocksdb_path).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create RocksDB directory: {e}"))
+        })?;
         let storage = RocksDBNodeStorage::<N>::new(rocksdb_path)
             .map_err(|e| GitKvError::GitObjectError(format!("RocksDB creation failed: {e}")))?;
 
@@ -1941,11 +1949,14 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
             )
         })?;
 
+        // Get prolly directory inside .git
+        let prolly_dir = Self::get_prolly_dir(&git_root);
+
         // Open existing Git repository
         let git_repo = gix::open(&git_root).map_err(|e| GitKvError::GitOpenError(Box::new(e)))?;
 
-        // Create RocksDBNodeStorage with a subdirectory for RocksDB
-        let rocksdb_path = path.join("rocksdb");
+        // Create RocksDBNodeStorage inside .git/prolly/nodes/rocksdb/
+        let rocksdb_path = prolly_dir.join("nodes").join("rocksdb");
         let storage = RocksDBNodeStorage::<N>::new(rocksdb_path)
             .map_err(|e| GitKvError::GitObjectError(format!("RocksDB creation failed: {e}")))?;
 
