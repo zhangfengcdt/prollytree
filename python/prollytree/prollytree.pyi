@@ -288,7 +288,7 @@ class StorageBackend:
         - Git: Full git versioning with branch/merge support (default)
         - File: File-based persistent storage in .git/prolly/nodes/files/
         - InMemory: Volatile in-memory storage (data lost on exit)
-        - RocksDB: High-performance persistent storage (requires rocksdb feature)
+        - RocksDB: High-performance persistent storage (requires rocksdb_storage feature)
     """
     InMemory: "StorageBackend"
     File: "StorageBackend"
@@ -386,7 +386,7 @@ class VersionedKvStore:
                 - StorageBackend.Git (default): Full git versioning with branch/merge
                 - StorageBackend.File: File-based storage in .git/prolly/nodes/files/
                 - StorageBackend.InMemory: Volatile in-memory storage
-                - StorageBackend.RocksDB: RocksDB storage (requires rocksdb feature)
+                - StorageBackend.RocksDB: RocksDB storage (requires rocksdb_storage feature)
 
         Example:
             # Default Git backend

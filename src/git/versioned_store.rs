@@ -118,10 +118,37 @@ where
         None
     }
 
-    /// Get the prolly directory path inside .git
+    /// Get the actual git directory path, handling worktrees and submodules
+    /// where .git may be a file containing "gitdir: /path/to/actual/git/dir"
+    fn resolve_git_dir<P: AsRef<Path>>(git_root: P) -> std::path::PathBuf {
+        let git_path = git_root.as_ref().join(".git");
+
+        // If .git is a file (worktree or submodule), read the gitdir path from it
+        if git_path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&git_path) {
+                for line in content.lines() {
+                    if let Some(gitdir) = line.strip_prefix("gitdir:") {
+                        let gitdir = gitdir.trim();
+                        // Handle both absolute and relative paths
+                        let gitdir_path = std::path::Path::new(gitdir);
+                        if gitdir_path.is_absolute() {
+                            return gitdir_path.to_path_buf();
+                        } else {
+                            return git_root.as_ref().join(gitdir);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Default: .git is a directory
+        git_path
+    }
+
+    /// Get the prolly directory path inside the git directory
     /// This is where all ProllyTree data is stored to avoid accidental git versioning
     fn get_prolly_dir<P: AsRef<Path>>(git_root: P) -> std::path::PathBuf {
-        git_root.as_ref().join(".git").join("prolly")
+        Self::resolve_git_dir(git_root).join("prolly")
     }
 
     /// Ensure the prolly directory structure exists

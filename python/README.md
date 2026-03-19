@@ -84,7 +84,7 @@ store = VersionedKvStore("./data")
 store = VersionedKvStore("./data", StorageBackend.Git)      # Full git versioning
 store = VersionedKvStore("./data", StorageBackend.File)     # File-based storage
 store = VersionedKvStore("./data", StorageBackend.InMemory) # In-memory (volatile)
-store = VersionedKvStore("./data", StorageBackend.RocksDB)  # RocksDB (requires rocksdb feature)
+store = VersionedKvStore("./data", StorageBackend.RocksDB)  # RocksDB (requires rocksdb_storage feature)
 
 # Basic operations
 store.insert(b"config", b"production_settings")

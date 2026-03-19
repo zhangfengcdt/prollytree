@@ -733,21 +733,9 @@ impl PyStorageBackend {
     }
 }
 
-impl From<PyStorageBackend> for StorageBackend {
-    fn from(py_backend: PyStorageBackend) -> Self {
-        match py_backend {
-            PyStorageBackend::InMemory => StorageBackend::InMemory,
-            PyStorageBackend::File => StorageBackend::File,
-            PyStorageBackend::Git => StorageBackend::Git,
-            #[cfg(feature = "rocksdb_storage")]
-            PyStorageBackend::RocksDB => StorageBackend::RocksDB,
-            #[cfg(not(feature = "rocksdb_storage"))]
-            PyStorageBackend::RocksDB => {
-                panic!("RocksDB storage backend requires 'rocksdb_storage' feature to be enabled")
-            }
-        }
-    }
-}
+// Note: We don't implement From<PyStorageBackend> for StorageBackend because
+// the RocksDB case requires error handling when the feature is disabled.
+// Instead, the conversion is handled directly in PyVersionedKvStore::new() and open().
 
 impl From<StorageBackend> for PyStorageBackend {
     fn from(backend: StorageBackend) -> Self {
@@ -1195,30 +1183,46 @@ impl PyVersionedKvStore {
     }
 
     fn log(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
-        let guard = self.inner.lock().unwrap();
-        with_versioned_store!(guard, store, {
-            let history = store
-                .log()
-                .map_err(|e| PyValueError::new_err(format!("Failed to get log: {}", e)))?;
+        // Collect commit data under lock, then release before Python GIL operations
+        // to avoid potential deadlock between mutex and GIL
+        let commits_data: Vec<(String, String, String, String, i64)> = {
+            let guard = self.inner.lock().unwrap();
+            with_versioned_store!(guard, store, {
+                let history = store
+                    .log()
+                    .map_err(|e| PyValueError::new_err(format!("Failed to get log: {}", e)))?;
 
-            Python::with_gil(|py| {
-                let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = history
+                let data: Vec<_> = history
                     .iter()
                     .map(|commit| {
-                        let mut map = HashMap::new();
-                        map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
-                        map.insert("author".to_string(), commit.author.clone().into_py(py));
-                        map.insert(
-                            "committer".to_string(),
-                            commit.committer.clone().into_py(py),
-                        );
-                        map.insert("message".to_string(), commit.message.clone().into_py(py));
-                        map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
-                        Ok(map)
+                        (
+                            commit.id.to_hex().to_string(),
+                            commit.author.clone(),
+                            commit.committer.clone(),
+                            commit.message.clone(),
+                            commit.timestamp,
+                        )
                     })
                     .collect();
-                results
-            })
+                Ok::<_, PyErr>(data)
+            })?
+        };
+
+        // Now convert to Python objects without holding the store lock
+        Python::with_gil(|py| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
+                .into_iter()
+                .map(|(id, author, committer, message, timestamp)| {
+                    let mut map = HashMap::new();
+                    map.insert("id".to_string(), id.into_py(py));
+                    map.insert("author".to_string(), author.into_py(py));
+                    map.insert("committer".to_string(), committer.into_py(py));
+                    map.insert("message".to_string(), message.into_py(py));
+                    map.insert("timestamp".to_string(), timestamp.into_py(py));
+                    Ok(map)
+                })
+                .collect();
+            results
         })
     }
 
@@ -1227,60 +1231,91 @@ impl PyVersionedKvStore {
         key: &Bound<'_, PyBytes>,
     ) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
         let key_vec = key.as_bytes().to_vec();
-        let guard = self.inner.lock().unwrap();
 
-        with_versioned_store!(guard, store, {
-            let commits = store.get_commits_for_key(&key_vec).map_err(|e| {
-                PyValueError::new_err(format!("Failed to get commits for key: {}", e))
-            })?;
+        // Collect commit data under lock, then release before Python GIL operations
+        // to avoid potential deadlock between mutex and GIL
+        let commits_data: Vec<(String, String, String, String, i64)> = {
+            let guard = self.inner.lock().unwrap();
+            with_versioned_store!(guard, store, {
+                let commits = store.get_commits_for_key(&key_vec).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to get commits for key: {}", e))
+                })?;
 
-            Python::with_gil(|py| {
-                let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits
+                let data: Vec<_> = commits
                     .iter()
                     .map(|commit| {
-                        let mut map = HashMap::new();
-                        map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
-                        map.insert("author".to_string(), commit.author.clone().into_py(py));
-                        map.insert(
-                            "committer".to_string(),
-                            commit.committer.clone().into_py(py),
-                        );
-                        map.insert("message".to_string(), commit.message.clone().into_py(py));
-                        map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
-                        Ok(map)
+                        (
+                            commit.id.to_hex().to_string(),
+                            commit.author.clone(),
+                            commit.committer.clone(),
+                            commit.message.clone(),
+                            commit.timestamp,
+                        )
                     })
                     .collect();
-                results
-            })
+                Ok::<_, PyErr>(data)
+            })?
+        };
+
+        // Now convert to Python objects without holding the store lock
+        Python::with_gil(|py| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
+                .into_iter()
+                .map(|(id, author, committer, message, timestamp)| {
+                    let mut map = HashMap::new();
+                    map.insert("id".to_string(), id.into_py(py));
+                    map.insert("author".to_string(), author.into_py(py));
+                    map.insert("committer".to_string(), committer.into_py(py));
+                    map.insert("message".to_string(), message.into_py(py));
+                    map.insert("timestamp".to_string(), timestamp.into_py(py));
+                    Ok(map)
+                })
+                .collect();
+            results
         })
     }
 
     fn get_commit_history(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
-        let guard = self.inner.lock().unwrap();
+        // Collect commit data under lock, then release before Python GIL operations
+        // to avoid potential deadlock between mutex and GIL
+        let commits_data: Vec<(String, String, String, String, i64)> = {
+            let guard = self.inner.lock().unwrap();
+            with_versioned_store!(guard, store, {
+                let commits = store.get_commit_history().map_err(|e| {
+                    PyValueError::new_err(format!("Failed to get commit history: {}", e))
+                })?;
 
-        with_versioned_store!(guard, store, {
-            let commits = store.get_commit_history().map_err(|e| {
-                PyValueError::new_err(format!("Failed to get commit history: {}", e))
-            })?;
-
-            Python::with_gil(|py| {
-                let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits
+                let data: Vec<_> = commits
                     .iter()
                     .map(|commit| {
-                        let mut map = HashMap::new();
-                        map.insert("id".to_string(), commit.id.to_hex().to_string().into_py(py));
-                        map.insert("author".to_string(), commit.author.clone().into_py(py));
-                        map.insert(
-                            "committer".to_string(),
-                            commit.committer.clone().into_py(py),
-                        );
-                        map.insert("message".to_string(), commit.message.clone().into_py(py));
-                        map.insert("timestamp".to_string(), commit.timestamp.into_py(py));
-                        Ok(map)
+                        (
+                            commit.id.to_hex().to_string(),
+                            commit.author.clone(),
+                            commit.committer.clone(),
+                            commit.message.clone(),
+                            commit.timestamp,
+                        )
                     })
                     .collect();
-                results
-            })
+                Ok::<_, PyErr>(data)
+            })?
+        };
+
+        // Now convert to Python objects without holding the store lock
+        Python::with_gil(|py| {
+            let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
+                .into_iter()
+                .map(|(id, author, committer, message, timestamp)| {
+                    let mut map = HashMap::new();
+                    map.insert("id".to_string(), id.into_py(py));
+                    map.insert("author".to_string(), author.into_py(py));
+                    map.insert("committer".to_string(), committer.into_py(py));
+                    map.insert("message".to_string(), message.into_py(py));
+                    map.insert("timestamp".to_string(), timestamp.into_py(py));
+                    Ok(map)
+                })
+                .collect();
+            results
         })
     }
 
