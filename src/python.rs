@@ -1236,7 +1236,7 @@ impl PyVersionedKvStore {
         // which is tracked in git commits
         let commits_data: Vec<(String, String, String, String, i64)> = {
             let guard = self.inner.lock().unwrap();
-            with_versioned_store!(&*guard, store, {
+            with_versioned_store!(guard, store, {
                 let commits = store.get_commits_for_key(&key_vec).map_err(|e| {
                     PyValueError::new_err(format!("Failed to get commits for key: {}", e))
                 })?;
