@@ -286,6 +286,37 @@ impl WorktreeManager {
                     .to_string();
                 Ok(commit_id)
             } else {
+                // Try packed-refs as fallback (Git may pack refs)
+                let packed_refs = self.git_dir.join("packed-refs");
+                if packed_refs.exists() {
+                    let packed_content =
+                        fs::read_to_string(&packed_refs).map_err(GitKvError::IoError)?;
+                    let ref_path = format!("refs/heads/{branch_name}");
+                    for line in packed_content.lines() {
+                        let line = line.trim();
+                        if line.starts_with('#') || line.starts_with('^') {
+                            continue;
+                        }
+                        if let Some((hash, reference)) = line.split_once(' ') {
+                            if reference == ref_path {
+                                return Ok(hash.to_string());
+                            }
+                        }
+                    }
+                }
+                // Last resort: use git rev-parse
+                let output = std::process::Command::new("git")
+                    .args(["rev-parse", "HEAD"])
+                    .current_dir(self.git_dir.parent().unwrap_or(std::path::Path::new(".")))
+                    .output();
+                if let Ok(output) = output {
+                    if output.status.success() {
+                        let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if hash.len() == 40 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                            return Ok(hash);
+                        }
+                    }
+                }
                 Err(GitKvError::BranchNotFound(format!(
                     "Branch {branch_name} referenced by HEAD not found"
                 )))
@@ -1086,9 +1117,9 @@ mod tests {
 
     /// Helper function to initialize a Git repository properly for testing
     fn init_test_git_repo(repo_path: &std::path::Path) {
-        // Initialize Git repository
+        // Initialize Git repository with 'main' as default branch
         std::process::Command::new("git")
-            .args(&["init"])
+            .args(&["init", "-b", "main"])
             .current_dir(repo_path)
             .output()
             .expect("Failed to initialize git repository");
@@ -1106,12 +1137,12 @@ mod tests {
             .output()
             .expect("Failed to configure git user email");
 
-        // Ensure we're using 'main' as default branch name for consistency
+        // Disable commit signing for test repos
         std::process::Command::new("git")
-            .args(&["config", "init.defaultBranch", "main"])
+            .args(&["config", "commit.gpgsign", "false"])
             .current_dir(repo_path)
             .output()
-            .ok(); // This might fail on older Git versions, ignore
+            .expect("Failed to disable commit signing");
 
         // Create initial file and commit to establish main branch
         let test_file = repo_path.join("README.md");
@@ -1123,24 +1154,17 @@ mod tests {
             .output()
             .expect("Failed to add files");
 
-        std::process::Command::new("git")
+        let commit_output = std::process::Command::new("git")
             .args(&["commit", "-m", "Initial commit"])
             .current_dir(repo_path)
             .output()
             .expect("Failed to create initial commit");
 
-        // Ensure we're on main branch (some Git versions might create 'master' by default)
-        std::process::Command::new("git")
-            .args(&["checkout", "-b", "main"])
-            .current_dir(repo_path)
-            .output()
-            .ok(); // Ignore if main already exists
-
-        std::process::Command::new("git")
-            .args(&["branch", "-D", "master"])
-            .current_dir(repo_path)
-            .output()
-            .ok(); // Ignore if master doesn't exist
+        assert!(
+            commit_output.status.success(),
+            "Initial commit failed: {}",
+            String::from_utf8_lossy(&commit_output.stderr)
+        );
     }
 
     #[test]

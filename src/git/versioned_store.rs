@@ -1447,7 +1447,14 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         })?;
 
         let commit_output = std::process::Command::new("git")
-            .args(["commit", "-m", message, "--allow-empty"])
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                message,
+                "--allow-empty",
+            ])
             .current_dir(&git_root)
             .env("GIT_AUTHOR_NAME", "ProllyTree")
             .env("GIT_AUTHOR_EMAIL", "prollytree@example.com")
@@ -4638,7 +4645,8 @@ mod tests {
 
         assert!(
             merge_result.is_ok(),
-            "Merge should succeed with conflict resolver"
+            "Merge should succeed with conflict resolver: {:?}",
+            merge_result.err()
         );
         let _merge_commit_id = merge_result.unwrap();
 
@@ -4726,7 +4734,8 @@ mod tests {
 
         assert!(
             merge_result.is_ok(),
-            "Merge ignore conflicts should succeed"
+            "Merge ignore conflicts should succeed: {:?}",
+            merge_result.err()
         );
 
         // Should keep main value for conflicting key, but add non-conflicting key
