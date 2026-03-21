@@ -601,6 +601,18 @@ where
         tree_id: gix::ObjectId,
         message: &str,
     ) -> Result<gix::ObjectId, GitKvError> {
+        self.create_git_commit_with_parents(tree_id, message, None)
+    }
+
+    /// Create a git commit object with an optional list of extra parent commits.
+    /// If `extra_parents` is None, uses the current HEAD as the sole parent.
+    /// If provided, HEAD (if any) plus the extra parents are used.
+    fn create_git_commit_with_parents(
+        &self,
+        tree_id: gix::ObjectId,
+        message: &str,
+        extra_parents: Option<Vec<gix::ObjectId>>,
+    ) -> Result<gix::ObjectId, GitKvError> {
         // Get the current time
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -622,10 +634,15 @@ where
         };
 
         // Get parent commits (current HEAD if exists)
-        let parent_ids = match self.git_repo.head_commit() {
+        let mut parent_ids: Vec<gix::ObjectId> = match self.git_repo.head_commit() {
             Ok(parent) => vec![parent.id().into()],
             Err(_) => vec![], // No parent for initial commit
         };
+
+        // Add extra parents for merge commits
+        if let Some(extras) = extra_parents {
+            parent_ids.extend(extras);
+        }
 
         // Create commit object
         let commit = gix::objs::Commit {
@@ -1403,7 +1420,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         source_branch: &str,
     ) -> Result<gix::ObjectId, GitKvError> {
         // Get the source branch commit as second parent
-        let _source_commit = self.get_branch_commit(source_branch)?;
+        let source_commit = self.get_branch_commit(source_branch)?;
 
         // Save current tree state
         self.tree.persist_root();
@@ -1414,7 +1431,6 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         // Save tree config to git
         self.save_tree_config_to_git_internal()?;
 
-        // Create git tree and commit (similar to regular commit but with two parents)
         // Use work_dir() for worktree/submodule compatibility
         let dataset_dir = self
             .dataset_dir
@@ -1427,7 +1443,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
-        // Stage all files
+        // Stage all files (gix has no public working tree staging API)
         let add_output = std::process::Command::new("git")
             .args(["add", "."])
             .current_dir(&git_root)
@@ -1441,42 +1457,36 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             )));
         }
 
-        // Create merge commit with two parents
-        let _current_commit = self.git_repo.head_id().map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to get current commit: {e}"))
-        })?;
-
-        let commit_output = std::process::Command::new("git")
-            .args([
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-m",
-                message,
-                "--allow-empty",
-            ])
+        // Create tree object from index (gix has no public write-tree API)
+        let write_tree_cmd = std::process::Command::new("git")
+            .args(["write-tree"])
             .current_dir(&git_root)
-            .env("GIT_AUTHOR_NAME", "ProllyTree")
-            .env("GIT_AUTHOR_EMAIL", "prollytree@example.com")
-            .env("GIT_COMMITTER_NAME", "ProllyTree")
-            .env("GIT_COMMITTER_EMAIL", "prollytree@example.com")
             .output()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git commit: {e}")))?;
+            .map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to run git write-tree: {e}"))
+            })?;
 
-        if !commit_output.status.success() {
+        if !write_tree_cmd.status.success() {
+            let stderr = String::from_utf8_lossy(&write_tree_cmd.stderr);
             return Err(GitKvError::GitObjectError(format!(
-                "Git commit failed: {}",
-                String::from_utf8_lossy(&commit_output.stderr)
+                "git write-tree failed: {stderr}"
             )));
         }
 
-        // Get the new commit ID
-        let new_commit = self
-            .git_repo
-            .head_id()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get new commit: {e}")))?;
+        let tree_hash = String::from_utf8_lossy(&write_tree_cmd.stdout)
+            .trim()
+            .to_string();
+        let tree_id = gix::ObjectId::from_hex(tree_hash.as_bytes())
+            .map_err(|e| GitKvError::GitObjectError(format!("Invalid tree hash: {e}")))?;
 
-        Ok(new_commit.into())
+        // Create merge commit via gix with source branch as extra parent
+        let commit_id =
+            self.create_git_commit_with_parents(tree_id, message, Some(vec![source_commit]))?;
+
+        // Update HEAD to point to the new merge commit
+        self.update_head(commit_id)?;
+
+        Ok(commit_id)
     }
 
     /// Reload the tree state from the current HEAD commit
@@ -3493,13 +3503,12 @@ mod tests {
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
-        // Get initial commit count
-        let log_output = std::process::Command::new("git")
-            .args(&["log", "--oneline"])
-            .current_dir(temp_dir.path())
-            .output()
-            .unwrap();
-        let initial_commits = String::from_utf8_lossy(&log_output.stdout).lines().count();
+        // Get initial commit count using gix
+        let repo = gix::open(temp_dir.path()).unwrap();
+        let initial_commits = match repo.head_id() {
+            Ok(head) => repo.rev_walk(std::iter::once(head)).all().unwrap().count(),
+            Err(_) => 0,
+        };
 
         // Insert some data and commit
         store
@@ -3507,13 +3516,13 @@ mod tests {
             .unwrap();
         store.commit("Test single commit").unwrap();
 
-        // Get commit count after our commit
-        let log_output = std::process::Command::new("git")
-            .args(&["log", "--oneline"])
-            .current_dir(temp_dir.path())
-            .output()
-            .unwrap();
-        let final_commits = String::from_utf8_lossy(&log_output.stdout).lines().count();
+        // Get commit count after our commit using gix
+        let repo = gix::open(temp_dir.path()).unwrap();
+        let final_commits = repo
+            .rev_walk(std::iter::once(repo.head_id().unwrap()))
+            .all()
+            .unwrap()
+            .count();
 
         // Should have exactly one more commit (no separate metadata commit)
         assert_eq!(

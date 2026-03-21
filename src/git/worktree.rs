@@ -304,17 +304,11 @@ impl WorktreeManager {
                         }
                     }
                 }
-                // Last resort: use git rev-parse
-                let output = std::process::Command::new("git")
-                    .args(["rev-parse", "HEAD"])
-                    .current_dir(self.git_dir.parent().unwrap_or(std::path::Path::new(".")))
-                    .output();
-                if let Ok(output) = output {
-                    if output.status.success() {
-                        let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        if hash.len() == 40 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
-                            return Ok(hash);
-                        }
+                // Last resort: use gix to resolve HEAD
+                let repo_dir = self.git_dir.parent().unwrap_or(std::path::Path::new("."));
+                if let Ok(repo) = gix::open(repo_dir) {
+                    if let Ok(head_id) = repo.head_id() {
+                        return Ok(head_id.to_hex().to_string());
                     }
                 }
                 Err(GitKvError::BranchNotFound(format!(
