@@ -13,14 +13,13 @@ limitations under the License.
 */
 
 pub mod operations;
-pub mod storage;
 pub mod types;
 pub mod versioned_store;
 pub mod worktree;
 
 // Re-export commonly used types
+pub use crate::storage::GitNodeStorage;
 pub use operations::GitOperations;
-pub use storage::GitNodeStorage;
 pub use types::{
     CommitDetails, CommitInfo, DiffOperation, GitKvError, KvConflict, KvDiff, KvStorageMetadata,
     MergeResult,

@@ -15,8 +15,8 @@ limitations under the License.
 use crate::config::TreeConfig;
 use crate::diff::{ConflictResolver, IgnoreConflictsResolver};
 use crate::digest::ValueDigest;
-use crate::git::storage::GitNodeStorage;
 use crate::git::types::*;
+use crate::storage::GitNodeStorage;
 use crate::storage::{FileNodeStorage, InMemoryNodeStorage, NodeStorage};
 use crate::tree::{ProllyTree, Tree};
 use gix::prelude::*;

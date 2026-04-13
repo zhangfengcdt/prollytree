@@ -15,7 +15,6 @@ limitations under the License.
 use crate::digest::ValueDigest;
 use crate::git::types::GitKvError;
 use crate::node::ProllyNode;
-use crate::storage::NodeStorage;
 use gix::prelude::*;
 use lru::LruCache;
 use std::collections::HashMap;
@@ -24,6 +23,8 @@ use std::num::NonZeroUsize;
 const DEFAULT_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
 use parking_lot::Mutex;
 use std::sync::Arc;
+
+use super::NodeStorage;
 
 /// Git-backed storage for ProllyTree nodes
 ///
