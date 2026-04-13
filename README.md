@@ -15,7 +15,6 @@ A **probabilistic B-tree** implementation in Rust that combines B-tree efficienc
 - **Distributed-Ready**: Efficient diff, sync, and three-way merge capabilities
 - **Python Bindings**: Full API coverage via PyO3 with async support
 - **SQL Interface**: Query trees with SQL via GlueSQL integration
-- **AI Agent Memory**: Purpose-built for LLM applications and agent systems
 
 ## Quick Start
 
@@ -147,7 +146,7 @@ Run benchmarks: `cargo bench`
 ## Documentation & Examples
 
 - **[Full API Documentation](https://docs.rs/prollytree)**
-- **[Use Cases & Examples](examples/README.md)** - AI agents, version control, distributed systems
+- **[Use Cases & Examples](examples/)** - Version control, distributed systems
 - **[Python Bindings](python/README.md)** - Complete Python API
 - **[Performance Guide](docs/performance.md)** - Optimization tips
 
