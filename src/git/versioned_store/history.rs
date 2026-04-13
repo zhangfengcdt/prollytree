@@ -16,13 +16,13 @@ use super::{HistoricalAccess, TreeConfigSaver, VersionedKvStore};
 use crate::config::TreeConfig;
 use crate::diff::ConflictResolver;
 use crate::digest::ValueDigest;
+use crate::git::metadata::MetadataBackend;
 use crate::git::types::*;
 use crate::storage::NodeStorage;
 use crate::tree::{ProllyTree, Tree};
-use gix::prelude::*;
 use std::collections::HashMap;
 
-impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> VersionedKvStore<N, S, M>
 where
     Self: TreeConfigSaver<N>,
 {
@@ -34,37 +34,7 @@ where
     /// Resolve a reference (branch name, commit SHA, etc.) to a commit ID
     /// This is used by all storage types for historical access
     pub(super) fn resolve_commit(&self, reference: &str) -> Result<gix::ObjectId, GitKvError> {
-        // Try to resolve as a branch first
-        if let Ok(mut branch_ref) = self
-            .git_repo
-            .find_reference(&format!("refs/heads/{reference}"))
-        {
-            // Try to peel the reference to get the commit ID
-            if let Ok(peeled) = branch_ref.peel_to_id_in_place() {
-                return Ok(peeled.detach());
-            }
-        }
-
-        // Try to resolve as a commit SHA
-        if let Ok(commit_id) = gix::ObjectId::from_hex(reference.as_bytes()) {
-            // Verify the commit exists by trying to find it
-            let mut buffer = Vec::new();
-            if self.git_repo.objects.find(&commit_id, &mut buffer).is_ok() {
-                return Ok(commit_id);
-            }
-        }
-
-        // Try other reference formats (tags, etc.)
-        if let Ok(mut reference) = self.git_repo.find_reference(reference) {
-            // Try to peel the reference to get the commit ID
-            if let Ok(peeled) = reference.peel_to_id_in_place() {
-                return Ok(peeled.detach());
-            }
-        }
-
-        Err(GitKvError::InvalidCommit(format!(
-            "Reference '{reference}' not found"
-        )))
+        self.metadata.resolve_reference(reference)
     }
 
     /// Get the config file path relative to git root
@@ -78,9 +48,8 @@ where
         // Use work_dir() for worktree root (handles worktrees/submodules correctly),
         // falling back to find_git_root(dataset_dir) if work_dir is not available
         let git_root = self
-            .git_repo
+            .metadata
             .work_dir()
-            .map(|p| p.to_path_buf())
             .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
 
@@ -106,36 +75,10 @@ where
         &self,
         commit_id: &gix::ObjectId,
     ) -> Result<TreeConfig<N>, GitKvError> {
-        // Get the config file path relative to git root
         let config_path = self.get_config_file_path_relative_to_git_root()?;
 
-        // Get the commit object
-        let mut commit_buffer = Vec::new();
-        let commit_obj = self
-            .git_repo
-            .objects
-            .find(commit_id, &mut commit_buffer)
-            .map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to find commit {commit_id}: {e}"))
-            })?;
-
-        let commit = match commit_obj.kind {
-            gix::object::Kind::Commit => gix::objs::CommitRef::from_bytes(commit_obj.data)
-                .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse commit: {e}")))?,
-            _ => {
-                return Err(GitKvError::InvalidCommit(format!(
-                    "{commit_id} is not a commit"
-                )))
-            }
-        };
-
-        // Get the tree object
-        let tree_id = commit.tree();
-
-        // Try to read the config file, with fallback to current config if not found
-        match self.read_file_from_tree(&tree_id, &config_path) {
+        match self.metadata.read_file_at_commit(commit_id, &config_path) {
             Ok(config_data) => {
-                // Parse the config
                 let tree_config: TreeConfig<N> =
                     serde_json::from_slice(&config_data).map_err(|e| {
                         GitKvError::GitObjectError(format!("Failed to parse tree config: {e}"))
@@ -143,122 +86,10 @@ where
                 Ok(tree_config)
             }
             Err(_) => {
-                // If config file is not found in commit, create a default config
-                // This can happen for commits that don't have prolly config saved
-                // or for initial commits before the config system was in place
                 eprintln!("Warning: prolly_config_tree_config not found in commit {commit_id}, using default config");
                 Ok(TreeConfig::default())
             }
         }
-    }
-
-    /// Read a file from a git tree (helper for all storage types)
-    pub(super) fn read_file_from_tree(
-        &self,
-        tree_id: &gix::ObjectId,
-        file_path: &str,
-    ) -> Result<Vec<u8>, GitKvError> {
-        let mut tree_buffer = Vec::new();
-        let tree_obj = self
-            .git_repo
-            .objects
-            .find(tree_id, &mut tree_buffer)
-            .map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to find tree {tree_id}: {e}"))
-            })?;
-
-        let tree = match tree_obj.kind {
-            gix::object::Kind::Tree => gix::objs::TreeRef::from_bytes(tree_obj.data)
-                .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse tree: {e}")))?,
-            _ => {
-                return Err(GitKvError::GitObjectError(format!(
-                    "{tree_id} is not a tree"
-                )))
-            }
-        };
-
-        // Handle file paths with subdirectories
-        let path_parts: Vec<&str> = file_path.split('/').collect();
-        self.read_file_from_tree_recursive(&tree, &path_parts, 0)
-    }
-
-    /// Recursively read a file from a tree, handling subdirectories
-    pub(super) fn read_file_from_tree_recursive(
-        &self,
-        tree: &gix::objs::TreeRef,
-        path_parts: &[&str],
-        part_index: usize,
-    ) -> Result<Vec<u8>, GitKvError> {
-        if part_index >= path_parts.len() {
-            return Err(GitKvError::GitObjectError(
-                "Path traversal error".to_string(),
-            ));
-        }
-
-        let current_part = path_parts[part_index];
-
-        // Search for the current path part in the tree
-        for entry in &tree.entries {
-            if entry.filename == current_part.as_bytes() {
-                if part_index == path_parts.len() - 1 {
-                    // This is the final part (the file), read its content
-                    let mut file_buffer = Vec::new();
-                    let file_obj = self
-                        .git_repo
-                        .objects
-                        .find(entry.oid, &mut file_buffer)
-                        .map_err(|e| {
-                            GitKvError::GitObjectError(format!("Failed to find file object: {e}"))
-                        })?;
-
-                    match file_obj.kind {
-                        gix::object::Kind::Blob => return Ok(file_obj.data.to_vec()),
-                        _ => {
-                            return Err(GitKvError::GitObjectError(
-                                "File is not a blob".to_string(),
-                            ))
-                        }
-                    }
-                } else {
-                    // This is a directory, recurse into it
-                    let mut subtree_buffer = Vec::new();
-                    let subtree_obj = self
-                        .git_repo
-                        .objects
-                        .find(entry.oid, &mut subtree_buffer)
-                        .map_err(|e| {
-                            GitKvError::GitObjectError(format!(
-                                "Failed to find subtree object: {e}"
-                            ))
-                        })?;
-
-                    match subtree_obj.kind {
-                        gix::object::Kind::Tree => {
-                            let subtree = gix::objs::TreeRef::from_bytes(subtree_obj.data)
-                                .map_err(|e| {
-                                    GitKvError::GitObjectError(format!(
-                                        "Failed to parse subtree: {e}"
-                                    ))
-                                })?;
-                            return self.read_file_from_tree_recursive(
-                                &subtree,
-                                path_parts,
-                                part_index + 1,
-                            );
-                        }
-                        _ => {
-                            return Err(GitKvError::GitObjectError(
-                                "Expected directory but found file".to_string(),
-                            ))
-                        }
-                    }
-                }
-            }
-        }
-
-        Err(GitKvError::GitObjectError(format!(
-            "Path component '{current_part}' not found in tree"
-        )))
     }
 
     /// Collect all key-value pairs from storage using a tree config (with root hash)
@@ -325,64 +156,9 @@ where
         Ok(())
     }
 
-    /// Get commit history for all storage types using Git
+    /// Get commit history for all storage types
     pub(super) fn get_commit_history_generic(&self) -> Result<Vec<CommitInfo>, GitKvError> {
-        let mut commit_infos = Vec::new();
-
-        // Get HEAD commit
-        let mut head_ref = self
-            .git_repo
-            .head_ref()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?
-            .ok_or_else(|| GitKvError::GitObjectError("HEAD not found".to_string()))?;
-
-        // Peel the reference to get the commit ID
-        let peeled_head = head_ref
-            .peel_to_id_in_place()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to peel HEAD: {e}")))?;
-        let mut current_commit_id = peeled_head.detach();
-
-        // Walk through the commit history
-        loop {
-            let mut commit_buffer = Vec::new();
-            let commit_obj = self
-                .git_repo
-                .objects
-                .find(&current_commit_id, &mut commit_buffer)
-                .map_err(|e| GitKvError::GitObjectError(format!("Failed to find commit: {e}")))?;
-
-            let commit = match commit_obj.kind {
-                gix::object::Kind::Commit => gix::objs::CommitRef::from_bytes(commit_obj.data)
-                    .map_err(|e| {
-                        GitKvError::GitObjectError(format!("Failed to parse commit: {e}"))
-                    })?,
-                _ => break,
-            };
-
-            // Create CommitInfo
-            let commit_info = CommitInfo {
-                id: current_commit_id,
-                author: commit.author().name.to_string(),
-                committer: commit.committer().name.to_string(),
-                message: String::from_utf8_lossy(commit.message).to_string(),
-                timestamp: commit.author().time.seconds,
-            };
-
-            commit_infos.push(commit_info);
-
-            // Move to parent commit
-            if let Some(parent_id) = commit.parents.first() {
-                if let Ok(parent_oid) = gix::ObjectId::from_hex(parent_id) {
-                    current_commit_id = parent_oid;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        Ok(commit_infos)
+        self.metadata.walk_history(1000)
     }
 
     /// Generic implementation for get_commits_for_key that works with all storage types
@@ -438,16 +214,7 @@ where
         &self,
         branch: &str,
     ) -> Result<gix::ObjectId, GitKvError> {
-        let branch_ref = format!("refs/heads/{branch}");
-        match self.git_repo.refs.find(&branch_ref) {
-            Ok(reference) => match reference.target.try_id() {
-                Some(commit_id) => Ok(commit_id.to_owned()),
-                None => Err(GitKvError::GitObjectError(format!(
-                    "Branch {branch} does not point to a commit"
-                ))),
-            },
-            Err(_) => Err(GitKvError::BranchNotFound(branch.to_string())),
-        }
+        self.metadata.branch_commit_id(branch)
     }
 
     /// Get parents of a commit (generic version)
@@ -455,20 +222,7 @@ where
         &self,
         commit_id: &gix::ObjectId,
     ) -> Result<Vec<gix::ObjectId>, GitKvError> {
-        let mut buffer = Vec::new();
-        let commit = self
-            .git_repo
-            .objects
-            .find(commit_id, &mut buffer)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to find commit: {e}")))?;
-
-        let commit_ref = commit
-            .decode()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode commit: {e}")))?
-            .into_commit()
-            .ok_or_else(|| GitKvError::GitObjectError("Object is not a commit".to_string()))?;
-
-        Ok(commit_ref.parents().collect())
+        self.metadata.commit_parents(commit_id)
     }
 
     /// Find the merge base (common ancestor) of two branches (generic version)
@@ -533,16 +287,7 @@ where
         Self: HistoricalAccess<N>,
     {
         // Get the current HEAD commit
-        let head = self
-            .git_repo
-            .head()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
-
-        let head_commit_id = head.id().ok_or_else(|| {
-            GitKvError::GitObjectError("HEAD does not point to a commit".to_string())
-        })?;
-
-        let head_object_id = head_commit_id.detach();
+        let head_object_id = self.metadata.head_commit_id()?;
 
         // Load all key-value pairs from the HEAD commit using HistoricalAccess
         let keys_at_head = self.collect_keys_from_commit_generic(&head_object_id)?;
@@ -587,29 +332,12 @@ where
         self.staging_area.clear();
         self.save_staging_area()?;
 
-        // Update HEAD to point to the new branch/commit
-        let target_ref = if branch_or_commit.starts_with("refs/") {
-            branch_or_commit.to_string()
-        } else {
-            format!("refs/heads/{branch_or_commit}")
-        };
+        // Verify the branch exists
+        self.metadata.branch_commit_id(branch_or_commit)?;
+        self.current_branch = branch_or_commit.to_string();
 
-        // Check if the reference exists
-        match self.git_repo.refs.find(&target_ref) {
-            Ok(_reference) => {
-                self.current_branch = branch_or_commit.to_string();
-
-                // Update HEAD to point to the new branch
-                let head_file = self.git_repo.path().join("HEAD");
-                let head_content = format!("ref: refs/heads/{branch_or_commit}");
-                std::fs::write(&head_file, head_content).map_err(|e| {
-                    GitKvError::GitObjectError(format!("Failed to update HEAD: {e}"))
-                })?;
-            }
-            Err(_) => {
-                return Err(GitKvError::BranchNotFound(branch_or_commit.to_string()));
-            }
-        }
+        // Update HEAD to point to the new branch
+        self.metadata.update_head(branch_or_commit)?;
 
         // Reload the tree from the HEAD commit
         self.reload_tree_from_head_generic()?;

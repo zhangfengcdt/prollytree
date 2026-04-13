@@ -19,6 +19,7 @@ mod history;
 mod tests;
 mod thread_safe;
 
+use crate::git::metadata::{GitMetadataBackend, MetadataBackend};
 use crate::git::types::*;
 use crate::storage::{FileNodeStorage, InMemoryNodeStorage, NodeStorage};
 use crate::tree::ProllyTree;
@@ -52,14 +53,22 @@ pub trait HistoricalCommitAccess<const N: usize> {
     fn get_commit_history(&self) -> Result<Vec<CommitInfo>, GitKvError>;
 }
 
-/// A versioned key-value store backed by Git and ProllyTree with configurable storage
+/// A versioned key-value store backed by Git and ProllyTree with configurable storage.
 ///
-/// This combines the efficient tree operations of ProllyTree with Git's
+/// This combines the efficient tree operations of ProllyTree with
 /// version control capabilities, providing a full-featured versioned
 /// key-value store with branching, merging, and history.
-pub struct VersionedKvStore<const N: usize, S: NodeStorage<N>> {
+///
+/// The metadata backend `M` controls how version-control metadata
+/// (commits, branches, history) is stored. The default is
+/// [`GitMetadataBackend`] which uses a real git repository.
+pub struct VersionedKvStore<
+    const N: usize,
+    S: NodeStorage<N>,
+    M: MetadataBackend = GitMetadataBackend,
+> {
     pub(crate) tree: ProllyTree<N, S>,
-    pub(crate) git_repo: gix::Repository,
+    pub(crate) metadata: M,
     pub(crate) staging_area: HashMap<Vec<u8>, Option<Vec<u8>>>, // None = deleted
     pub(crate) current_branch: String,
     pub(crate) storage_backend: StorageBackend,
@@ -93,8 +102,12 @@ pub type RocksDBVersionedKvStore<const N: usize> = VersionedKvStore<N, RocksDBNo
 /// remains accessible. This is intentional: the previous `std::sync::Mutex` approach
 /// also panicked (via `.unwrap()`) on poisoned locks, so callers had no recovery path
 /// either way. With `parking_lot`, the application at least has a chance to continue.
-pub struct ThreadSafeVersionedKvStore<const N: usize, S: NodeStorage<N>> {
-    pub(crate) inner: Arc<Mutex<VersionedKvStore<N, S>>>,
+pub struct ThreadSafeVersionedKvStore<
+    const N: usize,
+    S: NodeStorage<N>,
+    M: MetadataBackend = GitMetadataBackend,
+> {
+    pub(crate) inner: Arc<Mutex<VersionedKvStore<N, S, M>>>,
 }
 
 /// Type alias for thread-safe Git storage

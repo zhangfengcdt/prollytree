@@ -12,6 +12,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+pub mod metadata;
 pub mod operations;
 pub mod types;
 pub mod versioned_store;
@@ -19,6 +20,7 @@ pub mod worktree;
 
 // Re-export commonly used types
 pub use crate::storage::GitNodeStorage;
+pub use metadata::{GitMetadataBackend, MetadataBackend};
 pub use operations::GitOperations;
 pub use types::{
     CommitDetails, CommitInfo, DiffOperation, GitKvError, KvConflict, KvDiff, KvStorageMetadata,

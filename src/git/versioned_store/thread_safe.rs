@@ -17,6 +17,7 @@ use super::{
     ThreadSafeGitVersionedKvStore, ThreadSafeInMemoryVersionedKvStore, ThreadSafeVersionedKvStore,
     TreeConfigSaver, VersionedKvStore,
 };
+use crate::git::metadata::MetadataBackend;
 use crate::storage::{FileNodeStorage, InMemoryNodeStorage, NodeStorage};
 use parking_lot::Mutex;
 use std::path::Path;
@@ -44,9 +45,9 @@ impl<const N: usize> ThreadSafeGitVersionedKvStore<N> {
     }
 }
 
-impl<const N: usize, S: NodeStorage<N>> ThreadSafeVersionedKvStore<N, S>
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> ThreadSafeVersionedKvStore<N, S, M>
 where
-    VersionedKvStore<N, S>: TreeConfigSaver<N>,
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
 {
     /// Insert a key-value pair (stages the change)
     pub fn insert(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
@@ -107,15 +108,14 @@ where
         let store = self.inner.lock();
         Ok(store.current_branch().to_string())
     }
+}
 
+impl<const N: usize> ThreadSafeGitVersionedKvStore<N> {
     /// Get the underlying git repository reference (creates a clone)
     pub fn git_repo(&self) -> Result<gix::Repository, GitKvError> {
         let store = self.inner.lock();
         Ok(store.git_repo().clone())
     }
-}
-
-impl<const N: usize> ThreadSafeGitVersionedKvStore<N> {
     /// Switch to a different branch - Git-specific implementation
     pub fn checkout(&self, name: &str) -> Result<(), GitKvError> {
         let mut store = self.inner.lock();
@@ -159,7 +159,9 @@ impl<const N: usize> ThreadSafeFileVersionedKvStore<N> {
     }
 }
 
-impl<const N: usize, S: NodeStorage<N>> Clone for ThreadSafeVersionedKvStore<N, S> {
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> Clone
+    for ThreadSafeVersionedKvStore<N, S, M>
+{
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -168,11 +170,17 @@ impl<const N: usize, S: NodeStorage<N>> Clone for ThreadSafeVersionedKvStore<N, 
 }
 
 // Implement Send and Sync for the thread-safe wrapper
-unsafe impl<const N: usize, S: NodeStorage<N>> Send for ThreadSafeVersionedKvStore<N, S> where
-    S: Send
+unsafe impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> Send
+    for ThreadSafeVersionedKvStore<N, S, M>
+where
+    S: Send,
+    M: Send,
 {
 }
-unsafe impl<const N: usize, S: NodeStorage<N>> Sync for ThreadSafeVersionedKvStore<N, S> where
-    S: Send
+unsafe impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> Sync
+    for ThreadSafeVersionedKvStore<N, S, M>
+where
+    S: Send,
+    M: Send,
 {
 }

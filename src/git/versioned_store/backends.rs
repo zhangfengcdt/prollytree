@@ -16,6 +16,7 @@ use super::{HistoricalAccess, HistoricalCommitAccess, TreeConfigSaver, Versioned
 use crate::config::TreeConfig;
 use crate::diff::{ConflictResolver, IgnoreConflictsResolver};
 use crate::digest::ValueDigest;
+use crate::git::metadata::{GitMetadataBackend, MetadataBackend};
 use crate::git::types::*;
 use crate::storage::{FileNodeStorage, GitNodeStorage, InMemoryNodeStorage};
 use crate::tree::{ProllyTree, Tree};
@@ -27,14 +28,21 @@ use std::path::Path;
 use crate::storage::RocksDBNodeStorage;
 
 // Implement TreeConfigSaver for GitNodeStorage
-impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, GitNodeStorage<N>> {
+impl<const N: usize> TreeConfigSaver<N>
+    for VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
+{
     fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError> {
         self.save_tree_config_to_git()
     }
 }
 
 // Storage-specific implementations
-impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
+impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> {
+    /// Get access to the git repository (for internal use and backward compatibility)
+    pub fn git_repo(&self) -> &gix::Repository {
+        self.metadata.repo()
+    }
+
     /// Save both tree config and hash mappings to git for GitNodeStorage
     fn save_tree_config_to_git(&self) -> Result<(), GitKvError> {
         // For GitNodeStorage, we need to ensure the config and hash mappings are
@@ -89,13 +97,13 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         };
 
         // Check if the reference exists
-        match self.git_repo.refs.find(&target_ref) {
+        match self.metadata.repo().refs.find(&target_ref) {
             Ok(_reference) => {
                 // Update our internal tracking
                 self.current_branch = branch_or_commit.to_string();
 
                 // Update HEAD to point to the new branch
-                let head_file = self.git_repo.path().join("HEAD");
+                let head_file = self.metadata.repo().path().join("HEAD");
                 let head_content = format!("ref: refs/heads/{branch_or_commit}");
                 std::fs::write(&head_file, head_content).map_err(|e| {
                     GitKvError::GitObjectError(format!("Failed to update HEAD: {e}"))
@@ -359,7 +367,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     /// Get commit ID for a branch
     fn get_branch_commit(&self, branch: &str) -> Result<gix::ObjectId, GitKvError> {
         let branch_ref = format!("refs/heads/{branch}");
-        match self.git_repo.refs.find(&branch_ref) {
+        match self.metadata.repo().refs.find(&branch_ref) {
             Ok(reference) => match reference.target.try_id() {
                 Some(commit_id) => Ok(commit_id.to_owned()),
                 None => Err(GitKvError::GitObjectError(format!(
@@ -377,7 +385,8 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     ) -> Result<Vec<gix::ObjectId>, GitKvError> {
         let mut buffer = Vec::new();
         let commit_obj = self
-            .git_repo
+            .metadata
+            .repo()
             .objects
             .find(commit_id, &mut buffer)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to find commit: {e}")))?;
@@ -418,7 +427,8 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             .as_ref()
             .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
         let git_root = self
-            .git_repo
+            .metadata
+            .repo()
             .work_dir()
             .map(|p| p.to_path_buf())
             .or_else(|| Self::find_git_root(dataset_dir))
@@ -439,7 +449,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         }
 
         // Create merge commit with two parents
-        let _current_commit = self.git_repo.head_id().map_err(|e| {
+        let _current_commit = self.metadata.repo().head_id().map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to get current commit: {e}"))
         })?;
 
@@ -461,10 +471,10 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         }
 
         // Get the new commit ID
-        let new_commit = self
-            .git_repo
-            .head_id()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get new commit: {e}")))?;
+        let new_commit =
+            self.metadata.repo().head_id().map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to get new commit: {e}"))
+            })?;
 
         Ok(new_commit.into())
     }
@@ -473,7 +483,8 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
     fn reload_tree_from_head(&mut self) -> Result<(), GitKvError> {
         // Get the current HEAD commit
         let head = self
-            .git_repo
+            .metadata
+            .repo()
             .head()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
 
@@ -560,7 +571,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
 
         let mut store = VersionedKvStore {
             tree,
-            git_repo,
+            metadata: GitMetadataBackend::new(git_repo),
             staging_area: HashMap::new(),
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::Git,
@@ -648,7 +659,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
 
         let mut store = VersionedKvStore {
             tree,
-            git_repo,
+            metadata: GitMetadataBackend::new(git_repo),
             staging_area: HashMap::new(),
             current_branch,
             storage_backend: StorageBackend::Git,
@@ -681,31 +692,11 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         &self,
         commit_id: &gix::ObjectId,
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
-        // Get the commit object
-        let mut buffer = Vec::new();
-        let commit = self
-            .git_repo
-            .objects
-            .find(commit_id, &mut buffer)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to find commit: {e}")))?;
-
-        let commit_ref = commit
-            .decode()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode commit: {e}")))?
-            .into_commit()
-            .ok_or_else(|| GitKvError::GitObjectError("Object is not a commit".to_string()))?;
-
-        // Get the tree object from the commit
-        let tree_id = commit_ref.tree();
-
-        // Try to load the prolly tree configuration from the tree
-        // Since files are stored relative to git root, we need the relative path from git root to dataset
-        // Use work_dir() for worktree root (handles worktrees/submodules correctly)
+        // Build relative paths for the prolly files
         let dataset_dir = self.tree.storage.dataset_dir();
         let git_root = self
-            .git_repo
+            .metadata
             .work_dir()
-            .map(|p| p.to_path_buf())
             .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
 
@@ -713,7 +704,6 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
             .strip_prefix(&git_root)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get relative path: {e}")))?;
 
-        // Build paths using '/' separators for git tree lookups (platform-independent)
         let relative_path_str = dataset_relative_path
             .components()
             .map(|c| c.as_os_str().to_string_lossy())
@@ -723,8 +713,8 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
         let config_path = format!("{}/prolly_config_tree_config", relative_path_str);
         let mapping_path = format!("{}/prolly_hash_mappings", relative_path_str);
 
-        let config_result = self.read_file_from_tree(&tree_id, &config_path);
-        let mapping_result = self.read_file_from_tree(&tree_id, &mapping_path);
+        let config_result = self.metadata.read_file_at_commit(commit_id, &config_path);
+        let mapping_result = self.metadata.read_file_at_commit(commit_id, &mapping_path);
 
         // If files are not found, this might be an initial empty commit, return empty
         if config_result.is_err() || mapping_result.is_err() {
@@ -796,7 +786,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
 
         // Create a temporary storage with the loaded mappings
         let temp_storage = GitNodeStorage::with_mappings(
-            self.git_repo.clone(),
+            self.metadata.clone_repo(),
             self.tree.storage.dataset_dir().to_path_buf(),
             hash_mappings,
         )?;
@@ -822,7 +812,9 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>> {
 }
 
 // Implement HistoricalAccess for GitNodeStorage
-impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, GitNodeStorage<N>> {
+impl<const N: usize> HistoricalAccess<N>
+    for VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
+{
     fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         let commit_id = self.resolve_commit(reference)?;
         self.collect_keys_at_commit(&commit_id)
@@ -830,7 +822,9 @@ impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, GitNodeStorage<
 }
 
 // Implement HistoricalCommitAccess for GitNodeStorage
-impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, GitNodeStorage<N>> {
+impl<const N: usize> HistoricalCommitAccess<N>
+    for VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
+{
     fn get_commits_for_key(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
         let mut commit_history = self.get_commit_history()?;
 
@@ -866,7 +860,7 @@ impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, GitNodeSt
     }
 }
 
-impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
+impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBackend> {
     /// Initialize a new versioned KV store with InMemory storage
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
@@ -906,7 +900,7 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
 
         let mut store = VersionedKvStore {
             tree,
-            git_repo,
+            metadata: GitMetadataBackend::new(git_repo),
             staging_area: HashMap::new(),
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::InMemory,
@@ -929,7 +923,9 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
 }
 
 // Implement HistoricalAccess for InMemoryNodeStorage
-impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, InMemoryNodeStorage<N>> {
+impl<const N: usize> HistoricalAccess<N>
+    for VersionedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBackend>
+{
     fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         // Resolve the reference to a commit ID
         let commit_id = self.resolve_commit(reference)?;
@@ -943,7 +939,9 @@ impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, InMemoryNodeSto
 }
 
 // Implement HistoricalCommitAccess for InMemoryNodeStorage
-impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, InMemoryNodeStorage<N>> {
+impl<const N: usize> HistoricalCommitAccess<N>
+    for VersionedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBackend>
+{
     fn get_commits_for_key(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
         self.get_commits_for_key_generic(key)
     }
@@ -953,7 +951,7 @@ impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, InMemoryN
     }
 }
 
-impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
+impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend> {
     /// Initialize a new versioned KV store with File storage
     ///
     /// Nodes are stored in `.git/prolly/nodes/files/` (shared, content-addressed).
@@ -1003,7 +1001,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
 
         let mut store = VersionedKvStore {
             tree,
-            git_repo,
+            metadata: GitMetadataBackend::new(git_repo),
             staging_area: HashMap::new(),
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::File,
@@ -1100,7 +1098,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
 
         let mut store = VersionedKvStore {
             tree,
-            git_repo,
+            metadata: GitMetadataBackend::new(git_repo),
             staging_area: HashMap::new(),
             current_branch,
             storage_backend: StorageBackend::File,
@@ -1115,7 +1113,9 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
 }
 
 // Implement HistoricalAccess for FileNodeStorage
-impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, FileNodeStorage<N>> {
+impl<const N: usize> HistoricalAccess<N>
+    for VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
+{
     fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         // Resolve the reference to a commit ID
         let commit_id = self.resolve_commit(reference)?;
@@ -1129,7 +1129,9 @@ impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, FileNodeStorage
 }
 
 // Implement HistoricalCommitAccess for FileNodeStorage
-impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, FileNodeStorage<N>> {
+impl<const N: usize> HistoricalCommitAccess<N>
+    for VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
+{
     fn get_commits_for_key(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
         self.get_commits_for_key_generic(key)
     }
@@ -1140,7 +1142,7 @@ impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, FileNodeS
 }
 
 #[cfg(feature = "rocksdb_storage")]
-impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
+impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBackend> {
     /// Initialize a new versioned KV store with RocksDB storage
     ///
     /// Nodes are stored in `.git/prolly/nodes/rocksdb/` (shared, content-addressed).
@@ -1191,7 +1193,7 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
 
         let mut store = VersionedKvStore {
             tree,
-            git_repo,
+            metadata: GitMetadataBackend::new(git_repo),
             staging_area: HashMap::new(),
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::RocksDB,
@@ -1282,7 +1284,7 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
 
         let mut store = VersionedKvStore {
             tree,
-            git_repo,
+            metadata: GitMetadataBackend::new(git_repo),
             staging_area: HashMap::new(),
             current_branch,
             storage_backend: StorageBackend::RocksDB,
@@ -1298,7 +1300,9 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
 
 // Implement HistoricalAccess for RocksDBNodeStorage
 #[cfg(feature = "rocksdb_storage")]
-impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, RocksDBNodeStorage<N>> {
+impl<const N: usize> HistoricalAccess<N>
+    for VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBackend>
+{
     fn get_keys_at_ref(&self, reference: &str) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         // Resolve the reference to a commit ID
         let commit_id = self.resolve_commit(reference)?;
@@ -1313,7 +1317,9 @@ impl<const N: usize> HistoricalAccess<N> for VersionedKvStore<N, RocksDBNodeStor
 
 // Implement HistoricalCommitAccess for RocksDBNodeStorage
 #[cfg(feature = "rocksdb_storage")]
-impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, RocksDBNodeStorage<N>> {
+impl<const N: usize> HistoricalCommitAccess<N>
+    for VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBackend>
+{
     fn get_commits_for_key(&self, key: &[u8]) -> Result<Vec<CommitInfo>, GitKvError> {
         self.get_commits_for_key_generic(key)
     }
@@ -1324,14 +1330,16 @@ impl<const N: usize> HistoricalCommitAccess<N> for VersionedKvStore<N, RocksDBNo
 }
 
 // Implement TreeConfigSaver for InMemoryNodeStorage
-impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, InMemoryNodeStorage<N>> {
+impl<const N: usize> TreeConfigSaver<N>
+    for VersionedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBackend>
+{
     fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError> {
         self.save_tree_config_to_git()
     }
 }
 
 // Specialized implementation for InMemoryNodeStorage
-impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
+impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBackend> {
     /// Save tree config to git for InMemoryNodeStorage
     ///
     /// Writes only the config (with root hash) to dataset directory.
@@ -1364,14 +1372,16 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>> {
 }
 
 // Implement TreeConfigSaver for FileNodeStorage
-impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, FileNodeStorage<N>> {
+impl<const N: usize> TreeConfigSaver<N>
+    for VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
+{
     fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError> {
         self.save_tree_config_to_git()
     }
 }
 
 // Specialized implementation for FileNodeStorage
-impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
+impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend> {
     /// Save tree config to git for FileNodeStorage
     ///
     /// Writes only the config (with root hash) to dataset directory.
@@ -1404,7 +1414,9 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>> {
 
 // Implement TreeConfigSaver for RocksDBNodeStorage
 #[cfg(feature = "rocksdb_storage")]
-impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, RocksDBNodeStorage<N>> {
+impl<const N: usize> TreeConfigSaver<N>
+    for VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBackend>
+{
     fn save_tree_config_to_git_internal(&self) -> Result<(), GitKvError> {
         self.save_tree_config_to_git()
     }
@@ -1412,7 +1424,7 @@ impl<const N: usize> TreeConfigSaver<N> for VersionedKvStore<N, RocksDBNodeStora
 
 // Specialized implementation for RocksDBNodeStorage
 #[cfg(feature = "rocksdb_storage")]
-impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>> {
+impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBackend> {
     /// Save tree config to git for RocksDBNodeStorage
     ///
     /// Writes only the config (with root hash) to dataset directory.

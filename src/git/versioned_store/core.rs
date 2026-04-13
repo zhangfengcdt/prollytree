@@ -13,13 +13,13 @@ limitations under the License.
 */
 
 use super::{HistoricalAccess, HistoricalCommitAccess, TreeConfigSaver, VersionedKvStore};
+use crate::git::metadata::MetadataBackend;
 use crate::git::types::*;
 use crate::storage::NodeStorage;
 use crate::tree::Tree;
-use gix::prelude::*;
 use std::path::Path;
 
-impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> VersionedKvStore<N, S, M>
 where
     Self: TreeConfigSaver<N>,
 {
@@ -284,58 +284,27 @@ where
         // For all storage types, also save the tree config to git for historical access
         self.save_tree_config_to_git_internal()?;
 
-        // Create tree object in Git using git commands
         // Get the git root directory using work_dir() for worktree/submodule compatibility
         let dataset_dir = self
             .dataset_dir
             .as_ref()
             .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
         let git_root = self
-            .git_repo
+            .metadata
             .work_dir()
-            .map(|p| p.to_path_buf())
             .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
-        // Stage all files in the current directory recursively
-        let add_cmd = std::process::Command::new("git")
-            .args(["add", "-A", "."])
-            .current_dir(&git_root)
-            .output()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
+        // Stage and write tree via metadata backend
+        let tree_id = self.metadata.stage_and_write_tree(&git_root)?;
 
-        if !add_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&add_cmd.stderr);
-            eprintln!("Warning: git add failed: {stderr}");
-        }
+        // Create commit via metadata backend
+        let commit_id = self.metadata.write_commit(tree_id, message)?;
 
-        // Use git write-tree to create tree from the current index
-        let write_tree_cmd = std::process::Command::new("git")
-            .args(["write-tree"])
-            .current_dir(&git_root)
-            .output()
-            .map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to run git write-tree: {e}"))
-            })?;
-
-        if !write_tree_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&write_tree_cmd.stderr);
-            return Err(GitKvError::GitObjectError(format!(
-                "git write-tree failed: {stderr}"
-            )));
-        }
-
-        let tree_hash = String::from_utf8_lossy(&write_tree_cmd.stdout)
-            .trim()
-            .to_string();
-        let tree_id = gix::ObjectId::from_hex(tree_hash.as_bytes())
-            .map_err(|e| GitKvError::GitObjectError(format!("Invalid tree hash: {e}")))?;
-
-        // Create commit
-        let commit_id = self.create_git_commit(tree_id, message)?;
-
-        // Update HEAD
-        self.update_head(commit_id)?;
+        // Update branch ref and HEAD
+        self.metadata
+            .update_branch(&self.current_branch, commit_id)?;
+        self.metadata.update_head(&self.current_branch)?;
 
         // Clear staging area file since we've committed
         self.save_staging_area()?;
@@ -345,36 +314,7 @@ where
 
     /// Create a new branch
     pub fn branch(&mut self, name: &str) -> Result<(), GitKvError> {
-        // Get the current HEAD commit
-        let head = self
-            .git_repo
-            .head()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
-
-        let head_commit_id = head.id().ok_or_else(|| {
-            GitKvError::GitObjectError("HEAD does not point to a commit".to_string())
-        })?;
-
-        // Create the branch reference to point to the current HEAD
-        let refs_dir = self.git_repo.path().join("refs").join("heads");
-        std::fs::create_dir_all(&refs_dir).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to create refs directory: {e}"))
-        })?;
-
-        let branch_file = refs_dir.join(name);
-
-        // Create parent directories if the branch name contains slashes
-        if let Some(parent) = branch_file.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to create branch directory: {e}"))
-            })?;
-        }
-
-        std::fs::write(&branch_file, head_commit_id.to_hex().to_string()).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write branch reference: {e}"))
-        })?;
-
-        Ok(())
+        self.metadata.create_branch(name)
     }
 
     /// Create a new branch from the current branch and switch to it
@@ -383,7 +323,6 @@ where
         self.branch(name)?;
 
         // Then switch to it
-        // Clear staging area
         self.staging_area.clear();
         self.save_staging_area()?;
 
@@ -391,12 +330,7 @@ where
         self.current_branch = name.to_string();
 
         // Update HEAD to point to the new branch
-        let head_file = self.git_repo.path().join("HEAD");
-        let head_content = format!("ref: refs/heads/{name}");
-        std::fs::write(&head_file, head_content)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to update HEAD: {e}")))?;
-
-        // Note: Tree reload is handled in Git-specific implementation
+        self.metadata.update_head(name)?;
 
         Ok(())
     }
@@ -411,182 +345,12 @@ where
 
     /// List all branches in the repository
     pub fn list_branches(&self) -> Result<Vec<String>, GitKvError> {
-        let mut branches = Vec::new();
-
-        // Get all refs under refs/heads/
-        let refs = self
-            .git_repo
-            .refs
-            .iter()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to iterate refs: {e}")))?;
-
-        for reference in (refs
-            .all()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get refs: {e}")))?)
-        .flatten()
-        {
-            if let Some(name) = reference.name.as_bstr().strip_prefix(b"refs/heads/") {
-                let branch_name = String::from_utf8_lossy(name).to_string();
-                branches.push(branch_name);
-            }
-        }
-
-        branches.sort();
-        Ok(branches)
-    }
-
-    /// Get access to the git repository (for internal use)
-    pub fn git_repo(&self) -> &gix::Repository {
-        &self.git_repo
+        self.metadata.list_branches()
     }
 
     /// Get commit history
     pub fn log(&self) -> Result<Vec<CommitInfo>, GitKvError> {
-        let mut history = Vec::new();
-
-        // Get the current HEAD commit
-        let head_commit = match self.git_repo.head_commit() {
-            Ok(commit) => commit,
-            Err(_) => return Ok(history), // No commits yet
-        };
-
-        // Use rev_walk to traverse the commit history
-        let rev_walk = self.git_repo.rev_walk([head_commit.id()]);
-
-        match rev_walk.all() {
-            Ok(walk) => {
-                for info in walk.take(100).flatten() {
-                    // Limit to 100 commits
-                    if let Ok(commit_obj) = info.object() {
-                        if let Ok(commit_ref) = commit_obj.decode() {
-                            let commit_info = CommitInfo {
-                                id: commit_obj.id().into(),
-                                author: format!(
-                                    "{} <{}>",
-                                    String::from_utf8_lossy(commit_ref.author.name),
-                                    String::from_utf8_lossy(commit_ref.author.email)
-                                ),
-                                committer: format!(
-                                    "{} <{}>",
-                                    String::from_utf8_lossy(commit_ref.committer.name),
-                                    String::from_utf8_lossy(commit_ref.committer.email)
-                                ),
-                                message: String::from_utf8_lossy(commit_ref.message).to_string(),
-                                timestamp: commit_ref.author.time.seconds,
-                            };
-                            history.push(commit_info);
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                // Fallback to single commit if rev_walk fails
-                let commit_info = CommitInfo {
-                    id: head_commit.id().into(),
-                    author: "Unknown".to_string(),
-                    committer: "Unknown".to_string(),
-                    message: "Commit".to_string(),
-                    timestamp: 0,
-                };
-                history.push(commit_info);
-            }
-        }
-
-        Ok(history)
-    }
-
-    /// Get git user configuration (name and email)
-    fn get_git_user_config(&self) -> Result<(String, String), GitKvError> {
-        let config = self.git_repo.config_snapshot();
-
-        let name = config
-            .string("user.name")
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "git-prolly".to_string());
-
-        let email = config
-            .string("user.email")
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "git-prolly@example.com".to_string());
-
-        Ok((name, email))
-    }
-
-    /// Create a Git commit object
-    fn create_git_commit(
-        &self,
-        tree_id: gix::ObjectId,
-        message: &str,
-    ) -> Result<gix::ObjectId, GitKvError> {
-        // Get the current time
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| GitKvError::GitObjectError(format!("System time error: {e}")))?
-            .as_secs() as i64;
-
-        // Get git user configuration
-        let (name, email) = self.get_git_user_config()?;
-
-        // Create author and committer signatures
-        let signature = gix::actor::Signature {
-            name: name.into(),
-            email: email.into(),
-            time: gix::date::Time {
-                seconds: now,
-                offset: 0,
-                sign: gix::date::time::Sign::Plus,
-            },
-        };
-
-        // Get parent commits (current HEAD if exists)
-        let parent_ids = match self.git_repo.head_commit() {
-            Ok(parent) => vec![parent.id().into()],
-            Err(_) => vec![], // No parent for initial commit
-        };
-
-        // Create commit object
-        let commit = gix::objs::Commit {
-            tree: tree_id,
-            parents: parent_ids.into(),
-            author: signature.clone(),
-            committer: signature,
-            encoding: None,
-            message: message.as_bytes().into(),
-            extra_headers: vec![],
-        };
-
-        let commit_id = self
-            .git_repo
-            .objects
-            .write(&commit)
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write commit: {e}")))?;
-
-        Ok(commit_id)
-    }
-
-    /// Update HEAD to point to the new commit
-    fn update_head(&mut self, commit_id: gix::ObjectId) -> Result<(), GitKvError> {
-        // Update the current branch reference to point to the new commit
-        let branch_ref = format!("refs/heads/{}", self.current_branch);
-
-        // For now, use a simple implementation that writes directly to the file
-        let refs_dir = self.git_repo.path().join("refs").join("heads");
-        std::fs::create_dir_all(&refs_dir).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to create refs directory: {e}"))
-        })?;
-
-        let branch_file = refs_dir.join(&self.current_branch);
-        std::fs::write(&branch_file, commit_id.to_hex().to_string()).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write branch reference: {e}"))
-        })?;
-
-        // Update HEAD to point to the branch
-        let head_file = self.git_repo.path().join("HEAD");
-        std::fs::write(&head_file, format!("ref: {branch_ref}\n")).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to write HEAD reference: {e}"))
-        })?;
-
-        Ok(())
+        self.metadata.walk_history(100)
     }
 
     /// Save the staging area to a file
@@ -643,7 +407,7 @@ where
             format!("PROLLY_STAGING_{path_str}")
         };
 
-        Ok(self.git_repo.path().join(staging_filename))
+        Ok(self.metadata.metadata_dir().join(staging_filename))
     }
 
     /// Generate a cryptographic proof for a key's existence and value in the tree
@@ -680,9 +444,9 @@ where
 }
 
 // Generic diff functionality for all storage types
-impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> VersionedKvStore<N, S, M>
 where
-    VersionedKvStore<N, S>: HistoricalAccess<N>,
+    Self: HistoricalAccess<N>,
 {
     /// Compare two commits or branches and return all keys that are added, updated or deleted
     pub fn diff(&self, from: &str, to: &str) -> Result<Vec<KvDiff>, GitKvError> {
@@ -735,9 +499,9 @@ where
 }
 
 // Generic commit history functionality for all storage types
-impl<const N: usize, S: NodeStorage<N>> VersionedKvStore<N, S>
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> VersionedKvStore<N, S, M>
 where
-    VersionedKvStore<N, S>: HistoricalCommitAccess<N>,
+    Self: HistoricalCommitAccess<N>,
 {
     /// Get all commits that contain changes to a specific key
     /// Returns commits in reverse chronological order (newest first), similar to `git log -- <file>`
@@ -747,15 +511,6 @@ where
 
     /// Get the current HEAD commit ID
     pub fn current_commit(&self) -> Result<gix::ObjectId, GitKvError> {
-        let head = self
-            .git_repo
-            .head()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get HEAD: {e}")))?;
-
-        let head_commit_id = head.id().ok_or_else(|| {
-            GitKvError::GitObjectError("HEAD does not point to a commit".to_string())
-        })?;
-
-        Ok(head_commit_id.detach())
+        self.metadata.head_commit_id()
     }
 }
