@@ -222,52 +222,6 @@ SQL Query Examples
 
        return sql_store
 
-Agent Memory System Examples
-----------------------------
-
-.. code-block:: python
-
-   from prollytree import AgentMemorySystem, MemoryType
-
-   def example_ai_agent_memory():
-       """Example of using ProllyTree for AI agent memory"""
-       memory = AgentMemorySystem("./agent_memory")
-
-       # Store semantic knowledge
-       semantic_memories = [
-           ("The Eiffel Tower is in Paris, France", {"topic": "landmarks", "city": "Paris"}),
-           ("Python is a programming language", {"topic": "programming", "language": "Python"}),
-           ("Machine learning is a subset of AI", {"topic": "AI", "domain": "machine learning"}),
-       ]
-
-       for content, metadata in semantic_memories:
-           memory.store_memory(MemoryType.Semantic, content, metadata)
-
-       # Store episodic memories (experiences)
-       episodic_memories = [
-           ("User asked about French landmarks", {"user": "alice", "timestamp": "2023-03-01T10:00:00Z"}),
-           ("Helped user debug Python code", {"user": "bob", "timestamp": "2023-03-01T11:00:00Z"}),
-           ("Explained ML concepts to student", {"user": "charlie", "timestamp": "2023-03-01T12:00:00Z"}),
-       ]
-
-       for content, metadata in episodic_memories:
-           memory.store_memory(MemoryType.Episodic, content, metadata)
-
-       # Retrieve relevant memories
-       print("=== Memory Retrieval ===")
-
-       # Query semantic memory
-       paris_memories = memory.retrieve_memories(
-           MemoryType.Semantic,
-           query="Paris landmarks",
-           limit=3
-       )
-       print("Semantic memories about Paris:")
-       for mem in paris_memories:
-           print(f"  - {mem['content']}")
-
-       return memory
-
 Performance Examples
 --------------------
 
@@ -534,9 +488,6 @@ Running Examples
 
        print("\\n=== SQL Analytics ===")
        example_sql_analytics()
-
-       print("\\n=== AI Agent Memory ===")
-       example_ai_agent_memory()
 
        print("\\n=== LangMem Integration ===")
        example_langmem_integration()

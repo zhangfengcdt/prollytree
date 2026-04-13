@@ -37,7 +37,6 @@ The full documentation includes:
 ## Features
 
 - **Probabilistic Trees** - High-performance data storage with automatic balancing
-- **AI Agent Memory** - Multi-layered memory systems for intelligent agents
 - **Versioned Storage** - Git-like version control for key-value data
 - **Multiple Storage Backends** - Choose from Git, File, InMemory, or RocksDB storage
 - **Cryptographic Verification** - Merkle proofs for data integrity across trees and versioned storage
@@ -58,20 +57,6 @@ proof = tree.generate_proof(b"user:123")
 is_valid = tree.verify_proof(proof, b"user:123", b"Alice")
 ```
 
-### AI Agent Memory
-```python
-from prollytree import AgentMemorySystem
-
-memory = AgentMemorySystem("./agent_memory", "agent_001")
-
-# Store conversation
-memory.store_conversation_turn("chat_123", "user", "Hello!")
-memory.store_conversation_turn("chat_123", "assistant", "Hi there!")
-
-# Store facts
-memory.store_fact("person", "john", '{"name": "John", "age": 30}',
-                  confidence=0.95, source="profile")
-```
 
 ### Versioned Storage
 ```python

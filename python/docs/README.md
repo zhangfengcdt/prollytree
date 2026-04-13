@@ -53,7 +53,6 @@ The API documentation is automatically generated from the Python bindings using 
 - ProllyTree class and methods
 - VersionedKvStore for Git-like version control
 - ProllySQLStore for SQL query support
-- AgentMemorySystem for AI agent memory
 - All supporting classes and enums
 
 ### Adding New Documentation
