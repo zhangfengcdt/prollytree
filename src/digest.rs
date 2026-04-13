@@ -71,15 +71,15 @@ impl<const N: usize> ValueDigest<N> {
     }
 
     /// Creates a new `ValueDigest` from the raw hash bytes.
-    /// This method is useful for creating a `ValueDigest` from a known hash value.
     ///
-    /// # Arguments
+    /// This is intended for internal use where the data is known to have the correct
+    /// length (e.g., child hashes stored in tree node values). For external or
+    /// unvalidated input, prefer [`try_raw_hash`](Self::try_raw_hash) which returns
+    /// a `Result` instead of panicking.
     ///
-    /// * `data` - A slice of bytes representing the raw hash value.
+    /// # Panics
     ///
-    /// # Returns
-    ///
-    /// A `ValueDigest` instance containing the provided hash value.
+    /// Panics if `data.len() != N`.
     pub fn raw_hash(data: &[u8]) -> Self {
         ValueDigest(<[u8; N]>::try_from(data).expect("data length must match digest size N"))
     }

@@ -165,13 +165,7 @@ impl InMemoryPersistence {
 
     /// Merge another branch (for in-memory, this is a no-op)
     pub async fn merge(&mut self, _branch: &str) -> Result<String, Box<dyn Error>> {
-        // Use a simple timestamp instead of chrono for in-memory implementation
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        Ok(format!("merge_result_{timestamp}"))
+        Ok(format!("merge_result_{}", uuid::Uuid::new_v4()))
     }
 
     /// Get history of commits

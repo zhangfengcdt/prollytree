@@ -82,8 +82,14 @@ pub type RocksDBVersionedKvStore<const N: usize> = VersionedKvStore<N, RocksDBNo
 /// Thread-safe wrapper for VersionedKvStore
 ///
 /// This wrapper provides thread-safe access to the underlying VersionedKvStore by using
-/// Arc<Mutex<>> internally. All operations are synchronized, making it safe to use
+/// `Arc<Mutex<>>` internally. All operations are synchronized, making it safe to use
 /// across multiple threads.
+///
+/// Uses `parking_lot::Mutex` which does not support lock poisoning. If a thread panics
+/// while holding the lock, subsequent lock acquisitions will succeed and the data
+/// remains accessible. This is intentional: the previous `std::sync::Mutex` approach
+/// also panicked (via `.unwrap()`) on poisoned locks, so callers had no recovery path
+/// either way. With `parking_lot`, the application at least has a chance to continue.
 pub struct ThreadSafeVersionedKvStore<const N: usize, S: NodeStorage<N>> {
     inner: Arc<Mutex<VersionedKvStore<N, S>>>,
 }
