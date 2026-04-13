@@ -12,6 +12,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use crate::errors::ProllyTreeError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -80,7 +81,22 @@ impl<const N: usize> ValueDigest<N> {
     ///
     /// A `ValueDigest` instance containing the provided hash value.
     pub fn raw_hash(data: &[u8]) -> Self {
-        ValueDigest(<[u8; N]>::try_from(data).unwrap())
+        ValueDigest(<[u8; N]>::try_from(data).expect("data length must match digest size N"))
+    }
+
+    /// Creates a new `ValueDigest` from the raw hash bytes, returning an error if the
+    /// data length does not match the expected digest size `N`.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - A slice of bytes representing the raw hash value.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `ValueDigest` instance or a `ProllyTreeError` if the length is wrong.
+    pub fn try_raw_hash(data: &[u8]) -> Result<Self, ProllyTreeError> {
+        let arr = <[u8; N]>::try_from(data).map_err(|_| ProllyTreeError::InvalidDigestLength)?;
+        Ok(ValueDigest(arr))
     }
 
     /// Returns a reference to the underlying byte array of the hash.

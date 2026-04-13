@@ -567,11 +567,10 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
                 if i == proof.path.len() - 1 {
                     return if node.is_leaf {
                         node.keys.iter().any(|k| k == key)
-                            && (expected_value.is_none()
-                                || node
-                                    .values
-                                    .iter()
-                                    .any(|v| expected_value.unwrap() == &v[..]))
+                            && match expected_value {
+                                None => true,
+                                Some(ev) => node.values.iter().any(|v| ev == &v[..]),
+                            }
                     } else {
                         false // Path should end at a leaf node
                     };
@@ -640,19 +639,19 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         let destination_tree = self.storage.get_node_by_hash(destination_root);
         let base_tree = self.storage.get_node_by_hash(base_root);
 
-        if source_tree.is_none() || destination_tree.is_none() || base_tree.is_none() {
-            // If we can't load one of the trees, return an error as a conflict
-            return vec![MergeResult::Conflict(MergeConflict {
-                key: b"<merge_error>".to_vec(),
-                base_value: None,
-                source_value: None,
-                destination_value: Some(b"Failed to load tree from storage".to_vec()),
-            })];
-        }
-
-        let source_tree = source_tree.unwrap();
-        let destination_tree = destination_tree.unwrap();
-        let base_tree = base_tree.unwrap();
+        let (source_tree, destination_tree, base_tree) =
+            match (source_tree, destination_tree, base_tree) {
+                (Some(s), Some(d), Some(b)) => (s, d, b),
+                _ => {
+                    // If we can't load one of the trees, return an error as a conflict
+                    return vec![MergeResult::Conflict(MergeConflict {
+                        key: b"<merge_error>".to_vec(),
+                        base_value: None,
+                        source_value: None,
+                        destination_value: Some(b"Failed to load tree from storage".to_vec()),
+                    })];
+                }
+            };
 
         // Compute diffs directly using the node-level diffing
         let mut base_to_source_diffs = Vec::new();

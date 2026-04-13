@@ -418,11 +418,7 @@ impl<const N: usize> Balanced<N> for ProllyNode<N> {
         storage: &S,
         path_hashes: &[ValueDigest<N>],
     ) -> Option<Vec<u8>> {
-        // if let Some(parent_hash) = parent_hash {
-        if !path_hashes.is_empty() {
-            // Retrieve the parent node using the parent hash
-            let last_parent_hash = path_hashes.last().unwrap();
-
+        if let Some(last_parent_hash) = path_hashes.last() {
             // Retrieve the parent node using the parent hash
             if let Some(parent_node) = storage.get_node_by_hash(last_parent_hash) {
                 if self.keys.is_empty() {

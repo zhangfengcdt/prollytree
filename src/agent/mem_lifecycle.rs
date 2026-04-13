@@ -230,7 +230,7 @@ impl<T: MemoryStore> MemoryLifecycleManager<T> {
                     b.metadata
                         .confidence
                         .partial_cmp(&a.metadata.confidence)
-                        .unwrap()
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
                 // Keep the most important ones

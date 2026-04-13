@@ -129,111 +129,110 @@ impl<const N: usize> ProllyNode<N> {
     ) -> Result<RecordBatch, ProllyTreeError> {
         let schema = schema.as_ref().ok_or(ProllyTreeError::SchemaNotFound)?;
 
-        if let Some(object) = &schema.schema.object {
-            let fields: Vec<Field> = object
-                .properties
-                .iter()
-                .map(|(name, schema)| {
-                    let data_type = match &schema {
-                        schemars::schema::Schema::Object(SchemaObject {
-                            instance_type: Some(instance_type),
-                            ..
-                        }) => match instance_type {
-                            schemars::schema::SingleOrVec::Single(single_type) => {
-                                match **single_type {
-                                    schemars::schema::InstanceType::String => DataType::Utf8,
-                                    schemars::schema::InstanceType::Integer => DataType::Int32,
-                                    schemars::schema::InstanceType::Boolean => DataType::Boolean,
-                                    schemars::schema::InstanceType::Number => DataType::Float64,
-                                    _ => panic!("Unsupported data type in schema"),
-                                }
-                            }
-                            schemars::schema::SingleOrVec::Vec(vec_type) => {
-                                match vec_type.as_slice() {
-                                    [schemars::schema::InstanceType::String] => DataType::Utf8,
-                                    [schemars::schema::InstanceType::Integer] => DataType::Int32,
-                                    [schemars::schema::InstanceType::Boolean] => DataType::Boolean,
-                                    [schemars::schema::InstanceType::Number] => DataType::Float64,
-                                    _ => panic!("Unsupported data type in schema"),
-                                }
-                            }
+        let object = schema
+            .schema
+            .object
+            .as_ref()
+            .ok_or(ProllyTreeError::SchemaNotFound)?;
+
+        let fields: Result<Vec<Field>, ProllyTreeError> = object
+            .properties
+            .iter()
+            .map(|(name, schema)| {
+                let data_type = match &schema {
+                    schemars::schema::Schema::Object(SchemaObject {
+                        instance_type: Some(instance_type),
+                        ..
+                    }) => match instance_type {
+                        schemars::schema::SingleOrVec::Single(single_type) => match **single_type {
+                            schemars::schema::InstanceType::String => DataType::Utf8,
+                            schemars::schema::InstanceType::Integer => DataType::Int32,
+                            schemars::schema::InstanceType::Boolean => DataType::Boolean,
+                            schemars::schema::InstanceType::Number => DataType::Float64,
+                            _ => return Err(ProllyTreeError::UnsupportedValueType),
                         },
-                        _ => panic!("Unsupported schema format"),
-                    };
-                    Field::new(name, data_type, false)
-                })
-                .collect();
+                        schemars::schema::SingleOrVec::Vec(vec_type) => match vec_type.as_slice() {
+                            [schemars::schema::InstanceType::String] => DataType::Utf8,
+                            [schemars::schema::InstanceType::Integer] => DataType::Int32,
+                            [schemars::schema::InstanceType::Boolean] => DataType::Boolean,
+                            [schemars::schema::InstanceType::Number] => DataType::Float64,
+                            _ => return Err(ProllyTreeError::UnsupportedValueType),
+                        },
+                    },
+                    _ => return Err(ProllyTreeError::UnsupportedValueType),
+                };
+                Ok(Field::new(name, data_type, false))
+            })
+            .collect();
+        let fields = fields?;
 
-            let values: Result<Vec<serde_json::Value>, _> =
-                data.iter().map(|v| serde_json::from_slice(v)).collect();
-            let values = values?;
+        let values: Result<Vec<serde_json::Value>, _> =
+            data.iter().map(|v| serde_json::from_slice(v)).collect();
+        let values = values?;
 
-            let arrays: Result<Vec<ArrayRef>, _> = fields
-                .iter()
-                .map(|field| -> Result<ArrayRef, ProllyTreeError> {
-                    match field.data_type() {
-                        DataType::Utf8 => {
-                            let string_values: Result<Vec<&str>, _> = values
-                                .iter()
-                                .map(|value| {
-                                    value
-                                        .get(field.name())
-                                        .and_then(|v| v.as_str())
-                                        .ok_or(ProllyTreeError::InvalidJsonValue)
-                                })
-                                .collect();
-                            Ok(Arc::new(StringArray::from(string_values?)) as ArrayRef)
-                        }
-                        DataType::Int32 => {
-                            let int_values: Result<Vec<i32>, _> = values
-                                .iter()
-                                .map(|value| {
-                                    value
-                                        .get(field.name())
-                                        .and_then(|v| v.as_i64())
-                                        .map(|v| v as i32)
-                                        .ok_or(ProllyTreeError::InvalidJsonValue)
-                                })
-                                .collect();
-                            Ok(Arc::new(Int32Array::from(int_values?)) as ArrayRef)
-                        }
-                        DataType::Boolean => {
-                            let bool_values: Result<Vec<bool>, _> = values
-                                .iter()
-                                .map(|value| {
-                                    value
-                                        .get(field.name())
-                                        .and_then(|v| v.as_bool())
-                                        .ok_or(ProllyTreeError::InvalidJsonValue)
-                                })
-                                .collect();
-                            Ok(Arc::new(BooleanArray::from(bool_values?)) as ArrayRef)
-                        }
-                        DataType::Float64 => {
-                            let float_values: Result<Vec<f64>, _> = values
-                                .iter()
-                                .map(|value| {
-                                    value
-                                        .get(field.name())
-                                        .and_then(|v| v.as_f64())
-                                        .ok_or(ProllyTreeError::InvalidJsonValue)
-                                })
-                                .collect();
-                            Ok(Arc::new(Float64Array::from(float_values?)) as ArrayRef)
-                        }
-                        _ => panic!("Unsupported data type"),
+        let arrays: Result<Vec<ArrayRef>, _> = fields
+            .iter()
+            .map(|field| -> Result<ArrayRef, ProllyTreeError> {
+                match field.data_type() {
+                    DataType::Utf8 => {
+                        let string_values: Result<Vec<&str>, _> = values
+                            .iter()
+                            .map(|value| {
+                                value
+                                    .get(field.name())
+                                    .and_then(|v| v.as_str())
+                                    .ok_or(ProllyTreeError::InvalidJsonValue)
+                            })
+                            .collect();
+                        Ok(Arc::new(StringArray::from(string_values?)) as ArrayRef)
                     }
-                })
-                .collect();
+                    DataType::Int32 => {
+                        let int_values: Result<Vec<i32>, _> = values
+                            .iter()
+                            .map(|value| {
+                                value
+                                    .get(field.name())
+                                    .and_then(|v| v.as_i64())
+                                    .map(|v| v as i32)
+                                    .ok_or(ProllyTreeError::InvalidJsonValue)
+                            })
+                            .collect();
+                        Ok(Arc::new(Int32Array::from(int_values?)) as ArrayRef)
+                    }
+                    DataType::Boolean => {
+                        let bool_values: Result<Vec<bool>, _> = values
+                            .iter()
+                            .map(|value| {
+                                value
+                                    .get(field.name())
+                                    .and_then(|v| v.as_bool())
+                                    .ok_or(ProllyTreeError::InvalidJsonValue)
+                            })
+                            .collect();
+                        Ok(Arc::new(BooleanArray::from(bool_values?)) as ArrayRef)
+                    }
+                    DataType::Float64 => {
+                        let float_values: Result<Vec<f64>, _> = values
+                            .iter()
+                            .map(|value| {
+                                value
+                                    .get(field.name())
+                                    .and_then(|v| v.as_f64())
+                                    .ok_or(ProllyTreeError::InvalidJsonValue)
+                            })
+                            .collect();
+                        Ok(Arc::new(Float64Array::from(float_values?)) as ArrayRef)
+                    }
+                    _ => Err(ProllyTreeError::UnsupportedValueType),
+                }
+            })
+            .collect();
 
-            // Create a RecordBatch to return
-            Ok(RecordBatch::try_new(
-                Arc::new(Schema::new(fields)),
-                arrays?,
-            )?)
-        } else {
-            panic!("Unsupported schema")
-        }
+        // Create a RecordBatch to return
+        Ok(RecordBatch::try_new(
+            Arc::new(Schema::new(fields)),
+            arrays?,
+        )?)
     }
 
     pub fn encode_all_pairs(&mut self) -> Result<(), ProllyTreeError> {

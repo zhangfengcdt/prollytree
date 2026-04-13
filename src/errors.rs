@@ -48,4 +48,7 @@ pub enum ProllyTreeError {
 
     #[error("Invalid JSON value")]
     InvalidJsonValue,
+
+    #[error("Invalid digest length")]
+    InvalidDigestLength,
 }

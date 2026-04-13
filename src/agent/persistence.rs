@@ -169,7 +169,7 @@ impl InMemoryPersistence {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         Ok(format!("merge_result_{timestamp}"))
     }

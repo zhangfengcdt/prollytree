@@ -20,8 +20,11 @@ use rocksdb::{
     BlockBasedOptions, Cache, DBCompressionType, Options, SliceTransform, WriteBatch, DB,
 };
 use std::num::NonZeroUsize;
+
+const DEFAULT_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
+use parking_lot::Mutex;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const CONFIG_PREFIX: &[u8] = b"config:";
 const NODE_PREFIX: &[u8] = b"node:";
@@ -40,7 +43,7 @@ impl<const N: usize> Clone for RocksDBNodeStorage<N> {
     fn clone(&self) -> Self {
         RocksDBNodeStorage {
             db: self.db.clone(),
-            cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap()))),
+            cache: Arc::new(Mutex::new(LruCache::new(DEFAULT_CACHE_SIZE))),
         }
     }
 }
@@ -53,7 +56,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
 
         Ok(RocksDBNodeStorage {
             db: Arc::new(db),
-            cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap()))),
+            cache: Arc::new(Mutex::new(LruCache::new(DEFAULT_CACHE_SIZE))),
         })
     }
 
@@ -63,7 +66,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
 
         Ok(RocksDBNodeStorage {
             db: Arc::new(db),
-            cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap()))),
+            cache: Arc::new(Mutex::new(LruCache::new(DEFAULT_CACHE_SIZE))),
         })
     }
 
@@ -75,7 +78,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
         Ok(RocksDBNodeStorage {
             db: Arc::new(db),
             cache: Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::new(1000).unwrap()),
+                NonZeroUsize::new(cache_size).unwrap_or(DEFAULT_CACHE_SIZE),
             ))),
         })
     }
@@ -132,7 +135,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
 impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
     fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
         // Check cache first
-        if let Some(node) = self.cache.lock().unwrap().get(hash) {
+        if let Some(node) = self.cache.lock().get(hash) {
             return Some(node.clone());
         }
 
@@ -147,7 +150,7 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
                         node.merged = false;
 
                         // Update cache
-                        self.cache.lock().unwrap().put(hash.clone(), node.clone());
+                        self.cache.lock().put(hash.clone(), node.clone());
 
                         Some(node)
                     }
@@ -160,7 +163,7 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
         // Update cache
-        self.cache.lock().unwrap().put(hash.clone(), node.clone());
+        self.cache.lock().put(hash.clone(), node.clone());
 
         // Serialize and store in RocksDB
         match bincode::serialize(&node) {
@@ -177,7 +180,7 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
 
     fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
         // Remove from cache
-        self.cache.lock().unwrap().pop(hash);
+        self.cache.lock().pop(hash);
 
         // Delete from RocksDB
         let key = Self::node_key(hash);
@@ -206,7 +209,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
         nodes: Vec<(ValueDigest<N>, ProllyNode<N>)>,
     ) -> Result<(), rocksdb::Error> {
         let mut batch = WriteBatch::default();
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock();
 
         for (hash, node) in nodes {
             // Update cache
@@ -231,7 +234,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
     /// Delete multiple nodes in a single batch operation
     pub fn batch_delete_nodes(&mut self, hashes: &[ValueDigest<N>]) -> Result<(), rocksdb::Error> {
         let mut batch = WriteBatch::default();
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock();
 
         for hash in hashes {
             // Remove from cache

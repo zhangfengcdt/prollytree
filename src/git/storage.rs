@@ -20,7 +20,10 @@ use gix::prelude::*;
 use lru::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+
+const DEFAULT_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 /// Git-backed storage for ProllyTree nodes
 ///
@@ -42,7 +45,7 @@ impl<const N: usize> Clone for GitNodeStorage<N> {
     fn clone(&self) -> Self {
         let cloned = Self {
             _repository: self._repository.clone(),
-            cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
+            cache: Mutex::new(LruCache::new(DEFAULT_CACHE_SIZE)),
             configs: Mutex::new(HashMap::new()),
             hash_to_object_id: Mutex::new(HashMap::new()),
             dataset_dir: self.dataset_dir.clone(),
@@ -63,7 +66,7 @@ impl<const N: usize> GitNodeStorage<N> {
 
     /// Get a copy of the current hash mappings
     pub fn get_hash_mappings(&self) -> HashMap<ValueDigest<N>, gix::ObjectId> {
-        self.hash_to_object_id.lock().unwrap().clone()
+        self.hash_to_object_id.lock().clone()
     }
 
     /// Create a new GitNodeStorage instance
@@ -71,7 +74,7 @@ impl<const N: usize> GitNodeStorage<N> {
         repository: gix::Repository,
         dataset_dir: std::path::PathBuf,
     ) -> Result<Self, GitKvError> {
-        let cache_size = NonZeroUsize::new(1000).unwrap(); // Default cache size
+        let cache_size = DEFAULT_CACHE_SIZE; // Default cache size
 
         let storage = GitNodeStorage {
             _repository: Arc::new(Mutex::new(repository)),
@@ -93,7 +96,7 @@ impl<const N: usize> GitNodeStorage<N> {
         dataset_dir: std::path::PathBuf,
         cache_size: usize,
     ) -> Result<Self, GitKvError> {
-        let cache_size = NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::new(1000).unwrap());
+        let cache_size = NonZeroUsize::new(cache_size).unwrap_or(DEFAULT_CACHE_SIZE);
 
         let storage = GitNodeStorage {
             _repository: Arc::new(Mutex::new(repository)),
@@ -115,7 +118,7 @@ impl<const N: usize> GitNodeStorage<N> {
         dataset_dir: std::path::PathBuf,
         hash_mappings: HashMap<ValueDigest<N>, gix::ObjectId>,
     ) -> Result<Self, GitKvError> {
-        let cache_size = NonZeroUsize::new(1000).unwrap(); // Default cache size
+        let cache_size = DEFAULT_CACHE_SIZE; // Default cache size
 
         let storage = GitNodeStorage {
             _repository: Arc::new(Mutex::new(repository)),
@@ -133,7 +136,7 @@ impl<const N: usize> GitNodeStorage<N> {
         let serialized = bincode::serialize(node)?;
 
         // Write the serialized node as a Git blob
-        let repo = self._repository.lock().unwrap();
+        let repo = self._repository.lock();
         let blob = gix::objs::Blob { data: serialized };
         let blob_id = repo
             .objects
@@ -145,7 +148,7 @@ impl<const N: usize> GitNodeStorage<N> {
 
     /// Load a node from a Git blob
     fn load_node_from_blob(&self, blob_id: &gix::ObjectId) -> Result<ProllyNode<N>, GitKvError> {
-        let repo = self._repository.lock().unwrap();
+        let repo = self._repository.lock();
 
         // Find the blob object
         let mut buffer = Vec::new();
@@ -164,12 +167,12 @@ impl<const N: usize> GitNodeStorage<N> {
 impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
     fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
         // First check cache
-        if let Some(node) = self.cache.lock().unwrap().peek(hash) {
+        if let Some(node) = self.cache.lock().peek(hash) {
             return Some(node.clone());
         }
 
         // Check if we have a mapping for this hash
-        let object_id = self.hash_to_object_id.lock().unwrap().get(hash).cloned()?;
+        let object_id = self.hash_to_object_id.lock().get(hash).cloned()?;
 
         // Load from Git blob
         self.load_node_from_blob(&object_id).ok()
@@ -177,19 +180,16 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
         // Check if this node already exists in our mappings
-        let already_exists = self.hash_to_object_id.lock().unwrap().contains_key(&hash);
+        let already_exists = self.hash_to_object_id.lock().contains_key(&hash);
 
         // Store in cache
-        self.cache.lock().unwrap().put(hash.clone(), node.clone());
+        self.cache.lock().put(hash.clone(), node.clone());
 
         // Store as Git blob
         match self.store_node_as_blob(&node) {
             Ok(blob_id) => {
                 // Store the mapping between ProllyTree hash and Git object ID
-                self.hash_to_object_id
-                    .lock()
-                    .unwrap()
-                    .insert(hash.clone(), blob_id);
+                self.hash_to_object_id.lock().insert(hash.clone(), blob_id);
 
                 // Only persist the mapping to filesystem if it's a new node
                 // This prevents duplicate entries when reloading trees for read-only operations
@@ -205,10 +205,10 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 
     fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
         // Remove from cache
-        self.cache.lock().unwrap().pop(hash);
+        self.cache.lock().pop(hash);
 
         // Remove from mapping
-        self.hash_to_object_id.lock().unwrap().remove(hash);
+        self.hash_to_object_id.lock().remove(hash);
 
         // Note: Git doesn't really "delete" objects - they become unreachable
         // and will be garbage collected eventually. For now, we'll just consider
@@ -218,7 +218,7 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 
     fn save_config(&self, key: &str, config: &[u8]) {
         // Store config in memory
-        let mut configs = self.configs.lock().unwrap();
+        let mut configs = self.configs.lock();
         configs.insert(key.to_string(), config.to_vec());
 
         // Also persist to filesystem for durability in the dataset directory
@@ -228,7 +228,7 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 
     fn get_config(&self, key: &str) -> Option<Vec<u8>> {
         // First try to get from memory
-        if let Some(config) = self.configs.lock().unwrap().get(key).cloned() {
+        if let Some(config) = self.configs.lock().get(key).cloned() {
             return Some(config);
         }
 
@@ -236,10 +236,7 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         let config_path = self.dataset_dir.join(format!("prolly_config_{key}"));
         if let Ok(config) = std::fs::read(config_path) {
             // Cache in memory for future use
-            self.configs
-                .lock()
-                .unwrap()
-                .insert(key.to_string(), config.clone());
+            self.configs.lock().insert(key.to_string(), config.clone());
             return Some(config);
         }
 
@@ -274,7 +271,7 @@ impl<const N: usize> GitNodeStorage<N> {
         let mapping_path = self.dataset_dir.join("prolly_hash_mappings");
 
         if let Ok(mappings) = std::fs::read_to_string(mapping_path) {
-            let mut hash_map = self.hash_to_object_id.lock().unwrap();
+            let mut hash_map = self.hash_to_object_id.lock();
 
             for line in mappings.lines() {
                 if let Some((hash_hex, object_hex)) = line.split_once(':') {
@@ -374,7 +371,7 @@ mod tests {
 
         // Insert and verify it's cached
         storage.insert_node(hash1.clone(), node1.clone());
-        assert!(storage.cache.lock().unwrap().contains(&hash1));
+        assert!(storage.cache.lock().contains(&hash1));
 
         // Get from cache
         let cached = storage.get_node_by_hash(&hash1);
