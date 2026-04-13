@@ -26,8 +26,6 @@ jobs:
             name: "minimal"
           - feature_flags: "--no-default-features --features git"
             name: "git-only"
-          - feature_flags: "--no-default-features --features 'git agent'"
-            name: "git-agent"
           - feature_flags: ""
             name: "default"
     runs-on: ubuntu-latest
