@@ -20,7 +20,6 @@ Key Features
 * **Efficient Storage**: Optimized for both memory and disk storage
 * **Version Control**: Git-like versioned key-value storage with commit history
 * **SQL Support**: Query your data using SQL with GlueSQL integration
-* **Agent Memory**: Advanced memory system for AI agents with semantic and episodic memory
 
 Quick Example
 -------------

@@ -20,8 +20,6 @@ to provide efficient data access with verifiable integrity.
 from .prollytree import (
     ProllyTree,
     TreeConfig,
-    AgentMemorySystem,
-    MemoryType,
     VersionedKvStore,
     StorageBackend,
     MergeConflict,
@@ -48,8 +46,6 @@ except ImportError:
 __all__ = [
     "ProllyTree",
     "TreeConfig",
-    "AgentMemorySystem",
-    "MemoryType",
     "VersionedKvStore",
     "StorageBackend",
     "MergeConflict",

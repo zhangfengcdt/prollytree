@@ -193,38 +193,6 @@ Query your data using SQL (requires building with SQL feature):
    results = sql_store.execute("SELECT * FROM users WHERE name = 'Alice'")
    print(results)
 
-Agent Memory System
--------------------
-
-For AI applications, ProllyTree provides an advanced memory system:
-
-.. code-block:: python
-
-   from prollytree import AgentMemorySystem, MemoryType
-
-   # Create memory system
-   memory = AgentMemorySystem("/path/to/memory")
-
-   # Store different types of memories
-   memory.store_memory(
-       MemoryType.Semantic,
-       "Paris is the capital of France",
-       {"topic": "geography", "country": "France"}
-   )
-
-   memory.store_memory(
-       MemoryType.Episodic,
-       "User asked about French capitals at 2pm",
-       {"timestamp": "2023-01-01T14:00:00Z", "user_id": "123"}
-   )
-
-   # Retrieve memories
-   semantic_memories = memory.retrieve_memories(
-       MemoryType.Semantic,
-       query="French capital",
-       limit=5
-   )
-
 Next Steps
 ----------
 

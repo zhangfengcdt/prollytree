@@ -76,21 +76,3 @@ ProllySQLStore
    :undoc-members:
    :show-inheritance:
 
-Agent Memory System
--------------------
-
-AgentMemorySystem
-~~~~~~~~~~~~~~~~~
-
-.. autoclass:: prollytree.AgentMemorySystem
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-MemoryType
-~~~~~~~~~~
-
-.. autoclass:: prollytree.MemoryType
-   :members:
-   :undoc-members:
-   :show-inheritance:
