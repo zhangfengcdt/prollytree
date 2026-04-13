@@ -226,11 +226,22 @@ impl<T: MemoryStore> MemoryLifecycleManager<T> {
         for ((namespace, tags), mut group_memories) in groups {
             if group_memories.len() > max_memories {
                 // Sort by importance/confidence
+                // Sort by confidence descending; treat NaN as lowest confidence
+                // so NaN-confidence memories are candidates for summarization first
                 group_memories.sort_by(|a, b| {
-                    b.metadata
-                        .confidence
-                        .partial_cmp(&a.metadata.confidence)
-                        .unwrap()
+                    let a_conf = if a.metadata.confidence.is_nan() {
+                        f64::NEG_INFINITY
+                    } else {
+                        a.metadata.confidence
+                    };
+                    let b_conf = if b.metadata.confidence.is_nan() {
+                        f64::NEG_INFINITY
+                    } else {
+                        b.metadata.confidence
+                    };
+                    b_conf
+                        .partial_cmp(&a_conf)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
 
                 // Keep the most important ones

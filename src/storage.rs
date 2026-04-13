@@ -14,12 +14,12 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, LowerHex};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::RwLock;
 
 /// A trait for storage of nodes in the ProllyTree.
 ///
@@ -77,7 +77,7 @@ impl<const N: usize> Clone for InMemoryNodeStorage<N> {
     fn clone(&self) -> Self {
         InMemoryNodeStorage {
             map: self.map.clone(),
-            configs: RwLock::new(self.configs.read().unwrap().clone()),
+            configs: RwLock::new(self.configs.read().clone()),
         }
     }
 }
@@ -119,12 +119,11 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     fn save_config(&self, key: &str, config: &[u8]) {
         self.configs
             .write()
-            .unwrap()
             .insert(key.to_string(), config.to_vec());
     }
 
     fn get_config(&self, key: &str) -> Option<Vec<u8>> {
-        self.configs.read().unwrap().get(key).cloned()
+        self.configs.read().get(key).cloned()
     }
 }
 

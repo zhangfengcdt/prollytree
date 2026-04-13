@@ -12,6 +12,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use crate::errors::ProllyTreeError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -70,7 +71,21 @@ impl<const N: usize> ValueDigest<N> {
     }
 
     /// Creates a new `ValueDigest` from the raw hash bytes.
-    /// This method is useful for creating a `ValueDigest` from a known hash value.
+    ///
+    /// This is intended for internal use where the data is known to have the correct
+    /// length (e.g., child hashes stored in tree node values). For external or
+    /// unvalidated input, prefer [`try_raw_hash`](Self::try_raw_hash) which returns
+    /// a `Result` instead of panicking.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `data.len() != N`.
+    pub fn raw_hash(data: &[u8]) -> Self {
+        ValueDigest(<[u8; N]>::try_from(data).expect("data length must match digest size N"))
+    }
+
+    /// Creates a new `ValueDigest` from the raw hash bytes, returning an error if the
+    /// data length does not match the expected digest size `N`.
     ///
     /// # Arguments
     ///
@@ -78,9 +93,10 @@ impl<const N: usize> ValueDigest<N> {
     ///
     /// # Returns
     ///
-    /// A `ValueDigest` instance containing the provided hash value.
-    pub fn raw_hash(data: &[u8]) -> Self {
-        ValueDigest(<[u8; N]>::try_from(data).unwrap())
+    /// A `Result` containing a `ValueDigest` instance or a `ProllyTreeError` if the length is wrong.
+    pub fn try_raw_hash(data: &[u8]) -> Result<Self, ProllyTreeError> {
+        let arr = <[u8; N]>::try_from(data).map_err(|_| ProllyTreeError::InvalidDigestLength)?;
+        Ok(ValueDigest(arr))
     }
 
     /// Returns a reference to the underlying byte array of the hash.

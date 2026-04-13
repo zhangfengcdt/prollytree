@@ -20,9 +20,10 @@ use crate::git::types::*;
 use crate::storage::{FileNodeStorage, InMemoryNodeStorage, NodeStorage};
 use crate::tree::{ProllyTree, Tree};
 use gix::prelude::*;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Trait for accessing historical state from version control
 pub trait HistoricalAccess<const N: usize> {
@@ -81,8 +82,14 @@ pub type RocksDBVersionedKvStore<const N: usize> = VersionedKvStore<N, RocksDBNo
 /// Thread-safe wrapper for VersionedKvStore
 ///
 /// This wrapper provides thread-safe access to the underlying VersionedKvStore by using
-/// Arc<Mutex<>> internally. All operations are synchronized, making it safe to use
+/// `Arc<Mutex<>>` internally. All operations are synchronized, making it safe to use
 /// across multiple threads.
+///
+/// Uses `parking_lot::Mutex` which does not support lock poisoning. If a thread panics
+/// while holding the lock, subsequent lock acquisitions will succeed and the data
+/// remains accessible. This is intentional: the previous `std::sync::Mutex` approach
+/// also panicked (via `.unwrap()`) on poisoned locks, so callers had no recovery path
+/// either way. With `parking_lot`, the application at least has a chance to continue.
 pub struct ThreadSafeVersionedKvStore<const N: usize, S: NodeStorage<N>> {
     inner: Arc<Mutex<VersionedKvStore<N, S>>>,
 }
@@ -3254,87 +3261,67 @@ where
 {
     /// Insert a key-value pair (stages the change)
     pub fn insert(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
-        let mut store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let mut store = self.inner.lock();
         store.insert(key, value)
     }
 
     /// Update an existing key-value pair (stages the change)
     pub fn update(&self, key: Vec<u8>, value: Vec<u8>) -> Result<bool, GitKvError> {
-        let mut store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let mut store = self.inner.lock();
         store.update(key, value)
     }
 
     /// Delete a key-value pair (stages the change)
     pub fn delete(&self, key: &[u8]) -> Result<bool, GitKvError> {
-        let mut store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let mut store = self.inner.lock();
         store.delete(key)
     }
 
     /// Get a value by key (checks staging area first, then committed data)
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let store = self.inner.lock().ok()?;
+        let store = self.inner.lock();
         store.get(key)
     }
 
     /// List all keys (includes staged changes)
     pub fn list_keys(&self) -> Result<Vec<Vec<u8>>, GitKvError> {
-        let store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let store = self.inner.lock();
         Ok(store.list_keys())
     }
 
     /// Show current staging area status
     pub fn status(&self) -> Result<Vec<(Vec<u8>, String)>, GitKvError> {
-        let store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let store = self.inner.lock();
         Ok(store.status())
     }
 
     /// Commit staged changes
     pub fn commit(&self, message: &str) -> Result<gix::ObjectId, GitKvError> {
-        let mut store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let mut store = self.inner.lock();
         store.commit(message)
     }
 
     /// Create a new branch
     pub fn create_branch(&self, name: &str) -> Result<(), GitKvError> {
-        let mut store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let mut store = self.inner.lock();
         store.create_branch(name)
     }
 
     /// Get commit history
     pub fn log(&self) -> Result<Vec<CommitInfo>, GitKvError> {
-        let store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let store = self.inner.lock();
         store.log()
     }
 
     /// Get current branch name
     pub fn current_branch(&self) -> Result<String, GitKvError> {
-        let store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let store = self.inner.lock();
         Ok(store.current_branch().to_string())
     }
 
     /// Get the underlying git repository reference (creates a clone)
     pub fn git_repo(&self) -> Result<gix::Repository, GitKvError> {
-        let store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let store = self.inner.lock();
         Ok(store.git_repo().clone())
     }
 }
@@ -3342,9 +3329,7 @@ where
 impl<const N: usize> ThreadSafeGitVersionedKvStore<N> {
     /// Switch to a different branch - Git-specific implementation
     pub fn checkout(&self, name: &str) -> Result<(), GitKvError> {
-        let mut store = self.inner.lock().map_err(|_| {
-            GitKvError::GitObjectError("Failed to acquire lock on store".to_string())
-        })?;
+        let mut store = self.inner.lock();
         store.checkout(name)
     }
 }

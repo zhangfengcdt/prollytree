@@ -25,10 +25,11 @@ limitations under the License.
 //! - Shared object database with the main repository
 
 use crate::git::types::*;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Represents a worktree for a VersionedKvStore
@@ -276,7 +277,9 @@ impl WorktreeManager {
 
         if head_content.starts_with("ref: refs/heads/") {
             // HEAD points to a branch, read that branch's commit
-            let branch_name = head_content.strip_prefix("ref: refs/heads/").unwrap();
+            let branch_name = head_content
+                .strip_prefix("ref: refs/heads/")
+                .unwrap_or(head_content);
             let branch_ref = self.git_dir.join("refs").join("heads").join(branch_name);
 
             if branch_ref.exists() {
@@ -920,19 +923,19 @@ impl<const N: usize> WorktreeVersionedKvStore<N> {
 
     /// Check if this worktree is locked
     pub fn is_locked(&self) -> bool {
-        let manager = self.manager.lock().unwrap();
+        let manager = self.manager.lock();
         manager.is_locked(&self.worktree_info.id)
     }
 
     /// Lock this worktree
     pub fn lock(&self, reason: &str) -> Result<(), GitKvError> {
-        let mut manager = self.manager.lock().unwrap();
+        let mut manager = self.manager.lock();
         manager.lock_worktree(&self.worktree_info.id, reason)
     }
 
     /// Unlock this worktree
     pub fn unlock(&self) -> Result<(), GitKvError> {
-        let mut manager = self.manager.lock().unwrap();
+        let mut manager = self.manager.lock();
         manager.unlock_worktree(&self.worktree_info.id)
     }
 

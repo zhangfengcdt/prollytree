@@ -12,12 +12,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use parking_lot::Mutex;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyBytesMethods, PyDict, PyList};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::{
     agent::{AgentMemorySystem, MemoryType},
@@ -163,7 +164,7 @@ impl PyProllyTree {
         let value_vec = value.as_bytes().to_vec();
 
         py.allow_threads(|| {
-            let mut tree_wrapper = self.tree.lock().unwrap();
+            let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.insert(key_vec, value_vec);
                 Ok(())
@@ -176,7 +177,7 @@ impl PyProllyTree {
         let values: Vec<Vec<u8>> = items.iter().map(|(_, v)| v.clone()).collect();
 
         py.allow_threads(|| {
-            let mut tree_wrapper = self.tree.lock().unwrap();
+            let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.insert_batch(&keys, &values);
                 Ok(())
@@ -188,7 +189,7 @@ impl PyProllyTree {
         let key_vec = key.as_bytes().to_vec();
 
         let result = py.allow_threads(|| {
-            let tree_wrapper = self.tree.lock().unwrap();
+            let tree_wrapper = self.tree.lock();
             with_tree!(tree_wrapper, tree, { tree.find(&key_vec) })
         });
 
@@ -219,7 +220,7 @@ impl PyProllyTree {
         let value_vec = value.as_bytes().to_vec();
 
         py.allow_threads(|| {
-            let mut tree_wrapper = self.tree.lock().unwrap();
+            let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.update(key_vec, value_vec);
                 Ok(())
@@ -231,7 +232,7 @@ impl PyProllyTree {
         let key_vec = key.as_bytes().to_vec();
 
         py.allow_threads(|| {
-            let mut tree_wrapper = self.tree.lock().unwrap();
+            let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.delete(&key_vec);
                 Ok(())
@@ -243,7 +244,7 @@ impl PyProllyTree {
         let key_vecs: Vec<Vec<u8>> = keys;
 
         py.allow_threads(|| {
-            let mut tree_wrapper = self.tree.lock().unwrap();
+            let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.delete_batch(&key_vecs);
                 Ok(())
@@ -252,17 +253,17 @@ impl PyProllyTree {
     }
 
     fn size(&self) -> PyResult<usize> {
-        let tree_wrapper = self.tree.lock().unwrap();
+        let tree_wrapper = self.tree.lock();
         Ok(with_tree!(tree_wrapper, tree, tree.size()))
     }
 
     fn depth(&self) -> PyResult<usize> {
-        let tree_wrapper = self.tree.lock().unwrap();
+        let tree_wrapper = self.tree.lock();
         Ok(with_tree!(tree_wrapper, tree, tree.depth()))
     }
 
     fn get_root_hash(&self, py: Python) -> PyResult<Py<PyBytes>> {
-        let tree_wrapper = self.tree.lock().unwrap();
+        let tree_wrapper = self.tree.lock();
         let hash_opt = with_tree!(tree_wrapper, tree, tree.get_root_hash());
         match hash_opt {
             Some(hash) => Ok(PyBytes::new_bound(py, hash.as_ref()).into()),
@@ -271,7 +272,7 @@ impl PyProllyTree {
     }
 
     fn stats(&self) -> PyResult<HashMap<String, usize>> {
-        let tree_wrapper = self.tree.lock().unwrap();
+        let tree_wrapper = self.tree.lock();
         let stats = with_tree!(tree_wrapper, tree, tree.stats());
         let mut map = HashMap::new();
         map.insert("num_nodes".to_string(), stats.num_nodes);
@@ -289,7 +290,7 @@ impl PyProllyTree {
         let key_vec = key.as_bytes().to_vec();
 
         let proof_bytes = py.allow_threads(|| {
-            let tree_wrapper = self.tree.lock().unwrap();
+            let tree_wrapper = self.tree.lock();
             let proof = with_tree!(tree_wrapper, tree, tree.generate_proof(&key_vec));
 
             bincode::serialize(&proof)
@@ -316,7 +317,7 @@ impl PyProllyTree {
                 PyValueError::new_err(format!("Proof deserialization failed: {}", e))
             })?;
 
-            let tree_wrapper = self.tree.lock().unwrap();
+            let tree_wrapper = self.tree.lock();
             Ok(with_tree!(
                 tree_wrapper,
                 tree,
@@ -353,13 +354,13 @@ impl PyProllyTree {
     }
 
     fn traverse(&self) -> PyResult<String> {
-        let tree_wrapper = self.tree.lock().unwrap();
+        let tree_wrapper = self.tree.lock();
         Ok(with_tree!(tree_wrapper, tree, tree.traverse()))
     }
 
     fn save_config(&self, py: Python) -> PyResult<()> {
         py.allow_threads(|| {
-            let tree_wrapper = self.tree.lock().unwrap();
+            let tree_wrapper = self.tree.lock();
             with_tree!(tree_wrapper, tree, {
                 let _ = tree.save_config();
                 Ok(())
@@ -453,7 +454,7 @@ impl PyAgentMemorySystem {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let mut memory_system = self.inner.lock().unwrap();
+            let mut memory_system = self.inner.lock();
 
             // Convert HashMap<String, String> to HashMap<String, serde_json::Value>
             let metadata_values = metadata.map(|m| {
@@ -485,7 +486,7 @@ impl PyAgentMemorySystem {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let memory_system = self.inner.lock().unwrap();
+            let memory_system = self.inner.lock();
 
             runtime.block_on(async {
                 let history = memory_system
@@ -527,7 +528,7 @@ impl PyAgentMemorySystem {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let mut memory_system = self.inner.lock().unwrap();
+            let mut memory_system = self.inner.lock();
 
             let facts_value: serde_json::Value = serde_json::from_str(&facts)
                 .map_err(|e| PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
@@ -552,7 +553,7 @@ impl PyAgentMemorySystem {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let memory_system = self.inner.lock().unwrap();
+            let memory_system = self.inner.lock();
 
             runtime.block_on(async {
                 let facts = memory_system
@@ -600,7 +601,7 @@ impl PyAgentMemorySystem {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let mut memory_system = self.inner.lock().unwrap();
+            let mut memory_system = self.inner.lock();
 
             let steps_values: Result<Vec<serde_json::Value>, _> =
                 steps.iter().map(|s| serde_json::from_str(s)).collect();
@@ -638,7 +639,7 @@ impl PyAgentMemorySystem {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let memory_system = self.inner.lock().unwrap();
+            let memory_system = self.inner.lock();
 
             runtime.block_on(async {
                 let procedures = memory_system
@@ -674,7 +675,7 @@ impl PyAgentMemorySystem {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let mut memory_system = self.inner.lock().unwrap();
+            let mut memory_system = self.inner.lock();
 
             runtime.block_on(async {
                 memory_system.checkpoint(&message).await.map_err(|e| {
@@ -689,7 +690,7 @@ impl PyAgentMemorySystem {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let mut memory_system = self.inner.lock().unwrap();
+            let mut memory_system = self.inner.lock();
 
             runtime.block_on(async {
                 let report = memory_system
@@ -1038,7 +1039,7 @@ impl PyVersionedKvStore {
         let key_vec = key.as_bytes().to_vec();
         let value_vec = value.as_bytes().to_vec();
 
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         with_versioned_store_mut!(guard, store, {
             store
                 .insert(key_vec, value_vec)
@@ -1050,7 +1051,7 @@ impl PyVersionedKvStore {
     fn get(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
         let key_vec = key.as_bytes().to_vec();
 
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
         with_versioned_store!(guard, store, {
             match store.get(&key_vec) {
                 Some(value) => Ok(Some(PyBytes::new_bound(py, &value).into())),
@@ -1063,7 +1064,7 @@ impl PyVersionedKvStore {
         let key_vec = key.as_bytes().to_vec();
         let value_vec = value.as_bytes().to_vec();
 
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         with_versioned_store_mut!(guard, store, {
             store
                 .update(key_vec, value_vec)
@@ -1074,7 +1075,7 @@ impl PyVersionedKvStore {
     fn delete(&self, key: &Bound<'_, PyBytes>) -> PyResult<bool> {
         let key_vec = key.as_bytes().to_vec();
 
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         with_versioned_store_mut!(guard, store, {
             store
                 .delete(&key_vec)
@@ -1083,7 +1084,7 @@ impl PyVersionedKvStore {
     }
 
     fn list_keys(&self, py: Python) -> PyResult<Vec<Py<PyBytes>>> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
         with_versioned_store!(guard, store, {
             let keys = store.list_keys();
 
@@ -1107,7 +1108,7 @@ impl PyVersionedKvStore {
     }
 
     fn status(&self, py: Python) -> PyResult<Vec<(Py<PyBytes>, String)>> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
         with_versioned_store!(guard, store, {
             let status = store.status();
 
@@ -1121,7 +1122,7 @@ impl PyVersionedKvStore {
     }
 
     fn commit(&self, message: String) -> PyResult<String> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         with_versioned_store_mut!(guard, store, {
             let commit_id = store
                 .commit(&message)
@@ -1132,7 +1133,7 @@ impl PyVersionedKvStore {
     }
 
     fn branch(&self, name: String) -> PyResult<()> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         with_versioned_store_mut!(guard, store, {
             store
                 .branch(&name)
@@ -1143,7 +1144,7 @@ impl PyVersionedKvStore {
     }
 
     fn create_branch(&self, name: String) -> PyResult<()> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         with_versioned_store_mut!(guard, store, {
             store.create_branch(&name).map_err(|e| {
                 PyValueError::new_err(format!("Failed to create and switch branch: {}", e))
@@ -1154,7 +1155,7 @@ impl PyVersionedKvStore {
     }
 
     fn checkout(&self, branch_or_commit: String) -> PyResult<()> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         // All backends support checkout because they all use git for version control
         with_versioned_store_mut!(guard, store, {
             store
@@ -1165,12 +1166,12 @@ impl PyVersionedKvStore {
     }
 
     fn current_branch(&self) -> PyResult<String> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
         with_versioned_store!(guard, store, { Ok(store.current_branch().to_string()) })
     }
 
     fn list_branches(&self) -> PyResult<Vec<String>> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
         with_versioned_store!(guard, store, {
             store
                 .list_branches()
@@ -1182,7 +1183,7 @@ impl PyVersionedKvStore {
         // Collect commit data under lock, then release before Python GIL operations
         // to avoid potential deadlock between mutex and GIL
         let commits_data: Vec<(String, String, String, String, i64)> = {
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock();
             with_versioned_store!(guard, store, {
                 let history = store
                     .log()
@@ -1231,7 +1232,7 @@ impl PyVersionedKvStore {
         // All backends now support get_commits_for_key because they all write config to dataset_dir
         // which is tracked in git commits
         let commits_data: Vec<(String, String, String, String, i64)> = {
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock();
             with_versioned_store!(guard, store, {
                 let commits = store.get_commits_for_key(&key_vec).map_err(|e| {
                     PyValueError::new_err(format!("Failed to get commits for key: {}", e))
@@ -1275,7 +1276,7 @@ impl PyVersionedKvStore {
         // Collect commit data under lock, then release before Python GIL operations
         // to avoid potential deadlock between mutex and GIL
         let commits_data: Vec<(String, String, String, String, i64)> = {
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock();
             with_versioned_store!(guard, store, {
                 let commits = store.get_commit_history().map_err(|e| {
                     PyValueError::new_err(format!("Failed to get commit history: {}", e))
@@ -1332,7 +1333,7 @@ impl PyVersionedKvStore {
         source_branch: String,
         conflict_resolution: Option<PyConflictResolution>,
     ) -> PyResult<String> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
         let resolution = conflict_resolution.unwrap_or(PyConflictResolution::IgnoreAll);
 
         // All backends support merge because they all use git for version control
@@ -1371,7 +1372,7 @@ impl PyVersionedKvStore {
     ///            If success is True, conflicts will be empty and merge was applied
     ///            If success is False, conflicts contains unresolved conflicts and merge was not applied
     fn try_merge(&self, source_branch: String) -> PyResult<(bool, Vec<PyMergeConflict>)> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock();
 
         // All backends support try_merge because they all use git for version control
         with_versioned_store_mut!(guard, store, {
@@ -1399,7 +1400,7 @@ impl PyVersionedKvStore {
     }
 
     fn storage_backend(&self) -> PyResult<PyStorageBackend> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
         with_versioned_store!(guard, store, { Ok(store.storage_backend().clone().into()) })
     }
 
@@ -1407,7 +1408,7 @@ impl PyVersionedKvStore {
         let key_vec = key.as_bytes().to_vec();
 
         let proof_bytes = py.allow_threads(|| {
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock();
             with_versioned_store!(guard, store, {
                 let proof = store.generate_proof(&key_vec);
                 bincode::serialize(&proof).map_err(|e| {
@@ -1436,7 +1437,7 @@ impl PyVersionedKvStore {
                 PyValueError::new_err(format!("Proof deserialization failed: {}", e))
             })?;
 
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock();
             with_versioned_store!(guard, store, {
                 Ok(store.verify(proof, &key_vec, value_option.as_deref()))
             })
@@ -1448,7 +1449,7 @@ impl PyVersionedKvStore {
         py: Python,
         reference: String,
     ) -> PyResult<Vec<(Py<PyBytes>, Py<PyBytes>)>> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
 
         // All backends now support get_keys_at_ref because they all write config to dataset_dir
         // which is committed to git history.
@@ -1489,7 +1490,7 @@ impl PyVersionedKvStore {
     /// Returns:
     ///     List[KvDiff]: List of differences between the two references
     fn diff(&self, from_ref: String, to_ref: String) -> PyResult<Vec<PyKvDiff>> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
 
         // All backends support diff because they all implement HistoricalAccess
         // which provides get_keys_at_ref, and diff is built on top of that.
@@ -1538,7 +1539,7 @@ impl PyVersionedKvStore {
     /// Returns:
     ///     str: The hexadecimal string representation of the current commit ID
     fn current_commit(&self) -> PyResult<String> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock();
 
         with_versioned_store!(guard, store, {
             let commit_id = store.current_commit().map_err(|e| {
@@ -1576,7 +1577,7 @@ impl PyWorktreeManager {
         branch: String,
         create_branch: bool,
     ) -> PyResult<HashMap<String, Py<PyAny>>> {
-        let mut manager = self.inner.lock().unwrap();
+        let mut manager = self.inner.lock();
         let info = manager
             .add_worktree(path, &branch, create_branch)
             .map_err(|e| PyValueError::new_err(format!("Failed to add worktree: {}", e)))?;
@@ -1592,7 +1593,7 @@ impl PyWorktreeManager {
     }
 
     fn remove_worktree(&self, worktree_id: String) -> PyResult<()> {
-        let mut manager = self.inner.lock().unwrap();
+        let mut manager = self.inner.lock();
         manager
             .remove_worktree(&worktree_id)
             .map_err(|e| PyValueError::new_err(format!("Failed to remove worktree: {}", e)))?;
@@ -1600,7 +1601,7 @@ impl PyWorktreeManager {
     }
 
     fn lock_worktree(&self, worktree_id: String, reason: String) -> PyResult<()> {
-        let mut manager = self.inner.lock().unwrap();
+        let mut manager = self.inner.lock();
         manager
             .lock_worktree(&worktree_id, &reason)
             .map_err(|e| PyValueError::new_err(format!("Failed to lock worktree: {}", e)))?;
@@ -1608,7 +1609,7 @@ impl PyWorktreeManager {
     }
 
     fn unlock_worktree(&self, worktree_id: String) -> PyResult<()> {
-        let mut manager = self.inner.lock().unwrap();
+        let mut manager = self.inner.lock();
         manager
             .unlock_worktree(&worktree_id)
             .map_err(|e| PyValueError::new_err(format!("Failed to unlock worktree: {}", e)))?;
@@ -1616,7 +1617,7 @@ impl PyWorktreeManager {
     }
 
     fn list_worktrees(&self) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
-        let manager = self.inner.lock().unwrap();
+        let manager = self.inner.lock();
         let worktrees = manager.list_worktrees();
 
         Python::with_gil(|py| {
@@ -1636,13 +1637,13 @@ impl PyWorktreeManager {
     }
 
     fn is_locked(&self, worktree_id: String) -> PyResult<bool> {
-        let manager = self.inner.lock().unwrap();
+        let manager = self.inner.lock();
         Ok(manager.is_locked(&worktree_id))
     }
 
     /// Merge a worktree branch back to main branch
     fn merge_to_main(&self, worktree_id: String, commit_message: String) -> PyResult<String> {
-        let mut manager = self.inner.lock().unwrap();
+        let mut manager = self.inner.lock();
         manager
             .merge_to_main(&worktree_id, &commit_message)
             .map_err(|e| PyValueError::new_err(format!("Failed to merge to main: {}", e)))
@@ -1655,7 +1656,7 @@ impl PyWorktreeManager {
         target_branch: String,
         commit_message: String,
     ) -> PyResult<String> {
-        let mut manager = self.inner.lock().unwrap();
+        let mut manager = self.inner.lock();
         manager
             .merge_branch(&source_worktree_id, &target_branch, &commit_message)
             .map_err(|e| PyValueError::new_err(format!("Failed to merge branch: {}", e)))
@@ -1663,7 +1664,7 @@ impl PyWorktreeManager {
 
     /// Get the current commit hash of a branch
     fn get_branch_commit(&self, branch: String) -> PyResult<String> {
-        let manager = self.inner.lock().unwrap();
+        let manager = self.inner.lock();
         manager
             .get_branch_commit(&branch)
             .map_err(|e| PyValueError::new_err(format!("Failed to get branch commit: {}", e)))
@@ -1671,7 +1672,7 @@ impl PyWorktreeManager {
 
     /// List all branches in the repository
     fn list_branches(&self) -> PyResult<Vec<String>> {
-        let manager = self.inner.lock().unwrap();
+        let manager = self.inner.lock();
         manager
             .list_branches()
             .map_err(|e| PyValueError::new_err(format!("Failed to list branches: {}", e)))
@@ -1716,22 +1717,22 @@ impl PyWorktreeVersionedKvStore {
     }
 
     fn worktree_id(&self) -> PyResult<String> {
-        let store = self.inner.lock().unwrap();
+        let store = self.inner.lock();
         Ok(store.worktree_id().to_string())
     }
 
     fn current_branch(&self) -> PyResult<String> {
-        let store = self.inner.lock().unwrap();
+        let store = self.inner.lock();
         Ok(store.current_branch().to_string())
     }
 
     fn is_locked(&self) -> PyResult<bool> {
-        let store = self.inner.lock().unwrap();
+        let store = self.inner.lock();
         Ok(store.is_locked())
     }
 
     fn lock(&self, reason: String) -> PyResult<()> {
-        let store = self.inner.lock().unwrap();
+        let store = self.inner.lock();
         store
             .lock(&reason)
             .map_err(|e| PyValueError::new_err(format!("Failed to lock worktree: {}", e)))?;
@@ -1739,7 +1740,7 @@ impl PyWorktreeVersionedKvStore {
     }
 
     fn unlock(&self) -> PyResult<()> {
-        let store = self.inner.lock().unwrap();
+        let store = self.inner.lock();
         store
             .unlock()
             .map_err(|e| PyValueError::new_err(format!("Failed to unlock worktree: {}", e)))?;
@@ -1748,7 +1749,7 @@ impl PyWorktreeVersionedKvStore {
 
     // Delegate key-value operations to the underlying store
     fn insert(&self, key: Vec<u8>, value: Vec<u8>) -> PyResult<()> {
-        let mut store = self.inner.lock().unwrap();
+        let mut store = self.inner.lock();
         store
             .store_mut()
             .insert(key, value)
@@ -1757,12 +1758,12 @@ impl PyWorktreeVersionedKvStore {
     }
 
     fn get(&self, key: Vec<u8>) -> PyResult<Option<Vec<u8>>> {
-        let store = self.inner.lock().unwrap();
+        let store = self.inner.lock();
         Ok(store.store().get(&key))
     }
 
     fn delete(&self, key: Vec<u8>) -> PyResult<bool> {
-        let mut store = self.inner.lock().unwrap();
+        let mut store = self.inner.lock();
         let result = store
             .store_mut()
             .delete(&key)
@@ -1771,7 +1772,7 @@ impl PyWorktreeVersionedKvStore {
     }
 
     fn commit(&self, message: String) -> PyResult<String> {
-        let mut store = self.inner.lock().unwrap();
+        let mut store = self.inner.lock();
         let commit_id = store
             .store_mut()
             .commit(&message)
@@ -1780,7 +1781,7 @@ impl PyWorktreeVersionedKvStore {
     }
 
     fn list_keys(&self) -> PyResult<Vec<Vec<u8>>> {
-        let store = self.inner.lock().unwrap();
+        let store = self.inner.lock();
         let keys = store.store().list_keys();
 
         let total_keys = keys.len();
@@ -1837,7 +1838,7 @@ impl PyProllySQLStore {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let mut glue = self.inner.lock().unwrap();
+            let mut glue = self.inner.lock();
 
             runtime.block_on(async {
                 let results = glue
@@ -1999,7 +2000,7 @@ impl PyProllySQLStore {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-            let mut glue = self.inner.lock().unwrap();
+            let mut glue = self.inner.lock();
 
             runtime.block_on(async {
                 // Execute the COMMIT command which will trigger the underlying storage commit
