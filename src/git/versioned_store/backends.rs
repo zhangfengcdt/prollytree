@@ -102,9 +102,9 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
                 // Update our internal tracking
                 self.current_branch = branch_or_commit.to_string();
 
-                // Update HEAD to point to the new branch
+                // Update HEAD to point to the resolved reference
                 let head_file = self.metadata.repo().path().join("HEAD");
-                let head_content = format!("ref: refs/heads/{branch_or_commit}");
+                let head_content = format!("ref: {target_ref}\n");
                 std::fs::write(&head_file, head_content).map_err(|e| {
                     GitKvError::GitObjectError(format!("Failed to update HEAD: {e}"))
                 })?;

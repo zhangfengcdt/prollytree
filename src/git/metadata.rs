@@ -230,7 +230,9 @@ impl MetadataBackend for GitMetadataBackend {
 
         if !add_cmd.status.success() {
             let stderr = String::from_utf8_lossy(&add_cmd.stderr);
-            eprintln!("Warning: git add failed: {stderr}");
+            return Err(GitKvError::GitObjectError(format!(
+                "git add failed: {stderr}"
+            )));
         }
 
         let write_tree_cmd = std::process::Command::new("git")
