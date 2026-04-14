@@ -17,6 +17,25 @@ mod proof_tests {
     use crate::git::versioned_store::{GitVersionedKvStore, HistoricalAccess};
     use tempfile::TempDir;
 
+    /// RAII guard that restores the working directory on drop (even on panic).
+    struct CwdGuard {
+        original: std::path::PathBuf,
+    }
+
+    impl CwdGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let original = std::env::current_dir().expect("Failed to get current dir");
+            std::env::set_current_dir(path).expect("Failed to change directory");
+            Self { original }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
     #[test]
     fn test_versioned_store_proof_methods() {
         // Create a temporary directory for the test
@@ -47,9 +66,8 @@ mod proof_tests {
         let dataset_path = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_path).expect("Failed to create dataset directory");
 
-        // Change to the dataset subdirectory
-        let original_dir = std::env::current_dir().expect("Failed to get current dir");
-        std::env::set_current_dir(&dataset_path).expect("Failed to change directory");
+        // Change to the dataset subdirectory (RAII guard restores on drop/panic)
+        let _cwd_guard = CwdGuard::set(&dataset_path);
 
         // Initialize the versioned store from the dataset subdirectory
         let mut store =
@@ -78,9 +96,6 @@ mod proof_tests {
         // Test verify with wrong value should fail
         let wrong_value = b"wrong_value".to_vec();
         assert!(!store.verify(proof.clone(), &key, Some(&wrong_value)));
-
-        // Restore original directory (best effort - may fail in parallel tests)
-        let _ = std::env::set_current_dir(original_dir);
     }
 
     #[test]
@@ -113,9 +128,8 @@ mod proof_tests {
         let dataset_path = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_path).expect("Failed to create dataset directory");
 
-        // Change to the dataset subdirectory
-        let original_dir = std::env::current_dir().expect("Failed to get current dir");
-        std::env::set_current_dir(&dataset_path).expect("Failed to change directory");
+        // Change to the dataset subdirectory (RAII guard restores on drop/panic)
+        let _cwd_guard = CwdGuard::set(&dataset_path);
 
         // Initialize the versioned store from the dataset subdirectory
         let mut store =
@@ -192,9 +206,6 @@ mod proof_tests {
             keys_at_current_head.get(&b"key3".to_vec()),
             Some(&b"value3".to_vec())
         );
-
-        // Restore original directory (best effort - may fail in parallel tests)
-        let _ = std::env::set_current_dir(original_dir);
     }
 }
 

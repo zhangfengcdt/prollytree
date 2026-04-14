@@ -169,18 +169,5 @@ impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> Clone
     }
 }
 
-// Implement Send and Sync for the thread-safe wrapper
-unsafe impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> Send
-    for ThreadSafeVersionedKvStore<N, S, M>
-where
-    S: Send,
-    M: Send,
-{
-}
-unsafe impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> Sync
-    for ThreadSafeVersionedKvStore<N, S, M>
-where
-    S: Send,
-    M: Send,
-{
-}
+// Send and Sync are derived automatically from `Arc<Mutex<_>>`
+// when the inner `VersionedKvStore` is Send. No unsafe impl needed.
