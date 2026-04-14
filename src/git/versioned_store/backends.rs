@@ -402,14 +402,15 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         Ok(parents)
     }
 
-    /// Create a merge commit
+    /// Create a merge commit with two parents (current HEAD + source branch)
     fn create_merge_commit(
         &mut self,
         message: &str,
         source_branch: &str,
     ) -> Result<gix::ObjectId, GitKvError> {
-        // Get the source branch commit as second parent
-        let _source_commit = self.get_branch_commit(source_branch)?;
+        // Get both parent commits
+        let current_commit = self.metadata.head_commit_id()?;
+        let source_commit = self.get_branch_commit(source_branch)?;
 
         // Save current tree state
         self.tree.persist_root();
@@ -420,63 +421,60 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         // Save tree config to git
         self.save_tree_config_to_git_internal()?;
 
-        // Create git tree and commit (similar to regular commit but with two parents)
-        // Use work_dir() for worktree/submodule compatibility
+        // Stage files and write tree via metadata backend
         let dataset_dir = self
             .dataset_dir
             .as_ref()
             .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
         let git_root = self
             .metadata
-            .repo()
             .work_dir()
-            .map(|p| p.to_path_buf())
             .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
-        // Stage all files
-        let add_output = std::process::Command::new("git")
-            .args(["add", "."])
-            .current_dir(&git_root)
-            .output()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
+        let tree_id = self.metadata.stage_and_write_tree(&git_root)?;
 
-        if !add_output.status.success() {
-            return Err(GitKvError::GitObjectError(format!(
-                "Git add failed: {}",
-                String::from_utf8_lossy(&add_output.stderr)
-            )));
-        }
+        // Create merge commit with two parents using gix (bypasses shell hooks)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| GitKvError::GitObjectError(format!("System time error: {e}")))?
+            .as_secs() as i64;
 
-        // Create merge commit with two parents
-        let _current_commit = self.metadata.repo().head_id().map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to get current commit: {e}"))
-        })?;
+        let (name, email) = self.metadata.user_config();
 
-        let commit_output = std::process::Command::new("git")
-            .args(["commit", "-m", message, "--allow-empty"])
-            .current_dir(&git_root)
-            .env("GIT_AUTHOR_NAME", "ProllyTree")
-            .env("GIT_AUTHOR_EMAIL", "prollytree@example.com")
-            .env("GIT_COMMITTER_NAME", "ProllyTree")
-            .env("GIT_COMMITTER_EMAIL", "prollytree@example.com")
-            .output()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git commit: {e}")))?;
+        let signature = gix::actor::Signature {
+            name: name.into(),
+            email: email.into(),
+            time: gix::date::Time {
+                seconds: now,
+                offset: 0,
+                sign: gix::date::time::Sign::Plus,
+            },
+        };
 
-        if !commit_output.status.success() {
-            return Err(GitKvError::GitObjectError(format!(
-                "Git commit failed: {}",
-                String::from_utf8_lossy(&commit_output.stderr)
-            )));
-        }
+        let commit = gix::objs::Commit {
+            tree: tree_id,
+            parents: vec![current_commit, source_commit].into(),
+            author: signature.clone(),
+            committer: signature,
+            encoding: None,
+            message: message.as_bytes().into(),
+            extra_headers: vec![],
+        };
 
-        // Get the new commit ID
-        let new_commit =
-            self.metadata.repo().head_id().map_err(|e| {
-                GitKvError::GitObjectError(format!("Failed to get new commit: {e}"))
-            })?;
+        let commit_id = self
+            .metadata
+            .repo()
+            .objects
+            .write(&commit)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to write commit: {e}")))?;
 
-        Ok(new_commit.into())
+        // Update branch ref and HEAD
+        self.metadata
+            .update_branch(&self.current_branch, commit_id)?;
+        self.metadata.update_head(&self.current_branch)?;
+
+        Ok(commit_id)
     }
 
     /// Reload the tree state from the current HEAD commit

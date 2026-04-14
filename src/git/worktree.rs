@@ -1089,61 +1089,66 @@ mod tests {
 
     /// Helper function to initialize a Git repository properly for testing
     fn init_test_git_repo(repo_path: &std::path::Path) {
-        // Initialize Git repository
-        std::process::Command::new("git")
-            .args(&["init"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to initialize git repository");
+        use gix::prelude::*;
 
-        // Configure Git user (required for commits)
-        std::process::Command::new("git")
-            .args(&["config", "user.name", "Test User"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to configure git user name");
+        // Initialize Git repository using gix
+        let repo = gix::init(repo_path).expect("Failed to initialize git repository");
 
-        std::process::Command::new("git")
-            .args(&["config", "user.email", "test@example.com"])
-            .current_dir(repo_path)
-            .output()
-            .expect("Failed to configure git user email");
-
-        // Ensure we're using 'main' as default branch name for consistency
-        std::process::Command::new("git")
-            .args(&["config", "init.defaultBranch", "main"])
-            .current_dir(repo_path)
-            .output()
-            .ok(); // This might fail on older Git versions, ignore
-
-        // Create initial file and commit to establish main branch
+        // Create initial file so we have something to commit
         let test_file = repo_path.join("README.md");
         std::fs::write(&test_file, "# Test Repository").expect("Failed to create test file");
 
+        // Stage the file using git CLI (gix index manipulation is complex)
         std::process::Command::new("git")
-            .args(&["add", "."])
+            .args(["add", "."])
             .current_dir(repo_path)
             .output()
             .expect("Failed to add files");
 
-        std::process::Command::new("git")
-            .args(&["commit", "-m", "Initial commit"])
+        // Write tree from index
+        let write_tree_output = std::process::Command::new("git")
+            .args(["write-tree"])
             .current_dir(repo_path)
             .output()
-            .expect("Failed to create initial commit");
+            .expect("Failed to write tree");
+        let tree_hash = String::from_utf8_lossy(&write_tree_output.stdout)
+            .trim()
+            .to_string();
+        let tree_id =
+            gix::ObjectId::from_hex(tree_hash.as_bytes()).expect("Failed to parse tree hash");
 
-        // Ensure we're on main branch (some Git versions might create 'master' by default)
-        std::process::Command::new("git")
-            .args(&["checkout", "-b", "main"])
-            .current_dir(repo_path)
-            .output()
-            .ok(); // Ignore if main already exists
+        // Create initial commit using gix (bypasses shell hooks like commit signing)
+        let signature = gix::actor::Signature {
+            name: "Test User".into(),
+            email: "test@example.com".into(),
+            time: gix::date::Time {
+                seconds: 1700000000,
+                offset: 0,
+                sign: gix::date::time::Sign::Plus,
+            },
+        };
 
-        std::process::Command::new("git")
-            .args(&["branch", "-D", "master"])
-            .current_dir(repo_path)
-            .output()
-            .ok(); // Ignore if master doesn't exist
+        let commit = gix::objs::Commit {
+            tree: tree_id,
+            parents: vec![].into(),
+            author: signature.clone(),
+            committer: signature,
+            encoding: None,
+            message: b"Initial commit"[..].into(),
+            extra_headers: vec![],
+        };
+
+        let commit_id = repo.objects.write(&commit).expect("Failed to write commit");
+
+        // Create refs/heads/main pointing to the commit
+        let refs_dir = repo.path().join("refs").join("heads");
+        std::fs::create_dir_all(&refs_dir).expect("Failed to create refs directory");
+        std::fs::write(refs_dir.join("main"), commit_id.to_hex().to_string())
+            .expect("Failed to write main branch ref");
+
+        // Set HEAD to point to main
+        let head_file = repo.path().join("HEAD");
+        std::fs::write(head_file, "ref: refs/heads/main\n").expect("Failed to write HEAD");
     }
 
     #[test]
