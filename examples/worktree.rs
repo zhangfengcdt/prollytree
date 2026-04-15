@@ -17,10 +17,11 @@ limitations under the License.
 //! This example demonstrates how to use the Git worktree-like functionality
 //! for multi-agent systems with versioned key-value storage and intelligent merging.
 
+use parking_lot::Mutex;
 use prollytree::diff::{AgentPriorityResolver, SemanticMergeResolver};
 use prollytree::git::versioned_store::GitVersionedKvStore;
 use prollytree::git::worktree::{WorktreeManager, WorktreeVersionedKvStore};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 #[tokio::main]
@@ -68,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Add worktree
         let worktree_info = {
-            let mut manager = manager_arc.lock().unwrap();
+            let mut manager = manager_arc.lock();
             manager.add_worktree(&agent_path, &branch_name, true)?
         };
 
