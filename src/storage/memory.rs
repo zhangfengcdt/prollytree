@@ -16,8 +16,9 @@ use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::NodeStorage;
+use super::{NodeStorage, StorageError};
 
 /// An implementation of `NodeStorage` that stores nodes in a HashMap.
 ///
@@ -26,7 +27,7 @@ use super::NodeStorage;
 /// - `N`: The size of the value digest.
 #[derive(Debug)]
 pub struct InMemoryNodeStorage<const N: usize> {
-    map: HashMap<ValueDigest<N>, ProllyNode<N>>,
+    map: HashMap<ValueDigest<N>, Arc<ProllyNode<N>>>,
     configs: RwLock<HashMap<String, Vec<u8>>>,
 }
 
@@ -55,22 +56,25 @@ impl<const N: usize> InMemoryNodeStorage<N> {
 }
 
 impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
-        self.map.get(hash).cloned().map(|mut node| {
-            node.split = false;
-            node.merged = false;
-            node
-        })
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<Arc<ProllyNode<N>>> {
+        self.map.get(hash).cloned()
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
-        self.map.insert(hash, node);
-        Some(())
+    fn insert_node(
+        &mut self,
+        hash: ValueDigest<N>,
+        mut node: ProllyNode<N>,
+    ) -> Result<(), StorageError> {
+        // Clear transient flags before storing so reads never see stale state.
+        node.split = false;
+        node.merged = false;
+        self.map.insert(hash, Arc::new(node));
+        Ok(())
     }
 
-    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
         self.map.remove(hash);
-        Some(())
+        Ok(())
     }
 
     fn save_config(&self, key: &str, config: &[u8]) {

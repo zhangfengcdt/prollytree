@@ -28,6 +28,24 @@ pub use crate::rocksdb::RocksDBNodeStorage;
 use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
 use std::fmt::{Display, Formatter, LowerHex};
+use std::sync::Arc;
+use thiserror::Error;
+
+/// Error type for node storage operations.
+#[derive(Error, Debug)]
+pub enum StorageError {
+    /// An I/O error occurred during a storage operation.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// A serialization or deserialization error occurred.
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] bincode::Error),
+
+    /// A storage-specific error with a descriptive message.
+    #[error("Storage error: {0}")]
+    Other(String),
+}
 
 /// A trait for storage of nodes in the ProllyTree.
 ///
@@ -42,14 +60,19 @@ use std::fmt::{Display, Formatter, LowerHex};
 pub trait NodeStorage<const N: usize>: Send + Sync + Clone {
     /// Retrieves a node from storage by its hash.
     ///
+    /// Returns an `Arc<ProllyNode<N>>` to avoid cloning entire nodes on every
+    /// read. Callers that only need to inspect the node can dereference the
+    /// `Arc` cheaply. Callers that need a mutable copy can use
+    /// [`Arc::unwrap_or_clone`].
+    ///
     /// # Arguments
     ///
     /// * `hash` - A reference to the `ValueDigest` representing the hash of the node to retrieve.
     ///
     /// # Returns
     ///
-    /// The node associated with the given hash.
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>>;
+    /// The node associated with the given hash, wrapped in an `Arc`.
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<Arc<ProllyNode<N>>>;
 
     /// Inserts a node into storage.
     ///
@@ -57,16 +80,31 @@ pub trait NodeStorage<const N: usize>: Send + Sync + Clone {
     ///
     /// * `hash` - The `ValueDigest` representing the hash of the node to insert.
     /// * `node` - The node to insert into storage.
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()>;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the node could not be persisted.
+    fn insert_node(
+        &mut self,
+        hash: ValueDigest<N>,
+        node: ProllyNode<N>,
+    ) -> Result<(), StorageError>;
 
     /// Deletes a node from storage by its hash.
     ///
     /// # Arguments
     ///
     /// * `hash` - A reference to the `ValueDigest` representing the hash of the node to delete.
-    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()>;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the node could not be deleted.
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError>;
 
+    /// Saves a configuration value.
     fn save_config(&self, key: &str, config: &[u8]);
+
+    /// Retrieves a configuration value.
     fn get_config(&self, key: &str) -> Option<Vec<u8>>;
 }
 

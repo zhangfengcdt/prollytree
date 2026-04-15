@@ -20,6 +20,7 @@ use crate::digest::ValueDigest;
 use crate::node::{Node, ProllyNode};
 use crate::proof::Proof;
 use crate::storage::NodeStorage;
+use std::sync::Arc;
 
 /// Trait representing a Prolly tree with a fixed size N and a node storage S.
 /// This trait provides methods for creating, modifying, and querying the tree.
@@ -786,7 +787,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
         // Create a new tree starting from the destination
         let mut new_tree = ProllyTree {
-            root: destination_tree,
+            root: Arc::unwrap_or_clone(destination_tree),
             storage: self.storage.clone(),
             config: self.config.clone(),
         };
@@ -1048,7 +1049,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         if self
             .storage
             .insert_node(root_hash.clone(), self.root.clone())
-            .is_some()
+            .is_ok()
         {
             // Update the config with the new root hash
             self.config.root_hash = Some(root_hash);
@@ -1063,7 +1064,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         if let Some(ref root_hash) = config.root_hash {
             if let Some(root_node) = storage.get_node_by_hash(root_hash) {
                 return Some(ProllyTree {
-                    root: root_node,
+                    root: Arc::unwrap_or_clone(root_node),
                     storage,
                     config,
                 });
@@ -1178,7 +1179,7 @@ mod tests {
 
         // 2. Create and Wrap the Storage Backend
         let storage_dir = PathBuf::from("/tmp/prolly_tree_storage");
-        let storage = FileNodeStorage::<32>::new(storage_dir.clone());
+        let storage = FileNodeStorage::<32>::new(storage_dir.clone()).unwrap();
 
         // 3. Create the Prolly Tree
         let mut tree = ProllyTree::new(storage, config);
@@ -1503,19 +1504,25 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"key1".to_vec(), b"value1".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree - same as base
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"key1".to_vec(), b"value1".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree - same as base
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"key1".to_vec(), b"value1".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge using storage that contains all the nodes
         let merge_tree = ProllyTree::new(storage, config);
@@ -1535,21 +1542,27 @@ mod tests {
         base_tree.insert(b"key1".to_vec(), b"value1".to_vec());
         base_tree.insert(b"key2".to_vec(), b"value2".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree - modify key1 to "source_value"
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"key1".to_vec(), b"source_value".to_vec());
         source_tree.insert(b"key2".to_vec(), b"value2".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree - modify key1 to "dest_value"
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"key1".to_vec(), b"dest_value".to_vec());
         dest_tree.insert(b"key2".to_vec(), b"value2".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge
         let merge_tree = ProllyTree::new(storage, config);
@@ -1576,19 +1589,25 @@ mod tests {
         // Create base tree (empty)
         let base_tree = ProllyTree::new(storage.clone(), config.clone());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree with data
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"key1".to_vec(), b"value1".to_vec());
         source_tree.insert(b"key2".to_vec(), b"value2".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree (also empty)
         let dest_tree = ProllyTree::new(storage.clone(), config.clone());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge
         let merge_tree = ProllyTree::new(storage, config);
@@ -1618,19 +1637,25 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"key1".to_vec(), b"value1".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree - remove key1, add key2
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"key2".to_vec(), b"value2".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree - modify key1
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"key1".to_vec(), b"modified_value1".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge
         let merge_tree = ProllyTree::new(storage, config);
@@ -1675,20 +1700,26 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"modify_conflict".to_vec(), b"base_value".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree - modify the key and add a new one
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"modify_conflict".to_vec(), b"source_value".to_vec()); // modified
         source_tree.insert(b"new_in_source".to_vec(), b"source_addition".to_vec()); // added
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree - modify the key differently
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"modify_conflict".to_vec(), b"dest_value".to_vec()); // modified differently
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge
         let merge_tree = ProllyTree::new(storage, config);
@@ -1730,7 +1761,9 @@ mod tests {
         base_tree.insert(b"key1".to_vec(), b"value1".to_vec());
         base_tree.insert(b"key2".to_vec(), b"value2".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Both source and destination make the same changes
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
@@ -1738,14 +1771,18 @@ mod tests {
         source_tree.insert(b"key2".to_vec(), b"value2".to_vec()); // unchanged
         source_tree.insert(b"key3".to_vec(), b"same_addition".to_vec()); // both add same key-value
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"key1".to_vec(), b"same_new_value".to_vec()); // same modification
         dest_tree.insert(b"key2".to_vec(), b"value2".to_vec()); // unchanged
         dest_tree.insert(b"key3".to_vec(), b"same_addition".to_vec()); // same addition
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge
         let merge_tree = ProllyTree::new(storage, config);
@@ -1785,7 +1822,9 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"existing".to_vec(), b"value".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create merge results (no conflicts)
         let merge_results = vec![
@@ -1826,7 +1865,9 @@ mod tests {
         // Create base tree
         let base_tree = ProllyTree::new(storage.clone(), config.clone());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create merge results with conflicts
         let merge_results = vec![
@@ -1858,21 +1899,27 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"shared".to_vec(), b"original".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree with additions
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"shared".to_vec(), b"original".to_vec());
         source_tree.insert(b"from_source".to_vec(), b"source_value".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree with different additions
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"shared".to_vec(), b"original".to_vec());
         dest_tree.insert(b"from_dest".to_vec(), b"dest_value".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge_trees (should succeed - no conflicts)
         let merge_tree = ProllyTree::new(storage, config);
@@ -1896,19 +1943,25 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"conflict_key".to_vec(), b"original".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree with modification
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"conflict_key".to_vec(), b"source_value".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree with different modification
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"conflict_key".to_vec(), b"dest_value".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge_trees (should fail due to conflict)
         let merge_tree = ProllyTree::new(storage, config);
@@ -1941,21 +1994,27 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"shared".to_vec(), b"base_value".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree with modifications
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"shared".to_vec(), b"source_value".to_vec());
         source_tree.insert(b"source_only".to_vec(), b"source_only_value".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree with conflicting modifications
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"shared".to_vec(), b"dest_value".to_vec());
         dest_tree.insert(b"dest_only".to_vec(), b"dest_only_value".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge with ignore conflicts resolver
         let merge_tree = ProllyTree::new(storage, config);
@@ -1989,19 +2048,25 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"conflict_key".to_vec(), b"base_value".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"conflict_key".to_vec(), b"source_value".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"conflict_key".to_vec(), b"dest_value".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge with take source resolver
         let merge_tree = ProllyTree::new(storage, config);
@@ -2030,19 +2095,25 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"conflict_key".to_vec(), b"base_value".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"conflict_key".to_vec(), b"source_value".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"conflict_key".to_vec(), b"dest_value".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Perform merge with take destination resolver
         let merge_tree = ProllyTree::new(storage, config);
@@ -2069,20 +2140,26 @@ mod tests {
         let mut base_tree = ProllyTree::new(storage.clone(), config.clone());
         base_tree.insert(b"conflict_key".to_vec(), b"base_value".to_vec());
         let base_root = base_tree.get_root_hash().unwrap();
-        storage.insert_node(base_root.clone(), base_tree.root.clone());
+        storage
+            .insert_node(base_root.clone(), base_tree.root.clone())
+            .unwrap();
 
         // Create source tree
         let mut source_tree = ProllyTree::new(storage.clone(), config.clone());
         source_tree.insert(b"conflict_key".to_vec(), b"source_value".to_vec());
         source_tree.insert(b"new_key".to_vec(), b"new_value".to_vec());
         let source_root = source_tree.get_root_hash().unwrap();
-        storage.insert_node(source_root.clone(), source_tree.root.clone());
+        storage
+            .insert_node(source_root.clone(), source_tree.root.clone())
+            .unwrap();
 
         // Create destination tree
         let mut dest_tree = ProllyTree::new(storage.clone(), config.clone());
         dest_tree.insert(b"conflict_key".to_vec(), b"dest_value".to_vec());
         let dest_root = dest_tree.get_root_hash().unwrap();
-        storage.insert_node(dest_root.clone(), dest_tree.root.clone());
+        storage
+            .insert_node(dest_root.clone(), dest_tree.root.clone())
+            .unwrap();
 
         // Use convenience method
         let merge_tree = ProllyTree::new(storage, config);

@@ -12,8 +12,31 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use crate::storage::StorageError;
 use thiserror::Error;
 
+/// Unified error type that bridges all error domains in the crate.
+///
+/// Use this at API boundaries where errors from different subsystems
+/// (tree operations, storage backends, git versioning) may need to be
+/// returned through a single `Result` type.
+#[derive(Error, Debug)]
+pub enum ProllyError {
+    /// An error from core tree operations (encoding, schema, etc.).
+    #[error(transparent)]
+    Tree(#[from] ProllyTreeError),
+
+    /// An error from a storage backend (I/O, serialization, etc.).
+    #[error(transparent)]
+    Storage(#[from] StorageError),
+
+    /// An error from the git versioning layer.
+    #[cfg(feature = "git")]
+    #[error(transparent)]
+    Git(#[from] crate::git::types::GitKvError),
+}
+
+/// Error type for core tree operations (encoding, schema, etc.).
 #[derive(Error, Debug)]
 pub enum ProllyTreeError {
     #[error("Arrow error: {0}")]

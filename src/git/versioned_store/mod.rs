@@ -195,3 +195,132 @@ pub type ThreadSafeFileVersionedKvStore<const N: usize> =
 #[cfg(feature = "rocksdb_storage")]
 pub type ThreadSafeRocksDBVersionedKvStore<const N: usize> =
     ThreadSafeVersionedKvStore<N, RocksDBNodeStorage<N>>;
+
+// ---------------------------------------------------------------------------
+// StoreFactory — simplified API for creating versioned stores
+// ---------------------------------------------------------------------------
+
+use std::path::Path;
+
+/// Factory for creating versioned key-value stores with different backends.
+///
+/// `StoreFactory` provides a single entry-point for store construction,
+/// hiding the generic type aliases behind descriptive method names.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use prollytree::git::versioned_store::StoreFactory;
+///
+/// // In-memory (volatile, fastest) — great for testing or caching
+/// let store = StoreFactory::memory::<32>("/tmp/my-repo/data")?;
+///
+/// // Git-backed (persistent, versioned) — production use
+/// let store = StoreFactory::git::<32>("/tmp/my-repo/data")?;
+///
+/// // Thread-safe Git-backed — multi-threaded / async access
+/// let store = StoreFactory::git_threadsafe::<32>("/tmp/my-repo/data")?;
+/// ```
+pub struct StoreFactory;
+
+impl StoreFactory {
+    /// Create an **in-memory** versioned store (volatile, fastest).
+    ///
+    /// Data lives only in process memory and is lost on drop.
+    /// Use for: testing, caching, ephemeral workloads.
+    pub fn memory<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<InMemoryVersionedKvStore<N>, GitKvError> {
+        InMemoryVersionedKvStore::init(path)
+    }
+
+    /// Open an existing **in-memory** versioned store.
+    pub fn memory_open<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<InMemoryVersionedKvStore<N>, GitKvError> {
+        InMemoryVersionedKvStore::open(path)
+    }
+
+    /// Create a **file-backed** versioned store (persistent, no git history).
+    ///
+    /// Nodes are stored as individual files on disk.
+    /// Use for: simple persistence without version control.
+    pub fn file<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<FileVersionedKvStore<N>, GitKvError> {
+        FileVersionedKvStore::init(path)
+    }
+
+    /// Open an existing **file-backed** versioned store.
+    pub fn file_open<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<FileVersionedKvStore<N>, GitKvError> {
+        FileVersionedKvStore::open(path)
+    }
+
+    /// Create a **Git-backed** versioned store (persistent, versioned).
+    ///
+    /// Nodes are stored as Git blob objects with full version history.
+    /// Use for: production workloads requiring versioning and branching.
+    pub fn git<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<GitVersionedKvStore<N>, GitKvError> {
+        GitVersionedKvStore::init(path)
+    }
+
+    /// Open an existing **Git-backed** versioned store.
+    pub fn git_open<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<GitVersionedKvStore<N>, GitKvError> {
+        GitVersionedKvStore::open(path)
+    }
+
+    /// Create a **thread-safe Git-backed** versioned store.
+    ///
+    /// Wraps the store in `Arc<Mutex<..>>` for safe multi-threaded access.
+    /// Use for: multi-threaded applications, async runtimes, shared state.
+    pub fn git_threadsafe<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<ThreadSafeGitVersionedKvStore<N>, GitKvError> {
+        ThreadSafeGitVersionedKvStore::init(path)
+    }
+
+    /// Open an existing **thread-safe Git-backed** versioned store.
+    pub fn git_threadsafe_open<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<ThreadSafeGitVersionedKvStore<N>, GitKvError> {
+        ThreadSafeGitVersionedKvStore::open(path)
+    }
+
+    /// Create a **thread-safe in-memory** versioned store.
+    ///
+    /// Use for: multi-threaded testing or caching scenarios.
+    pub fn memory_threadsafe<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<ThreadSafeInMemoryVersionedKvStore<N>, GitKvError> {
+        ThreadSafeInMemoryVersionedKvStore::init(path)
+    }
+
+    /// Open an existing **thread-safe in-memory** versioned store.
+    pub fn memory_threadsafe_open<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<ThreadSafeInMemoryVersionedKvStore<N>, GitKvError> {
+        ThreadSafeInMemoryVersionedKvStore::open(path)
+    }
+
+    /// Create a **thread-safe file-backed** versioned store.
+    ///
+    /// Use for: multi-threaded applications with simple file persistence.
+    pub fn file_threadsafe<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<ThreadSafeFileVersionedKvStore<N>, GitKvError> {
+        ThreadSafeFileVersionedKvStore::init(path)
+    }
+
+    /// Open an existing **thread-safe file-backed** versioned store.
+    pub fn file_threadsafe_open<const N: usize, P: AsRef<Path>>(
+        path: P,
+    ) -> Result<ThreadSafeFileVersionedKvStore<N>, GitKvError> {
+        ThreadSafeFileVersionedKvStore::open(path)
+    }
+}

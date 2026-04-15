@@ -991,7 +991,9 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
         std::fs::create_dir_all(&file_storage_path).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to create file storage directory: {e}"))
         })?;
-        let storage = FileNodeStorage::<N>::new(file_storage_path);
+        let storage = FileNodeStorage::<N>::new(file_storage_path).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create file storage: {e}"))
+        })?;
 
         // Create ProllyTree with default config
         let config: TreeConfig<N> = TreeConfig::default();
@@ -1060,7 +1062,9 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
             ));
         }
 
-        let storage = FileNodeStorage::<N>::new(file_storage_path.clone());
+        let storage = FileNodeStorage::<N>::new(file_storage_path.clone()).map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to create file storage: {e}"))
+        })?;
 
         // Load tree configuration from dataset directory (not from storage)
         // Config file must exist for open() - use init() to create new stores
@@ -1083,7 +1087,9 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
                 existing_tree
             } else {
                 // Create new storage instance since the original was consumed
-                let new_storage = FileNodeStorage::<N>::new(file_storage_path);
+                let new_storage = FileNodeStorage::<N>::new(file_storage_path).map_err(|e| {
+                    GitKvError::GitObjectError(format!("Failed to create file storage: {e}"))
+                })?;
                 ProllyTree::new(new_storage, config)
             };
 
