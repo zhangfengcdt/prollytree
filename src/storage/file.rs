@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::NodeStorage;
+use super::{NodeStorage, StorageError};
 
 #[derive(Clone, Debug)]
 pub struct FileNodeStorage<const N: usize> {
@@ -27,9 +27,9 @@ pub struct FileNodeStorage<const N: usize> {
 }
 
 impl<const N: usize> FileNodeStorage<N> {
-    pub fn new(storage_dir: PathBuf) -> Self {
-        fs::create_dir_all(&storage_dir).unwrap();
-        FileNodeStorage { storage_dir }
+    pub fn new(storage_dir: PathBuf) -> Result<Self, StorageError> {
+        fs::create_dir_all(&storage_dir)?;
+        Ok(FileNodeStorage { storage_dir })
     }
 
     fn node_path(&self, hash: &ValueDigest<N>) -> PathBuf {
@@ -45,47 +45,50 @@ impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
     fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<Arc<ProllyNode<N>>> {
         let path = self.node_path(hash);
         if path.exists() {
-            let mut file = File::open(path).unwrap();
+            let mut file = File::open(path).ok()?;
             let mut data = Vec::new();
-            file.read_to_end(&mut data).unwrap();
+            file.read_to_end(&mut data).ok()?;
             // split/merged are #[serde(skip)] so they deserialize as false.
-            let node: ProllyNode<N> = bincode::deserialize(&data).unwrap();
+            let node: ProllyNode<N> = bincode::deserialize(&data).ok()?;
             Some(Arc::new(node))
         } else {
             None
         }
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
+    fn insert_node(
+        &mut self,
+        hash: ValueDigest<N>,
+        node: ProllyNode<N>,
+    ) -> Result<(), StorageError> {
         let path = self.node_path(&hash);
-        let data = bincode::serialize(&node).unwrap();
-        let mut file = File::create(path).unwrap();
-        file.write_all(&data).unwrap();
-        Some(())
+        let data = bincode::serialize(&node)?;
+        let mut file = File::create(path)?;
+        file.write_all(&data)?;
+        Ok(())
     }
 
-    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
         let path = self.node_path(hash);
         if path.exists() {
-            fs::remove_file(path).unwrap();
-            Some(())
-        } else {
-            None
+            fs::remove_file(path)?;
         }
+        Ok(())
     }
 
     fn save_config(&self, key: &str, config: &[u8]) {
         let path = self.config_path(key);
-        let mut file = File::create(path).unwrap();
-        file.write_all(config).unwrap();
+        if let Ok(mut file) = File::create(path) {
+            let _ = file.write_all(config);
+        }
     }
 
     fn get_config(&self, key: &str) -> Option<Vec<u8>> {
         let path = self.config_path(key);
         if path.exists() {
-            let mut file = File::open(path).unwrap();
+            let mut file = File::open(path).ok()?;
             let mut data = Vec::new();
-            file.read_to_end(&mut data).unwrap();
+            file.read_to_end(&mut data).ok()?;
             Some(data)
         } else {
             None

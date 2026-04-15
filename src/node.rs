@@ -363,7 +363,7 @@ impl<const N: usize> Balanced<N> for ProllyNode<N> {
                 encode_values: self.encode_values.clone(),
             };
             let sibling_hash = sibling.get_hash();
-            storage.insert_node(sibling_hash.clone(), sibling.clone());
+            let _ = storage.insert_node(sibling_hash.clone(), sibling.clone());
             siblings.push((sibling, sibling_hash));
         }
 
@@ -372,7 +372,7 @@ impl<const N: usize> Balanced<N> for ProllyNode<N> {
         if is_root_node {
             // Save the current root node to storage and get its hash
             let original_root_hash = self.get_hash();
-            storage.insert_node(original_root_hash.clone(), self.clone());
+            let _ = storage.insert_node(original_root_hash.clone(), self.clone());
 
             // Create a new root node
             let new_root = ProllyNode {
@@ -411,7 +411,7 @@ impl<const N: usize> Balanced<N> for ProllyNode<N> {
 
             // Persist the current node
             let current_node_hash = self.get_hash();
-            storage.insert_node(current_node_hash.clone(), self.clone());
+            let _ = storage.insert_node(current_node_hash.clone(), self.clone());
         }
     }
 
@@ -701,7 +701,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
 
                 // Save the updated child node back to the storage
                 let new_node_hash = child_node.get_hash().as_bytes().to_vec();
-                storage.insert_node(child_node.get_hash(), child_node.clone());
+                let _ = storage.insert_node(child_node.get_hash(), child_node.clone());
 
                 // Check if the child node has been merged into its parent's next sibling
                 if child_node.merged {
@@ -790,7 +790,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
 
                 // Persist the current node after deletion
                 let current_node_hash = self.get_hash();
-                storage.insert_node(current_node_hash.clone(), self.clone());
+                let _ = storage.insert_node(current_node_hash.clone(), self.clone());
 
                 // Sort the keys and balance the node
                 self.balance(storage, is_root_node, &path_hashes);
@@ -825,7 +825,7 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
 
                 // Save the updated child node back to the storage
                 let new_node_hash = child_node.get_hash().as_bytes().to_vec();
-                storage.insert_node(child_node.get_hash(), child_node.clone());
+                let _ = storage.insert_node(child_node.get_hash(), child_node.clone());
 
                 // Check if the child node has been merged into its parent's next sibling
                 if child_node.merged {
@@ -1157,7 +1157,7 @@ mod tests {
 
         for i in 0..=100 {
             node.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
-            storage.insert_node(node.get_hash(), node.clone());
+            storage.insert_node(node.get_hash(), node.clone()).unwrap();
         }
 
         // Print the tree
@@ -1245,7 +1245,9 @@ mod tests {
 
         for i in 0..=max_key {
             node_ref.insert(vec![i], value_for_all.clone(), &mut storage_ref, Vec::new());
-            storage.insert_node(node_ref.get_hash(), node_ref.clone());
+            storage
+                .insert_node(node_ref.get_hash(), node_ref.clone())
+                .unwrap();
         }
         println!("increasing order: {}", node_ref.traverse(&storage_ref));
 
@@ -1255,8 +1257,8 @@ mod tests {
         // each time an insert is done, the root node hash is updated
         for i in (0..=max_key).rev() {
             node.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
-            storage.insert_node(node.get_hash(), node.clone()); // save the updated root node hash to storage
-                                                                //println!("{}", node.traverse(&storage));
+            storage.insert_node(node.get_hash(), node.clone()).unwrap(); // save the updated root node hash to storage
+                                                                         //println!("{}", node.traverse(&storage));
         }
         println!("decreasing order: {}", node.traverse(&storage));
 
@@ -1275,7 +1277,9 @@ mod tests {
         // Insert elements in increasing order
         for i in 0..=max_key {
             node_ref.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
-            storage.insert_node(node_ref.get_hash(), node_ref.clone());
+            storage
+                .insert_node(node_ref.get_hash(), node_ref.clone())
+                .unwrap();
         }
         println!("inc order: {}", node_ref.traverse(&storage));
 
@@ -1289,7 +1293,7 @@ mod tests {
         // Insert elements in alternating order
         for key in keys {
             node.insert(vec![key], value_for_all.clone(), &mut storage, Vec::new());
-            storage.insert_node(node.get_hash(), node.clone()); // save the updated root node hash to storage
+            storage.insert_node(node.get_hash(), node.clone()).unwrap(); // save the updated root node hash to storage
         }
         println!("alt order: {}", node.traverse(&storage));
 
@@ -1311,7 +1315,9 @@ mod tests {
         // Insert elements in increasing order
         for i in 1..=15 {
             node_ref.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
-            storage.insert_node(node_ref.get_hash(), node_ref.clone());
+            storage
+                .insert_node(node_ref.get_hash(), node_ref.clone())
+                .unwrap();
         }
         println!("inc order: {}", node_ref.traverse(&storage));
 
@@ -1329,7 +1335,7 @@ mod tests {
         // Insert elements in custom order
         for key in custom_keys {
             node.insert(vec![key], value_for_all.clone(), &mut storage, Vec::new());
-            storage.insert_node(node.get_hash(), node.clone()); // save the updated root node hash to storage
+            storage.insert_node(node.get_hash(), node.clone()).unwrap(); // save the updated root node hash to storage
         }
         println!("ctm order: {}", node.traverse(&storage));
 
@@ -1377,7 +1383,7 @@ mod tests {
 
             for key in sequence {
                 node.insert(vec![key as u8], value.clone(), &mut storage, Vec::new());
-                storage.insert_node(node.get_hash(), node.clone());
+                storage.insert_node(node.get_hash(), node.clone()).unwrap();
             }
 
             trees.push(node.traverse(&storage));
@@ -1504,7 +1510,7 @@ mod tests {
         // insert key-value pairs
         for i in 1..=10 {
             node.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
-            storage.insert_node(node.get_hash(), node.clone());
+            storage.insert_node(node.get_hash(), node.clone()).unwrap();
         }
 
         assert_eq!(
@@ -1516,23 +1522,23 @@ mod tests {
 
         // Test deleting existing keys
         assert!(node.delete(&[1], &mut storage, Vec::new()));
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
         assert!(node.find(&[1], &storage).is_none());
 
         assert!(node.delete(&[2], &mut storage, Vec::new()));
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
         assert!(node.find(&[2], &storage).is_none());
 
         assert!(node.delete(&[3], &mut storage, Vec::new()));
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
         assert!(node.find(&[3], &storage).is_none());
 
         assert!(node.delete(&[4], &mut storage, Vec::new()));
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
         assert!(node.find(&[4], &storage).is_none());
 
         assert!(node.delete(&[5], &mut storage, Vec::new()));
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
         assert!(node.find(&[5], &storage).is_none());
 
         assert_eq!(node.traverse(&storage), "[L0:[[6], [7], [8], [9], [10]]]");
@@ -1543,11 +1549,11 @@ mod tests {
 
         // Insert more key-value pairs and delete them to verify tree consistency
         node.insert(vec![7], value_for_all.clone(), &mut storage, Vec::new());
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
         node.insert(vec![8], value_for_all.clone(), &mut storage, Vec::new());
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
         node.insert(vec![9], value_for_all.clone(), &mut storage, Vec::new());
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
 
         assert!(node.delete(&[7], &mut storage, Vec::new()));
         assert!(node.find(&[7], &storage).is_none());
@@ -1591,7 +1597,7 @@ mod tests {
             let node: ProllyNode<32> = ProllyNode::builder().keys(keys).values(values).build();
 
             // Insert the node into storage
-            storage.insert_node(node.get_hash(), node.clone());
+            storage.insert_node(node.get_hash(), node.clone()).unwrap();
 
             // Print chunk content
             println!("{:?}", node.chunk_content());
@@ -1615,7 +1621,7 @@ mod tests {
             .build();
 
         // Insert the node into storage
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
 
         // Print chunk content
         println!("{:?}", node.chunk_content());
@@ -1639,7 +1645,7 @@ mod tests {
         // Insert key-value pairs to trigger a split
         for i in 0..=10 {
             node.insert(vec![i], value_for_all.clone(), &mut storage, Vec::new());
-            storage.insert_node(node.get_hash(), node.clone());
+            storage.insert_node(node.get_hash(), node.clone()).unwrap();
         }
 
         // After 11 insertions, the root should not be a leaf node
@@ -1652,7 +1658,7 @@ mod tests {
 
         // Insert one more key to trigger another split
         node.insert(vec![11], value_for_all.clone(), &mut storage, Vec::new());
-        storage.insert_node(node.get_hash(), node.clone());
+        storage.insert_node(node.get_hash(), node.clone()).unwrap();
 
         // Check that all keys can still be found
         for i in 0..=11 {
@@ -1673,7 +1679,7 @@ mod tests {
         // Insert enough items to trigger splits
         for i in 0..6 {
             node.insert(vec![i], vec![i], &mut storage, Vec::new());
-            storage.insert_node(node.get_hash(), node.clone());
+            storage.insert_node(node.get_hash(), node.clone()).unwrap();
             // Flags should be reset after each operation
             assert!(
                 !node.split,

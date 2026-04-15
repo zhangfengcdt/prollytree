@@ -24,7 +24,7 @@ const DEFAULT_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use super::NodeStorage;
+use super::{NodeStorage, StorageError};
 
 /// Git-backed storage for ProllyTree nodes
 ///
@@ -184,7 +184,11 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         Some(node)
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
+    fn insert_node(
+        &mut self,
+        hash: ValueDigest<N>,
+        node: ProllyNode<N>,
+    ) -> Result<(), StorageError> {
         // Check if this node already exists in our mappings
         let already_exists = self.hash_to_object_id.lock().contains_key(&hash);
 
@@ -192,24 +196,22 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         self.cache.lock().put(hash.clone(), Arc::new(node.clone()));
 
         // Store as Git blob
-        match self.store_node_as_blob(&node) {
-            Ok(blob_id) => {
-                // Store the mapping between ProllyTree hash and Git object ID
-                self.hash_to_object_id.lock().insert(hash.clone(), blob_id);
+        let blob_id = self
+            .store_node_as_blob(&node)
+            .map_err(|e| StorageError::Other(e.to_string()))?;
 
-                // Only persist the mapping to filesystem if it's a new node
-                // This prevents duplicate entries when reloading trees for read-only operations
-                if !already_exists {
-                    self.save_hash_mapping(&hash, &blob_id);
-                }
+        // Store the mapping between ProllyTree hash and Git object ID
+        self.hash_to_object_id.lock().insert(hash.clone(), blob_id);
 
-                Some(())
-            }
-            Err(_) => None,
+        // Only persist the mapping to filesystem if it's a new node
+        if !already_exists {
+            self.save_hash_mapping(&hash, &blob_id);
         }
+
+        Ok(())
     }
 
-    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
         // Remove from cache
         self.cache.lock().pop(hash);
 
@@ -217,9 +219,8 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         self.hash_to_object_id.lock().remove(hash);
 
         // Note: Git doesn't really "delete" objects - they become unreachable
-        // and will be garbage collected eventually. For now, we'll just consider
-        // this a successful operation.
-        Some(())
+        // and will be garbage collected eventually.
+        Ok(())
     }
 
     fn save_config(&self, key: &str, config: &[u8]) {
@@ -350,7 +351,7 @@ mod tests {
         let hash = node.get_hash();
 
         // Test insert
-        assert!(storage.insert_node(hash.clone(), node.clone()).is_some());
+        storage.insert_node(hash.clone(), node.clone()).unwrap();
 
         // Test get
         let retrieved = storage.get_node_by_hash(&hash);
@@ -362,7 +363,7 @@ mod tests {
         assert_eq!(retrieved_node.is_leaf, node.is_leaf);
 
         // Test delete
-        assert!(storage.delete_node(&hash).is_some());
+        storage.delete_node(&hash).unwrap();
     }
 
     #[test]
@@ -376,7 +377,7 @@ mod tests {
         let hash1 = node1.get_hash();
 
         // Insert and verify it's cached
-        storage.insert_node(hash1.clone(), node1.clone());
+        storage.insert_node(hash1.clone(), node1.clone()).unwrap();
         assert!(storage.cache.lock().contains(&hash1));
 
         // Get from cache

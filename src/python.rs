@@ -137,7 +137,9 @@ impl PyProllyTree {
             "file" => {
                 let path =
                     path.ok_or_else(|| PyValueError::new_err("File storage requires a path"))?;
-                let storage = FileNodeStorage::<32>::new(PathBuf::from(path));
+                let storage = FileNodeStorage::<32>::new(PathBuf::from(path)).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to create file storage: {e}"))
+                })?;
                 let tree = ProllyTree::<32, _>::new(storage, tree_config);
                 ProllyTreeWrapper::File(tree)
             }

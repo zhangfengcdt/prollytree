@@ -18,7 +18,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::NodeStorage;
+use super::{NodeStorage, StorageError};
 
 /// An implementation of `NodeStorage` that stores nodes in a HashMap.
 ///
@@ -60,17 +60,21 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
         self.map.get(hash).cloned()
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, mut node: ProllyNode<N>) -> Option<()> {
+    fn insert_node(
+        &mut self,
+        hash: ValueDigest<N>,
+        mut node: ProllyNode<N>,
+    ) -> Result<(), StorageError> {
         // Clear transient flags before storing so reads never see stale state.
         node.split = false;
         node.merged = false;
         self.map.insert(hash, Arc::new(node));
-        Some(())
+        Ok(())
     }
 
-    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
         self.map.remove(hash);
-        Some(())
+        Ok(())
     }
 
     fn save_config(&self, key: &str, config: &[u8]) {

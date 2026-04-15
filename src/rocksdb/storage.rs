@@ -14,7 +14,7 @@ limitations under the License.
 
 use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
-use crate::storage::NodeStorage;
+use crate::storage::{NodeStorage, StorageError};
 use lru::LruCache;
 use rocksdb::{
     BlockBasedOptions, Cache, DBCompressionType, Options, SliceTransform, WriteBatch, DB,
@@ -160,33 +160,31 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
         }
     }
 
-    fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
+    fn insert_node(
+        &mut self,
+        hash: ValueDigest<N>,
+        node: ProllyNode<N>,
+    ) -> Result<(), StorageError> {
         // Update cache
         self.cache.lock().put(hash.clone(), Arc::new(node.clone()));
 
         // Serialize and store in RocksDB
-        match bincode::serialize(&node) {
-            Ok(data) => {
-                let key = Self::node_key(&hash);
-                match self.db.put(&key, data) {
-                    Ok(_) => Some(()),
-                    Err(_) => None,
-                }
-            }
-            Err(_) => None,
-        }
+        let data = bincode::serialize(&node)?;
+        let key = Self::node_key(&hash);
+        self.db
+            .put(&key, data)
+            .map_err(|e| StorageError::Other(e.to_string()))
     }
 
-    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Option<()> {
+    fn delete_node(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
         // Remove from cache
         self.cache.lock().pop(hash);
 
         // Delete from RocksDB
         let key = Self::node_key(hash);
-        match self.db.delete(&key) {
-            Ok(_) => Some(()),
-            Err(_) => None,
-        }
+        self.db
+            .delete(&key)
+            .map_err(|e| StorageError::Other(e.to_string()))
     }
 
     fn save_config(&self, key: &str, config: &[u8]) {
@@ -289,7 +287,7 @@ mod tests {
         let hash = node.get_hash();
 
         // Test insert
-        assert!(storage.insert_node(hash.clone(), node.clone()).is_some());
+        storage.insert_node(hash.clone(), node.clone()).unwrap();
 
         // Test get
         let retrieved = storage.get_node_by_hash(&hash);
@@ -301,7 +299,7 @@ mod tests {
         assert_eq!(retrieved_node.is_leaf, node.is_leaf);
 
         // Test delete
-        assert!(storage.delete_node(&hash).is_some());
+        storage.delete_node(&hash).unwrap();
         assert!(storage.get_node_by_hash(&hash).is_none());
     }
 

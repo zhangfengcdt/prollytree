@@ -64,7 +64,8 @@ fn bench_storage_insert(c: &mut Criterion) {
             |b, (keys, values)| {
                 let temp_dir = TempDir::new().unwrap();
                 b.iter(|| {
-                    let storage = FileNodeStorage::<32>::new(temp_dir.path().to_path_buf());
+                    let storage =
+                        FileNodeStorage::<32>::new(temp_dir.path().to_path_buf()).unwrap();
                     let config = TreeConfig::<32>::default();
                     let mut tree = ProllyTree::new(storage, config);
 
@@ -116,7 +117,7 @@ fn bench_storage_read(c: &mut Criterion) {
 
         // Prepare File tree
         let file_dir = TempDir::new().unwrap();
-        let file_storage = FileNodeStorage::<32>::new(file_dir.path().to_path_buf());
+        let file_storage = FileNodeStorage::<32>::new(file_dir.path().to_path_buf()).unwrap();
         let mut file_tree = ProllyTree::new(file_storage, config.clone());
         for (key, value) in keys.iter().zip(values.iter()) {
             file_tree.insert(key.clone(), value.clone());
@@ -255,7 +256,9 @@ fn bench_node_storage_direct(c: &mut Criterion) {
         b.iter(|| {
             let mut storage = InMemoryNodeStorage::<32>::new();
             for (hash, node) in &nodes {
-                storage.insert_node(black_box(hash.clone()), black_box(node.clone()));
+                storage
+                    .insert_node(black_box(hash.clone()), black_box(node.clone()))
+                    .unwrap();
             }
         });
     });
@@ -267,7 +270,9 @@ fn bench_node_storage_direct(c: &mut Criterion) {
             let mut storage = RocksDBNodeStorage::<32>::new(temp_dir.path().join("rocksdb"))
                 .expect("Failed to create RocksDB storage");
             for (hash, node) in &nodes {
-                storage.insert_node(black_box(hash.clone()), black_box(node.clone()));
+                storage
+                    .insert_node(black_box(hash.clone()), black_box(node.clone()))
+                    .unwrap();
             }
         });
     });
@@ -275,7 +280,9 @@ fn bench_node_storage_direct(c: &mut Criterion) {
     // Benchmark direct node reads
     let mut inmem_storage = InMemoryNodeStorage::<32>::new();
     for (hash, node) in &nodes {
-        inmem_storage.insert_node(hash.clone(), node.clone());
+        inmem_storage
+            .insert_node(hash.clone(), node.clone())
+            .unwrap();
     }
 
     group.bench_function("InMemory_read_nodes", |b| {
@@ -292,7 +299,9 @@ fn bench_node_storage_direct(c: &mut Criterion) {
         let mut rocksdb_storage =
             RocksDBNodeStorage::<32>::new(temp_dir.path().join("rocksdb")).unwrap();
         for (hash, node) in &nodes {
-            rocksdb_storage.insert_node(hash.clone(), node.clone());
+            rocksdb_storage
+                .insert_node(hash.clone(), node.clone())
+                .unwrap();
         }
 
         group.bench_function("RocksDB_read_nodes", |b| {
