@@ -17,16 +17,24 @@ mod proof_tests {
     use crate::git::versioned_store::{GitVersionedKvStore, HistoricalAccess};
     use tempfile::TempDir;
 
-    /// RAII guard that restores the working directory on drop (even on panic).
+    /// RAII guard that holds the global CWD mutex and restores the working
+    /// directory on drop. This prevents parallel tests from racing on CWD.
     struct CwdGuard {
         original: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl CwdGuard {
         fn set(path: &std::path::Path) -> Self {
+            let lock = crate::git::versioned_store::cwd_lock()
+                .lock()
+                .expect("CWD mutex poisoned");
             let original = std::env::current_dir().expect("Failed to get current dir");
             std::env::set_current_dir(path).expect("Failed to change directory");
-            Self { original }
+            Self {
+                original,
+                _lock: lock,
+            }
         }
     }
 
@@ -218,6 +226,33 @@ mod tests {
     };
     use tempfile::TempDir;
 
+    /// RAII guard that holds the global CWD mutex and restores the working
+    /// directory on drop. This prevents parallel tests from racing on CWD.
+    struct CwdGuard {
+        original: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let lock = crate::git::versioned_store::cwd_lock()
+                .lock()
+                .expect("CWD mutex poisoned");
+            let original = std::env::current_dir().expect("Failed to get current dir");
+            std::env::set_current_dir(path).expect("Failed to change directory");
+            Self {
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
     #[test]
     fn test_versioned_store_init() {
         let temp_dir = TempDir::new().unwrap();
@@ -226,6 +261,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
         let store = GitVersionedKvStore::<32>::init(&dataset_dir);
         assert!(store.is_ok());
     }
@@ -238,6 +274,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
         // Test insert and get
@@ -263,6 +300,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
         // Stage changes
@@ -293,6 +331,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -346,6 +385,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -416,6 +456,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -468,6 +509,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         // First init - creates new store
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
@@ -508,6 +550,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -534,6 +577,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = InMemoryVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -578,6 +622,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -643,6 +688,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -680,6 +726,7 @@ mod tests {
         // Create subdirectory for dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         // Test InMemory storage
         {
@@ -770,6 +817,7 @@ mod tests {
         gix::init(temp_dir.path()).unwrap();
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -1003,6 +1051,7 @@ mod tests {
         gix::init(temp_dir.path()).unwrap();
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -1100,6 +1149,7 @@ mod tests {
         gix::init(temp_dir.path()).unwrap();
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -1224,6 +1274,7 @@ mod tests {
         gix::init(temp_dir.path()).unwrap();
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -1317,6 +1368,7 @@ mod tests {
         // Create a subdirectory for the dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let store = ThreadSafeGitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -1349,6 +1401,7 @@ mod tests {
         // Create a subdirectory for the dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let store = Arc::new(ThreadSafeGitVersionedKvStore::<32>::init(&dataset_dir).unwrap());
 
@@ -1406,6 +1459,7 @@ mod tests {
         // Create a subdirectory for the dataset
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 
@@ -1505,6 +1559,7 @@ mod tests {
 
         let dataset_dir = temp_dir.path().join("dataset");
         std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
 
         let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
 

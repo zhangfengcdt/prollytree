@@ -57,9 +57,26 @@ limitations under the License.
 mod backends;
 mod core;
 mod history;
+pub mod namespaced;
+#[cfg(test)]
+mod namespaced_tests;
 #[cfg(test)]
 mod tests;
 mod thread_safe;
+
+/// Global mutex to serialize CWD access in tests.
+///
+/// Many tests change the process-wide working directory via `CwdGuard`.
+/// Without serialization, parallel tests race on `std::env::set_current_dir`
+/// and fail intermittently. Both `tests.rs` and `namespaced_tests.rs` share
+/// this mutex to prevent those races.
+#[cfg(test)]
+pub(super) static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(super) fn cwd_lock() -> &'static std::sync::Mutex<()> {
+    CWD_LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
 
 use crate::git::metadata::{GitMetadataBackend, MetadataBackend};
 use crate::git::types::*;
@@ -195,6 +212,20 @@ pub type ThreadSafeFileVersionedKvStore<const N: usize> =
 #[cfg(feature = "rocksdb_storage")]
 pub type ThreadSafeRocksDBVersionedKvStore<const N: usize> =
     ThreadSafeVersionedKvStore<N, RocksDBNodeStorage<N>>;
+
+// ---------------------------------------------------------------------------
+// Re-export namespaced types
+// ---------------------------------------------------------------------------
+
+pub use namespaced::{
+    FileNamespacedKvStore, GitNamespacedKvStore, InMemoryNamespacedKvStore, MigrationReport,
+    NamespaceEntry, NamespaceHandle, NamespacedKvStore, StoreFormatVersion,
+    ThreadSafeGitNamespacedKvStore, ThreadSafeInMemoryNamespacedKvStore,
+    ThreadSafeNamespacedKvStore, DEFAULT_NAMESPACE,
+};
+
+#[cfg(feature = "rocksdb_storage")]
+pub use namespaced::RocksDBNamespacedKvStore;
 
 // ---------------------------------------------------------------------------
 // StoreFactory — simplified API for creating versioned stores

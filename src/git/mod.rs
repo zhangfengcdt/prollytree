@@ -27,7 +27,9 @@ pub use types::{
     MergeResult,
 };
 pub use versioned_store::{
-    GitVersionedKvStore, ThreadSafeFileVersionedKvStore, ThreadSafeGitVersionedKvStore,
-    ThreadSafeInMemoryVersionedKvStore, ThreadSafeVersionedKvStore, VersionedKvStore,
+    GitNamespacedKvStore, GitVersionedKvStore, InMemoryNamespacedKvStore, NamespacedKvStore,
+    ThreadSafeFileVersionedKvStore, ThreadSafeGitNamespacedKvStore, ThreadSafeGitVersionedKvStore,
+    ThreadSafeInMemoryVersionedKvStore, ThreadSafeNamespacedKvStore, ThreadSafeVersionedKvStore,
+    VersionedKvStore,
 };
 pub use worktree::{WorktreeInfo, WorktreeManager, WorktreeVersionedKvStore};

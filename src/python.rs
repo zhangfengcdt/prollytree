@@ -25,8 +25,8 @@ use crate::{
     git::{
         types::{DiffOperation, StorageBackend},
         versioned_store::{
-            FileVersionedKvStore, GitVersionedKvStore, HistoricalAccess, HistoricalCommitAccess,
-            InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
+            FileVersionedKvStore, GitNamespacedKvStore, GitVersionedKvStore, HistoricalAccess,
+            HistoricalCommitAccess, InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
         },
     },
     proof::Proof,
@@ -1867,6 +1867,252 @@ fn sql_value_to_json(value: &SqlValue) -> serde_json::Value {
     }
 }
 
+// ---------------------------------------------------------------------------
+// NamespacedKvStore Python bindings
+// ---------------------------------------------------------------------------
+
+/// Python wrapper for the namespace-aware versioned key-value store.
+///
+/// Each namespace is backed by its own ProllyTree subtree, enabling O(1) change
+/// detection, efficient namespace-scoped operations, and clean isolation.
+#[pyclass(name = "NamespacedKvStore")]
+struct PyNamespacedKvStore {
+    inner: Arc<Mutex<GitNamespacedKvStore<32>>>,
+}
+
+#[pymethods]
+impl PyNamespacedKvStore {
+    /// Create a new NamespacedKvStore (initializes a new Git repository dataset).
+    #[new]
+    fn new(path: String) -> PyResult<Self> {
+        let store = GitNamespacedKvStore::<32>::init(&path).map_err(|e| {
+            PyValueError::new_err(format!("Failed to initialize NamespacedKvStore: {e}"))
+        })?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(store)),
+        })
+    }
+
+    /// Open an existing NamespacedKvStore (auto-detects V1/V2 format).
+    #[staticmethod]
+    fn open(path: String) -> PyResult<Self> {
+        let store = GitNamespacedKvStore::<32>::open(&path)
+            .map_err(|e| PyValueError::new_err(format!("Failed to open NamespacedKvStore: {e}")))?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(store)),
+        })
+    }
+
+    // -- Namespace-scoped operations --
+
+    /// Insert a key-value pair into a specific namespace.
+    fn ns_insert(
+        &self,
+        namespace: &str,
+        key: &Bound<'_, PyBytes>,
+        value: &Bound<'_, PyBytes>,
+    ) -> PyResult<()> {
+        let mut store = self.inner.lock();
+        store
+            .namespace(namespace)
+            .insert(key.as_bytes().to_vec(), value.as_bytes().to_vec())
+            .map_err(|e| PyValueError::new_err(format!("Insert failed: {e}")))
+    }
+
+    /// Get a value by key from a specific namespace.
+    fn ns_get<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: &str,
+        key: &Bound<'py, PyBytes>,
+    ) -> PyResult<Option<Py<PyBytes>>> {
+        let mut store = self.inner.lock();
+        Ok(store
+            .namespace(namespace)
+            .get(key.as_bytes())
+            .map(|v| PyBytes::new_bound(py, &v).into()))
+    }
+
+    /// Delete a key from a specific namespace.
+    fn ns_delete(&self, namespace: &str, key: &Bound<'_, PyBytes>) -> PyResult<bool> {
+        let mut store = self.inner.lock();
+        store
+            .namespace(namespace)
+            .delete(key.as_bytes())
+            .map_err(|e| PyValueError::new_err(format!("Delete failed: {e}")))
+    }
+
+    /// List all keys in a specific namespace.
+    fn ns_list_keys<'py>(&self, py: Python<'py>, namespace: &str) -> PyResult<Py<PyList>> {
+        let mut store = self.inner.lock();
+        let keys = store.namespace(namespace).list_keys();
+        let py_keys: Vec<Py<PyBytes>> = keys
+            .iter()
+            .map(|k| PyBytes::new_bound(py, k).into())
+            .collect();
+        Ok(PyList::new_bound(py, &py_keys).into())
+    }
+
+    // -- Registry operations --
+
+    /// List all namespace names.
+    fn list_namespaces(&self) -> Vec<String> {
+        self.inner.lock().list_namespaces()
+    }
+
+    /// Delete an entire namespace.
+    fn delete_namespace(&self, namespace: &str) -> PyResult<bool> {
+        self.inner
+            .lock()
+            .delete_namespace(namespace)
+            .map_err(|e| PyValueError::new_err(format!("Delete namespace failed: {e}")))
+    }
+
+    /// Get the root hash for a namespace (O(1) lookup).
+    fn get_namespace_root_hash<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: &str,
+    ) -> Option<Py<PyBytes>> {
+        self.inner
+            .lock()
+            .get_namespace_root_hash(namespace)
+            .map(|h| PyBytes::new_bound(py, h.as_bytes()).into())
+    }
+
+    /// Check if a namespace changed between two commits.
+    fn namespace_changed(&self, namespace: &str, commit_a: &str, commit_b: &str) -> PyResult<bool> {
+        self.inner
+            .lock()
+            .namespace_changed(namespace, commit_a, commit_b)
+            .map_err(|e| PyValueError::new_err(format!("namespace_changed failed: {e}")))
+    }
+
+    // -- Backward-compatible flat API (default namespace) --
+
+    /// Insert into the default namespace.
+    fn insert(&self, key: &Bound<'_, PyBytes>, value: &Bound<'_, PyBytes>) -> PyResult<()> {
+        self.inner
+            .lock()
+            .insert(key.as_bytes().to_vec(), value.as_bytes().to_vec())
+            .map_err(|e| PyValueError::new_err(format!("Insert failed: {e}")))
+    }
+
+    /// Get from the default namespace.
+    fn get<'py>(
+        &self,
+        py: Python<'py>,
+        key: &Bound<'py, PyBytes>,
+    ) -> PyResult<Option<Py<PyBytes>>> {
+        Ok(self
+            .inner
+            .lock()
+            .get(key.as_bytes())
+            .map(|v| PyBytes::new_bound(py, &v).into()))
+    }
+
+    /// Delete from the default namespace.
+    fn delete(&self, key: &Bound<'_, PyBytes>) -> PyResult<bool> {
+        self.inner
+            .lock()
+            .delete(key.as_bytes())
+            .map_err(|e| PyValueError::new_err(format!("Delete failed: {e}")))
+    }
+
+    /// List keys in the default namespace.
+    fn list_keys<'py>(&self, py: Python<'py>) -> PyResult<Py<PyList>> {
+        let keys = self.inner.lock().list_keys();
+        let py_keys: Vec<Py<PyBytes>> = keys
+            .iter()
+            .map(|k| PyBytes::new_bound(py, k).into())
+            .collect();
+        Ok(PyList::new_bound(py, &py_keys).into())
+    }
+
+    // -- Git operations --
+
+    /// Commit all staged changes across all namespaces.
+    #[pyo3(signature = (message=None))]
+    fn commit(&self, message: Option<&str>) -> PyResult<String> {
+        let msg = message.unwrap_or("commit");
+        self.inner
+            .lock()
+            .commit(msg)
+            .map(|id| id.to_hex().to_string())
+            .map_err(|e| PyValueError::new_err(format!("Commit failed: {e}")))
+    }
+
+    /// Checkout a branch or commit.
+    fn checkout(&self, branch_or_commit: &str) -> PyResult<()> {
+        self.inner
+            .lock()
+            .checkout(branch_or_commit)
+            .map_err(|e| PyValueError::new_err(format!("Checkout failed: {e}")))
+    }
+
+    /// Create a new branch and switch to it.
+    fn branch(&self, name: &str) -> PyResult<()> {
+        self.inner
+            .lock()
+            .create_branch(name)
+            .map_err(|e| PyValueError::new_err(format!("Branch failed: {e}")))
+    }
+
+    /// Get current branch name.
+    #[getter]
+    fn current_branch(&self) -> String {
+        self.inner.lock().current_branch().to_string()
+    }
+
+    /// Get commit history.
+    fn log(&self) -> PyResult<Vec<HashMap<String, String>>> {
+        let history = self
+            .inner
+            .lock()
+            .log()
+            .map_err(|e| PyValueError::new_err(format!("Log failed: {e}")))?;
+        Ok(history
+            .into_iter()
+            .map(|c| {
+                let mut m = HashMap::new();
+                m.insert("id".to_string(), c.id.to_hex().to_string());
+                m.insert("message".to_string(), c.message);
+                m.insert("author".to_string(), c.author);
+                m.insert("timestamp".to_string(), c.timestamp.to_string());
+                m
+            })
+            .collect())
+    }
+
+    /// Migrate a V1 (flat) store to V2 (namespaced) format.
+    fn migrate_v1_to_v2(&self) -> PyResult<HashMap<String, String>> {
+        let report = self
+            .inner
+            .lock()
+            .migrate_v1_to_v2()
+            .map_err(|e| PyValueError::new_err(format!("Migration failed: {e}")))?;
+        let mut m = HashMap::new();
+        m.insert(
+            "keys_migrated".to_string(),
+            report.keys_migrated.to_string(),
+        );
+        m.insert(
+            "namespaces_created".to_string(),
+            report.namespaces_created.join(", "),
+        );
+        Ok(m)
+    }
+
+    fn __repr__(&self) -> String {
+        let store = self.inner.lock();
+        format!(
+            "NamespacedKvStore(namespaces={}, branch='{}')",
+            store.list_namespaces().len(),
+            store.current_branch()
+        )
+    }
+}
+
 #[pymodule]
 fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTreeConfig>()?;
@@ -1877,6 +2123,8 @@ fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDiffOperation>()?;
     m.add_class::<PyKvDiff>()?;
     m.add_class::<PyVersionedKvStore>()?;
+    #[cfg(feature = "git")]
+    m.add_class::<PyNamespacedKvStore>()?;
     #[cfg(feature = "git")]
     m.add_class::<PyWorktreeManager>()?;
     #[cfg(feature = "git")]
