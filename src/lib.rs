@@ -41,6 +41,24 @@ limitations under the License.
 //!
 //! Follow examples in the github repository to get started.
 //!
+//! ## Async/Sync Boundaries
+//!
+//! The crate's core storage layer ([`git::versioned_store`]) is **synchronous** —
+//! all operations perform blocking file I/O through the Git object database.
+//! Higher-level layers bridge this to async consumers:
+//!
+//! | Layer | API | How it calls the sync store |
+//! |-------|-----|-----------------------------|
+//! | [`git::versioned_store`] | Sync | Direct (this is the sync core) |
+//! | [`sql`] (GlueSQL) | Async (`#[async_trait]`) | `tokio::task::spawn_blocking` |
+//! | [`python`] (PyO3) | Sync (Python FFI) | `py.allow_threads` + `Runtime::block_on` |
+//! | `git-prolly` CLI | Sync `main()` | Direct; `Runtime::block_on` for SQL only |
+//!
+//! When writing new async code that calls into the store, use
+//! [`tokio::task::spawn_blocking`] with a cloned
+//! [`ThreadSafeVersionedKvStore`](git::versioned_store::ThreadSafeVersionedKvStore)
+//! handle. See [`git::versioned_store`] module docs for examples.
+//!
 
 #[macro_use]
 pub mod digest;

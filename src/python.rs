@@ -1452,6 +1452,33 @@ impl PyWorktreeVersionedKvStore {
     }
 }
 
+/// Python-exposed SQL store backed by ProllyTree.
+///
+/// # Async/Sync Bridge (Python ↔ Rust ↔ GlueSQL)
+///
+/// Python is single-threaded (GIL), Rust storage is synchronous, and GlueSQL
+/// requires an async runtime. The bridging pattern used here is:
+///
+/// 1. `py.allow_threads()` — releases the Python GIL so other Python threads
+///    can run while Rust executes.
+/// 2. A **per-call** `tokio::runtime::Runtime` is created inside the
+///    GIL-free closure. A per-call runtime avoids lifetime issues with
+///    Python's GIL management and is acceptable because Python-to-Rust calls
+///    are already coarse-grained.
+/// 3. `runtime.block_on(async { ... })` drives the GlueSQL async execution,
+///    which internally uses `spawn_blocking` for the underlying sync store
+///    operations.
+/// 4. `Python::with_gil()` re-acquires the GIL to construct Python return
+///    values.
+///
+/// ```text
+/// Python call (GIL held)
+///   └─ py.allow_threads (GIL released)
+///        └─ tokio::runtime::Runtime::new()
+///             └─ runtime.block_on(async { glue.execute(...).await })
+///                  └─ GlueSQL → ProllyStorage → spawn_blocking → sync store
+///                       └─ Python::with_gil() → return PyObject
+/// ```
 #[cfg(feature = "sql")]
 #[pyclass(name = "ProllySQLStore")]
 struct PyProllySQLStore {
