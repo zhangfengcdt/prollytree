@@ -12,10 +12,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-//! GlueSQL custom storage implementation using ProllyTree
+//! GlueSQL custom storage implementation using ProllyTree.
 //!
-//! This module implements the GlueSQL Store and StoreMut traits to provide
-//! SQL query capabilities over ProllyTree's versioned key-value store.
+//! This module implements the GlueSQL `Store`, `StoreMut`, and `Transaction`
+//! traits to provide SQL query capabilities over ProllyTree's versioned
+//! key-value store.
+//!
+//! # Async/Sync Bridge
+//!
+//! GlueSQL requires async trait implementations (`#[async_trait]`), but
+//! the underlying [`ThreadSafeGitVersionedKvStore`] is fully synchronous
+//! and performs blocking file I/O through the Git object database.
+//!
+//! To avoid blocking the async executor, all store operations are offloaded
+//! to Tokio's blocking thread pool via [`tokio::task::spawn_blocking`].
+//! The [`ThreadSafeGitVersionedKvStore`] is `Clone + Send + Sync` (backed
+//! by `Arc<Mutex<..>>`), so cloning it into `spawn_blocking` closures is
+//! cheap and safe.
+//!
+//! ```text
+//! GlueSQL async query
+//!   └─ ProllyStorage (async trait impl)
+//!        └─ spawn_blocking
+//!             └─ ThreadSafeGitVersionedKvStore (sync, mutex-guarded)
+//!                  └─ Git object database (file I/O)
+//! ```
+//!
+//! [`ThreadSafeGitVersionedKvStore`]: crate::git::versioned_store::ThreadSafeGitVersionedKvStore
 
 #[cfg(feature = "sql")]
 use std::collections::HashMap;
@@ -37,7 +60,13 @@ use gluesql_core::{
 #[cfg(feature = "sql")]
 use crate::git::versioned_store::ThreadSafeGitVersionedKvStore;
 
-/// GlueSQL storage backend using ProllyTree
+/// GlueSQL storage backend using ProllyTree.
+///
+/// Wraps a [`ThreadSafeGitVersionedKvStore`] and implements GlueSQL's async
+/// storage traits. All blocking store operations are offloaded to
+/// [`tokio::task::spawn_blocking`] to keep the async executor responsive.
+///
+/// [`ThreadSafeGitVersionedKvStore`]: crate::git::versioned_store::ThreadSafeGitVersionedKvStore
 #[cfg(feature = "sql")]
 pub struct ProllyStorage<const D: usize> {
     store: ThreadSafeGitVersionedKvStore<D>,
@@ -107,12 +136,20 @@ impl<const D: usize> ProllyStorage<D> {
         }
     }
 
-    /// Commit with a custom message
+    /// Commit with a custom message.
+    ///
+    /// Uses `spawn_blocking` to offload the synchronous git commit to a
+    /// blocking thread, keeping the async executor free.
     pub async fn commit_with_message(&mut self, message: &str) -> Result<()> {
-        // Commit changes to the git repository with custom message
-        self.store
-            .commit(message)
-            .map_err(|e| Error::StorageMsg(format!("Failed to commit: {e}")))?;
+        let store = self.store.clone();
+        let message = message.to_string();
+        tokio::task::spawn_blocking(move || {
+            store
+                .commit(&message)
+                .map_err(|e| Error::StorageMsg(format!("Failed to commit: {e}")))
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))??;
         Ok(())
     }
 }
@@ -137,87 +174,104 @@ impl<const D: usize> Planner for ProllyStorage<D> {}
 #[async_trait]
 impl<const D: usize> Store for ProllyStorage<D> {
     async fn fetch_all_schemas(&self) -> Result<Vec<Schema>> {
-        let all_keys = self
-            .store
-            .list_keys()
-            .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
-        let mut schemas = Vec::new();
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let all_keys = store
+                .list_keys()
+                .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
+            let mut schemas = Vec::new();
 
-        for storage_key in all_keys {
-            if storage_key.ends_with(b":__schema__") {
-                if let Some(schema_data) = self.store.get(&storage_key) {
-                    let schema: Schema = serde_json::from_slice(&schema_data).map_err(|e| {
-                        Error::StorageMsg(format!("Failed to deserialize schema: {e}"))
-                    })?;
-                    schemas.push(schema);
+            for storage_key in all_keys {
+                if storage_key.ends_with(b":__schema__") {
+                    if let Some(schema_data) = store.get(&storage_key) {
+                        let schema: Schema = serde_json::from_slice(&schema_data).map_err(|e| {
+                            Error::StorageMsg(format!("Failed to deserialize schema: {e}"))
+                        })?;
+                        schemas.push(schema);
+                    }
                 }
             }
-        }
 
-        schemas.sort_by(|a, b| a.table_name.cmp(&b.table_name));
-        Ok(schemas)
+            schemas.sort_by(|a, b| a.table_name.cmp(&b.table_name));
+            Ok(schemas)
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))?
     }
 
     async fn fetch_schema(&self, table_name: &str) -> Result<Option<Schema>> {
+        let store = self.store.clone();
         let key = Self::schema_key(table_name);
-
-        if let Some(schema_data) = self.store.get(&key) {
-            let schema: Schema = serde_json::from_slice(&schema_data)
-                .map_err(|e| Error::StorageMsg(format!("Failed to deserialize schema: {e}")))?;
-            Ok(Some(schema))
-        } else {
-            Ok(None)
-        }
+        tokio::task::spawn_blocking(move || {
+            if let Some(schema_data) = store.get(&key) {
+                let schema: Schema = serde_json::from_slice(&schema_data)
+                    .map_err(|e| Error::StorageMsg(format!("Failed to deserialize schema: {e}")))?;
+                Ok(Some(schema))
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))?
     }
 
     async fn fetch_data(&self, table_name: &str, key: &Key) -> Result<Option<DataRow>> {
+        let store = self.store.clone();
         let storage_key = Self::make_storage_key(table_name, key);
-
-        if let Some(row_data) = self.store.get(&storage_key) {
-            let row: DataRow = serde_json::from_slice(&row_data)
-                .map_err(|e| Error::StorageMsg(format!("Failed to deserialize row: {e}")))?;
-            Ok(Some(row))
-        } else {
-            Ok(None)
-        }
+        tokio::task::spawn_blocking(move || {
+            if let Some(row_data) = store.get(&storage_key) {
+                let row: DataRow = serde_json::from_slice(&row_data)
+                    .map_err(|e| Error::StorageMsg(format!("Failed to deserialize row: {e}")))?;
+                Ok(Some(row))
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))?
     }
 
     async fn scan_data<'a>(&'a self, table_name: &str) -> Result<RowIter> {
-        let prefix = format!("{table_name}:");
-        let prefix_bytes = prefix.as_bytes();
+        let store = self.store.clone();
         let table_name = table_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let prefix = format!("{table_name}:");
+            let prefix_bytes = prefix.as_bytes();
 
-        // Get all keys that start with the table prefix
-        let all_keys = self
-            .store
-            .list_keys()
-            .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
-        let mut rows = Vec::new();
+            let all_keys = store
+                .list_keys()
+                .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
+            let mut rows = Vec::new();
 
-        for storage_key in all_keys {
-            if storage_key.starts_with(prefix_bytes) {
-                // Skip schema entries
-                if storage_key.ends_with(b":__schema__") {
-                    continue;
-                }
+            for storage_key in all_keys {
+                if storage_key.starts_with(prefix_bytes) {
+                    if storage_key.ends_with(b":__schema__") {
+                        continue;
+                    }
 
-                if let Some(row_data) = self.store.get(&storage_key) {
-                    let row: DataRow = serde_json::from_slice(&row_data).map_err(|e| {
-                        Error::StorageMsg(format!("Failed to deserialize row: {e}"))
-                    })?;
+                    if let Some(row_data) = store.get(&storage_key) {
+                        let row: DataRow = serde_json::from_slice(&row_data).map_err(|e| {
+                            Error::StorageMsg(format!("Failed to deserialize row: {e}"))
+                        })?;
 
-                    let key = Self::parse_key_from_storage_key(&storage_key, &table_name);
-                    rows.push(Ok((key, row)));
+                        let key = ProllyStorage::<D>::parse_key_from_storage_key(
+                            &storage_key,
+                            &table_name,
+                        );
+                        rows.push(Ok((key, row)));
+                    }
                 }
             }
-        }
 
-        rows.sort_by(|a, b| match (a, b) {
-            (Ok((key_a, _)), Ok((key_b, _))) => key_a.cmp(key_b),
-            _ => std::cmp::Ordering::Equal,
-        });
+            rows.sort_by(|a, b| match (a, b) {
+                (Ok((key_a, _)), Ok((key_b, _))) => key_a.cmp(key_b),
+                _ => std::cmp::Ordering::Equal,
+            });
 
-        Ok(Box::pin(iter(rows)))
+            Ok(Box::pin(iter(rows)) as RowIter)
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))?
     }
 }
 
@@ -225,15 +279,20 @@ impl<const D: usize> Store for ProllyStorage<D> {
 #[async_trait]
 impl<const D: usize> StoreMut for ProllyStorage<D> {
     async fn insert_schema(&mut self, schema: &Schema) -> Result<()> {
+        let store = self.store.clone();
         let key = Self::schema_key(&schema.table_name);
         let schema_data = serde_json::to_vec(schema)
             .map_err(|e| Error::StorageMsg(format!("Failed to serialize schema: {e}")))?;
 
-        self.store
-            .insert(key, schema_data)
-            .map_err(|e| Error::StorageMsg(format!("Failed to insert schema: {e}")))?;
+        tokio::task::spawn_blocking(move || {
+            store
+                .insert(key, schema_data)
+                .map_err(|e| Error::StorageMsg(format!("Failed to insert schema: {e}")))
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))??;
 
-        // Cache the schema
+        // Cache the schema (back on the async task, no I/O)
         self.schemas
             .insert(schema.table_name.clone(), schema.clone());
 
@@ -241,12 +300,16 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
     }
 
     async fn delete_schema(&mut self, table_name: &str) -> Result<()> {
+        let store = self.store.clone();
         let key = Self::schema_key(table_name);
 
-        let _ = self
-            .store
-            .delete(&key)
-            .map_err(|e| Error::StorageMsg(format!("Failed to delete schema: {e}")))?;
+        tokio::task::spawn_blocking(move || {
+            store
+                .delete(&key)
+                .map_err(|e| Error::StorageMsg(format!("Failed to delete schema: {e}")))
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))??;
 
         // Remove from cache
         self.schemas.remove(table_name);
@@ -255,55 +318,68 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
     }
 
     async fn append_data(&mut self, table_name: &str, rows: Vec<DataRow>) -> Result<()> {
-        for row in rows {
-            // Generate a key for the row (using a simple counter approach)
-            let mut counter = 0i64;
-            let storage_key = loop {
-                let key = Key::I64(counter);
-                let storage_key = Self::make_storage_key(table_name, &key);
+        let store = self.store.clone();
+        let table_name = table_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            for row in rows {
+                let mut counter = 0i64;
+                let storage_key = loop {
+                    let key = Key::I64(counter);
+                    let storage_key = ProllyStorage::<D>::make_storage_key(&table_name, &key);
 
-                if self.store.get(&storage_key).is_none() {
-                    break storage_key;
-                }
-                counter += 1;
-            };
+                    if store.get(&storage_key).is_none() {
+                        break storage_key;
+                    }
+                    counter += 1;
+                };
 
-            let row_data = serde_json::to_vec(&row)
-                .map_err(|e| Error::StorageMsg(format!("Failed to serialize row: {e}")))?;
+                let row_data = serde_json::to_vec(&row)
+                    .map_err(|e| Error::StorageMsg(format!("Failed to serialize row: {e}")))?;
 
-            self.store
-                .insert(storage_key, row_data)
-                .map_err(|e| Error::StorageMsg(format!("Failed to insert row: {e}")))?;
-        }
-
-        Ok(())
+                store
+                    .insert(storage_key, row_data)
+                    .map_err(|e| Error::StorageMsg(format!("Failed to insert row: {e}")))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))?
     }
 
     async fn insert_data(&mut self, table_name: &str, rows: Vec<(Key, DataRow)>) -> Result<()> {
-        for (key, row) in rows {
-            let storage_key = Self::make_storage_key(table_name, &key);
-            let row_data = serde_json::to_vec(&row)
-                .map_err(|e| Error::StorageMsg(format!("Failed to serialize row: {e}")))?;
+        let store = self.store.clone();
+        let table_name = table_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            for (key, row) in rows {
+                let storage_key = ProllyStorage::<D>::make_storage_key(&table_name, &key);
+                let row_data = serde_json::to_vec(&row)
+                    .map_err(|e| Error::StorageMsg(format!("Failed to serialize row: {e}")))?;
 
-            self.store
-                .insert(storage_key, row_data)
-                .map_err(|e| Error::StorageMsg(format!("Failed to insert row: {e}")))?;
-        }
-
-        Ok(())
+                store
+                    .insert(storage_key, row_data)
+                    .map_err(|e| Error::StorageMsg(format!("Failed to insert row: {e}")))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))?
     }
 
     async fn delete_data(&mut self, table_name: &str, keys: Vec<Key>) -> Result<()> {
-        for key in keys {
-            let storage_key = Self::make_storage_key(table_name, &key);
+        let store = self.store.clone();
+        let table_name = table_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            for key in keys {
+                let storage_key = ProllyStorage::<D>::make_storage_key(&table_name, &key);
 
-            let _ = self
-                .store
-                .delete(&storage_key)
-                .map_err(|e| Error::StorageMsg(format!("Failed to delete row: {e}")))?;
-        }
-
-        Ok(())
+                store
+                    .delete(&storage_key)
+                    .map_err(|e| Error::StorageMsg(format!("Failed to delete row: {e}")))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))?
     }
 }
 
@@ -315,22 +391,25 @@ impl<const D: usize> Transaction for ProllyStorage<D> {
             return Ok(false);
         }
 
-        // ProllyTree with git backend doesn't support nested transactions
-        // Always return false to indicate no transaction was started
+        // ProllyTree with git backend doesn't support nested transactions.
+        // Always return false to indicate no transaction was started.
         Ok(false)
     }
 
     async fn rollback(&mut self) -> Result<()> {
-        // Since we don't support transactions, rollback is a no-op
-        // In a real implementation, you might want to reset to the last commit
+        // Since we don't support transactions, rollback is a no-op.
         Ok(())
     }
 
     async fn commit(&mut self) -> Result<()> {
-        // Commit changes to the git repository
-        self.store
-            .commit("Transaction commit")
-            .map_err(|e| Error::StorageMsg(format!("Failed to commit transaction: {e}")))?;
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            store
+                .commit("Transaction commit")
+                .map_err(|e| Error::StorageMsg(format!("Failed to commit transaction: {e}")))
+        })
+        .await
+        .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))??;
         Ok(())
     }
 }

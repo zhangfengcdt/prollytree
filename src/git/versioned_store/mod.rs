@@ -12,6 +12,48 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+//! Versioned key-value store backed by Git and ProllyTree.
+//!
+//! # Async/Sync Architecture
+//!
+//! This module provides a **synchronous** API by design. All public methods on
+//! [`VersionedKvStore`] and [`ThreadSafeVersionedKvStore`] are blocking because
+//! the underlying Git object database operations (reads/writes via `gix`) perform
+//! file I/O that cannot be made async without significant complexity.
+//!
+//! ## Using from async code
+//!
+//! When calling these APIs from an async context (e.g., a Tokio runtime), wrap
+//! calls in [`tokio::task::spawn_blocking`] to avoid blocking the async executor:
+//!
+//! ```rust,ignore
+//! let store = ThreadSafeGitVersionedKvStore::<32>::open(path)?;
+//! let value = tokio::task::spawn_blocking({
+//!     let store = store.clone();
+//!     move || store.get(b"my-key")
+//! }).await?;
+//! ```
+//!
+//! [`ThreadSafeVersionedKvStore`] implements `Clone` (via `Arc`), `Send`, and
+//! `Sync`, so it can be safely shared across `spawn_blocking` boundaries and
+//! between async tasks.
+//!
+//! ## Thread safety
+//!
+//! [`ThreadSafeVersionedKvStore`] wraps the inner store in `Arc<parking_lot::Mutex<..>>`.
+//! `parking_lot::Mutex` is used instead of `std::sync::Mutex` to avoid lock
+//! poisoning — see the struct documentation for rationale.
+//!
+//! ## Integration points
+//!
+//! - **SQL layer** ([`crate::sql::ProllyStorage`]): Implements GlueSQL's async
+//!   `Store`/`StoreMut`/`Transaction` traits by offloading sync store operations
+//!   to `spawn_blocking`.
+//! - **Python bindings** ([`crate::python`]): Bridges Python ↔ Rust ↔ async via
+//!   `py.allow_threads()` + `tokio::runtime::Runtime::block_on()`.
+//! - **CLI** (`git-prolly`): Creates a Tokio runtime in `main()` and uses
+//!   `block_on()` for SQL commands only; all other commands run synchronously.
+
 mod backends;
 mod core;
 mod history;
@@ -62,6 +104,11 @@ pub trait HistoricalCommitAccess<const N: usize> {
 /// The metadata backend `M` controls how version-control metadata
 /// (commits, branches, history) is stored. The default is
 /// [`GitMetadataBackend`] which uses a real git repository.
+///
+/// All methods are **synchronous** and may perform file I/O through the Git
+/// object database. When calling from an async context, use the thread-safe
+/// wrapper [`ThreadSafeVersionedKvStore`] with [`tokio::task::spawn_blocking`].
+/// See the [module-level documentation](self) for details.
 pub struct VersionedKvStore<
     const N: usize,
     S: NodeStorage<N>,
@@ -91,17 +138,39 @@ pub type FileVersionedKvStore<const N: usize> = VersionedKvStore<N, FileNodeStor
 #[cfg(feature = "rocksdb_storage")]
 pub type RocksDBVersionedKvStore<const N: usize> = VersionedKvStore<N, RocksDBNodeStorage<N>>;
 
-/// Thread-safe wrapper for VersionedKvStore
+/// Thread-safe wrapper for [`VersionedKvStore`].
 ///
-/// This wrapper provides thread-safe access to the underlying VersionedKvStore by using
-/// `Arc<Mutex<>>` internally. All operations are synchronized, making it safe to use
-/// across multiple threads.
+/// Provides thread-safe access to the underlying store via `Arc<Mutex<>>`.
+/// All operations are synchronized, making it safe to use across multiple
+/// threads and async tasks.
 ///
-/// Uses `parking_lot::Mutex` which does not support lock poisoning. If a thread panics
-/// while holding the lock, subsequent lock acquisitions will succeed and the data
-/// remains accessible. This is intentional: the previous `std::sync::Mutex` approach
-/// also panicked (via `.unwrap()`) on poisoned locks, so callers had no recovery path
-/// either way. With `parking_lot`, the application at least has a chance to continue.
+/// # Cloning
+///
+/// `Clone` produces a new handle to the **same** underlying store (via
+/// `Arc::clone`). This is cheap and is the intended way to share a store
+/// across `spawn_blocking` closures or async tasks.
+///
+/// # Mutex choice
+///
+/// Uses `parking_lot::Mutex` which does not support lock poisoning. If a
+/// thread panics while holding the lock, subsequent lock acquisitions will
+/// succeed and the data remains accessible. This is intentional: the
+/// previous `std::sync::Mutex` approach also panicked (via `.unwrap()`) on
+/// poisoned locks, so callers had no recovery path either way. With
+/// `parking_lot`, the application at least has a chance to continue.
+///
+/// # Async usage
+///
+/// All methods are synchronous. When calling from an async context, clone
+/// the store and move it into [`tokio::task::spawn_blocking`]:
+///
+/// ```rust,ignore
+/// let store: ThreadSafeGitVersionedKvStore<32> = /* ... */;
+/// let result = tokio::task::spawn_blocking({
+///     let store = store.clone();
+///     move || store.get(b"key")
+/// }).await?;
+/// ```
 pub struct ThreadSafeVersionedKvStore<
     const N: usize,
     S: NodeStorage<N>,
