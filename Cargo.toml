@@ -47,12 +47,14 @@ ratatui = { version = "0.26", optional = true }
 crossterm = { version = "0.27", optional = true }
 
 [dev-dependencies]
+assert_cmd = "2.0"
 bytes = "1.10.1"
-tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 criterion = "0.5"
+predicates = "3.0"
 tempfile = "3.0"
 tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [features]
 default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql"]
