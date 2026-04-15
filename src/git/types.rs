@@ -49,6 +49,9 @@ pub enum GitKvError {
 
     #[error("Branch not found: {0}")]
     BranchNotFound(String),
+
+    #[error("Validation error: {0}")]
+    ValidationError(#[from] crate::validation::ValidationError),
 }
 
 #[derive(Debug, Clone)]

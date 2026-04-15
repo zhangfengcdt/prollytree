@@ -19,6 +19,7 @@ limitations under the License.
 mod common;
 
 use prollytree::git::versioned_store::GitVersionedKvStore;
+use prollytree::validation;
 
 // ---------------------------------------------------------------------------
 // Open with corrupted config
@@ -129,4 +130,73 @@ fn test_init_in_nonexistent_parent() {
         result.is_err(),
         "init in nonexistent directory without git repo should fail"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Input validation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_insert_empty_key_rejected() {
+    let (_temp, dataset) = common::setup_repo_and_dataset();
+    let mut store = GitVersionedKvStore::<32>::init(&dataset).unwrap();
+
+    let result = store.insert(b"".to_vec(), b"value".to_vec());
+    assert!(result.is_err(), "empty key should be rejected");
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("empty"),
+        "error should mention empty key: {err}"
+    );
+}
+
+#[test]
+fn test_insert_oversized_key_rejected() {
+    let (_temp, dataset) = common::setup_repo_and_dataset();
+    let mut store = GitVersionedKvStore::<32>::init(&dataset).unwrap();
+
+    let big_key = vec![0u8; validation::MAX_KEY_SIZE + 1];
+    let result = store.insert(big_key, b"value".to_vec());
+    assert!(result.is_err(), "oversized key should be rejected");
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("exceeds"),
+        "error should mention size limit: {err}"
+    );
+}
+
+#[test]
+fn test_insert_oversized_value_rejected() {
+    let (_temp, dataset) = common::setup_repo_and_dataset();
+    let mut store = GitVersionedKvStore::<32>::init(&dataset).unwrap();
+
+    let big_value = vec![0u8; validation::MAX_VALUE_SIZE + 1];
+    let result = store.insert(b"key".to_vec(), big_value);
+    assert!(result.is_err(), "oversized value should be rejected");
+}
+
+#[test]
+fn test_update_empty_key_rejected() {
+    let (_temp, dataset) = common::setup_repo_and_dataset();
+    let mut store = GitVersionedKvStore::<32>::init(&dataset).unwrap();
+
+    let result = store.update(b"".to_vec(), b"value".to_vec());
+    assert!(result.is_err(), "empty key update should be rejected");
+}
+
+#[test]
+fn test_valid_key_value_accepted() {
+    let (_temp, dataset) = common::setup_repo_and_dataset();
+    let mut store = GitVersionedKvStore::<32>::init(&dataset).unwrap();
+
+    // Normal-sized key/value should succeed
+    store
+        .insert(b"normal_key".to_vec(), b"normal_value".to_vec())
+        .expect("valid kv should be accepted");
+
+    // Max-size key should succeed
+    let max_key = vec![b'k'; validation::MAX_KEY_SIZE];
+    store
+        .insert(max_key, b"val".to_vec())
+        .expect("max-size key should be accepted");
 }

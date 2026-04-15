@@ -13,6 +13,7 @@ limitations under the License.
 */
 
 use crate::storage::StorageError;
+use crate::validation::ValidationError;
 use thiserror::Error;
 
 /// Unified error type that bridges all error domains in the crate.
@@ -29,6 +30,10 @@ pub enum ProllyError {
     /// An error from a storage backend (I/O, serialization, etc.).
     #[error(transparent)]
     Storage(#[from] StorageError),
+
+    /// An input validation error (empty key, oversized key/value).
+    #[error(transparent)]
+    Validation(#[from] ValidationError),
 
     /// An error from the git versioning layer.
     #[cfg(feature = "git")]
