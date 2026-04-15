@@ -36,7 +36,7 @@ const NODE_PREFIX: &[u8] = b"node:";
 #[derive(Debug)]
 pub struct RocksDBNodeStorage<const N: usize> {
     db: Arc<DB>,
-    cache: Arc<Mutex<LruCache<ValueDigest<N>, ProllyNode<N>>>>,
+    cache: Arc<Mutex<LruCache<ValueDigest<N>, Arc<ProllyNode<N>>>>>,
 }
 
 impl<const N: usize> Clone for RocksDBNodeStorage<N> {
@@ -133,24 +133,23 @@ impl<const N: usize> RocksDBNodeStorage<N> {
 }
 
 impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<Arc<ProllyNode<N>>> {
         // Check cache first
         if let Some(node) = self.cache.lock().get(hash) {
-            return Some(node.clone());
+            return Some(Arc::clone(node));
         }
 
         // Fetch from RocksDB
         let key = Self::node_key(hash);
         match self.db.get(&key) {
             Ok(Some(data)) => {
+                // split/merged are #[serde(skip)] so they deserialize as false.
                 match bincode::deserialize::<ProllyNode<N>>(&data) {
-                    Ok(mut node) => {
-                        // Reset transient flags
-                        node.split = false;
-                        node.merged = false;
+                    Ok(node) => {
+                        let node = Arc::new(node);
 
                         // Update cache
-                        self.cache.lock().put(hash.clone(), node.clone());
+                        self.cache.lock().put(hash.clone(), Arc::clone(&node));
 
                         Some(node)
                     }
@@ -163,7 +162,7 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
         // Update cache
-        self.cache.lock().put(hash.clone(), node.clone());
+        self.cache.lock().put(hash.clone(), Arc::new(node.clone()));
 
         // Serialize and store in RocksDB
         match bincode::serialize(&node) {
@@ -213,7 +212,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
 
         for (hash, node) in nodes {
             // Update cache
-            cache.put(hash.clone(), node.clone());
+            cache.put(hash.clone(), Arc::new(node.clone()));
 
             // Add to batch
             match bincode::serialize(&node) {

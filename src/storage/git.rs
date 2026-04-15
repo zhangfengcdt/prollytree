@@ -34,7 +34,7 @@ use super::NodeStorage;
 #[derive(Debug)]
 pub struct GitNodeStorage<const N: usize> {
     _repository: Arc<Mutex<gix::Repository>>,
-    cache: Mutex<LruCache<ValueDigest<N>, ProllyNode<N>>>,
+    cache: Mutex<LruCache<ValueDigest<N>, Arc<ProllyNode<N>>>>,
     configs: Mutex<HashMap<String, Vec<u8>>>,
     // Maps ProllyTree hashes to Git object IDs
     hash_to_object_id: Mutex<HashMap<ValueDigest<N>, gix::ObjectId>>,
@@ -166,17 +166,22 @@ impl<const N: usize> GitNodeStorage<N> {
 }
 
 impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<Arc<ProllyNode<N>>> {
         // First check cache
         if let Some(node) = self.cache.lock().peek(hash) {
-            return Some(node.clone());
+            return Some(Arc::clone(node));
         }
 
         // Check if we have a mapping for this hash
         let object_id = self.hash_to_object_id.lock().get(hash).cloned()?;
 
-        // Load from Git blob
-        self.load_node_from_blob(&object_id).ok()
+        // Load from Git blob and wrap in Arc
+        let node = Arc::new(self.load_node_from_blob(&object_id).ok()?);
+
+        // Cache the Arc for future lookups
+        self.cache.lock().put(hash.clone(), Arc::clone(&node));
+
+        Some(node)
     }
 
     fn insert_node(&mut self, hash: ValueDigest<N>, node: ProllyNode<N>) -> Option<()> {
@@ -184,7 +189,7 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         let already_exists = self.hash_to_object_id.lock().contains_key(&hash);
 
         // Store in cache
-        self.cache.lock().put(hash.clone(), node.clone());
+        self.cache.lock().put(hash.clone(), Arc::new(node.clone()));
 
         // Store as Git blob
         match self.store_node_as_blob(&node) {

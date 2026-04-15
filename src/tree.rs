@@ -20,6 +20,7 @@ use crate::digest::ValueDigest;
 use crate::node::{Node, ProllyNode};
 use crate::proof::Proof;
 use crate::storage::NodeStorage;
+use std::sync::Arc;
 
 /// Trait representing a Prolly tree with a fixed size N and a node storage S.
 /// This trait provides methods for creating, modifying, and querying the tree.
@@ -786,7 +787,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
         // Create a new tree starting from the destination
         let mut new_tree = ProllyTree {
-            root: destination_tree,
+            root: Arc::unwrap_or_clone(destination_tree),
             storage: self.storage.clone(),
             config: self.config.clone(),
         };
@@ -1063,7 +1064,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         if let Some(ref root_hash) = config.root_hash {
             if let Some(root_node) = storage.get_node_by_hash(root_hash) {
                 return Some(ProllyTree {
-                    root: root_node,
+                    root: Arc::unwrap_or_clone(root_node),
                     storage,
                     config,
                 });

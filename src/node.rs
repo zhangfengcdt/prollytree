@@ -21,6 +21,7 @@ use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::sync::Arc;
 use twox_hash::XxHash64;
 
 /// initial (leaf) level from which the prolly tree is built
@@ -320,9 +321,10 @@ impl<const N: usize> Balanced<N> for ProllyNode<N> {
 
         // If the node is a leaf, check if it can be merged with its next sibling
         if let Some(next_sibling_hash) = self.get_next_sibling_hash(storage, path_hashes) {
-            if let Some(mut next_sibling) =
+            if let Some(arc_next) =
                 storage.get_node_by_hash(&ValueDigest::raw_hash(&next_sibling_hash))
             {
+                let mut next_sibling = Arc::unwrap_or_clone(arc_next);
                 // Try to merge the current node with the next sibling
                 self.merge_with_next_sibling(&mut next_sibling);
             }
@@ -685,9 +687,9 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             // child node can be either leaf or internal node
             let child_hash = self.values[i].clone();
 
-            if let Some(mut child_node) =
-                storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
-            {
+            if let Some(arc_child) = storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash)) {
+                let mut child_node = Arc::unwrap_or_clone(arc_child);
+
                 // Record the current node's hash in the path
                 path_hashes.push(self.get_hash());
 
@@ -711,7 +713,6 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 }
 
                 // Check if the child node has been split and needs to be updated in the current node
-                //if !child_node.is_leaf && child_node.keys.len() > 1 {
                 if child_node.split {
                     // Move the key-value pairs from the child node to the current node at position `i`
                     self.keys.remove(i);
@@ -805,13 +806,13 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
             // Retrieve the child node using the stored hash
             let child_hash = self.values[i].clone();
 
-            if let Some(mut child_node) =
-                storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash))
-            {
+            if let Some(arc_child) = storage.get_node_by_hash(&ValueDigest::raw_hash(&child_hash)) {
+                let mut child_node = Arc::unwrap_or_clone(arc_child);
+
                 // Record the current node's hash in the path
                 path_hashes.push(self.get_hash());
 
-                // Insert the key-value pair into the child node retrieved from the storage
+                // Delete the key from the child node
                 let is_deleted = child_node.delete(key, storage, path_hashes.clone());
 
                 // Remove the current node's hash from the path
@@ -836,7 +837,6 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 }
 
                 // Check if the child node has been split and needs to be updated in the current node
-                //if !child_node.is_leaf && child_node.keys.len() > 1 {
                 if child_node.split {
                     // Move the key-value pairs from the child node to the current node at position `i`
                     self.keys.remove(i);
@@ -998,28 +998,21 @@ impl<const N: usize> ProllyNode<N> {
 }
 
 impl<const N: usize> ProllyNode<N> {
-    pub fn children(&self, storage: &impl NodeStorage<N>) -> Vec<ProllyNode<N>> {
-        // Create an empty vector to store the child nodes
+    pub fn children(&self, storage: &impl NodeStorage<N>) -> Vec<Arc<ProllyNode<N>>> {
         let mut children = Vec::new();
 
-        // Iterate over the values vector, which stores the hashes of the child nodes
         if !self.is_leaf {
             for child_hash in &self.values {
-                // Retrieve the child node from the storage using the hash
                 if let Some(child_node) =
                     storage.get_node_by_hash(&ValueDigest::raw_hash(child_hash))
                 {
-                    // Add the child node to the result vector
                     children.push(child_node);
                 } else {
-                    // Handle the case when the child node is not found
-                    // For example, you can log an error message or return an error
                     println!("Child node not found")
                 }
             }
         }
 
-        // Return the vector of child nodes
         children
     }
 
@@ -1057,15 +1050,16 @@ impl<const N: usize> ProllyNode<N> {
     where
         F: Fn(&ProllyNode<N>) -> String,
     {
-        let mut queue = std::collections::VecDeque::new();
-        queue.push_back(self.clone());
+        let mut queue: std::collections::VecDeque<Arc<ProllyNode<N>>> =
+            std::collections::VecDeque::new();
+        queue.push_back(Arc::new(self.clone()));
 
         let mut output = String::new();
 
         while let Some(node) = queue.pop_front() {
             output += &formatter(&node);
             for child in node.children(storage) {
-                queue.push_back(child.clone());
+                queue.push_back(child);
             }
         }
 

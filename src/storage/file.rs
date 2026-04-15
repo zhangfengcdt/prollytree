@@ -17,6 +17,7 @@ use crate::node::ProllyNode;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::NodeStorage;
 
@@ -41,16 +42,15 @@ impl<const N: usize> FileNodeStorage<N> {
 }
 
 impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
-    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<ProllyNode<N>> {
+    fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<Arc<ProllyNode<N>>> {
         let path = self.node_path(hash);
         if path.exists() {
             let mut file = File::open(path).unwrap();
             let mut data = Vec::new();
             file.read_to_end(&mut data).unwrap();
-            let mut node: ProllyNode<N> = bincode::deserialize(&data).unwrap();
-            node.split = false;
-            node.merged = false;
-            Some(node)
+            // split/merged are #[serde(skip)] so they deserialize as false.
+            let node: ProllyNode<N> = bincode::deserialize(&data).unwrap();
+            Some(Arc::new(node))
         } else {
             None
         }
