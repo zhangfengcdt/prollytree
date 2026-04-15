@@ -1087,6 +1087,33 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// RAII guard that holds the global CWD mutex and restores the working
+    /// directory on drop. Prevents parallel tests from racing on CWD.
+    struct CwdGuard {
+        original: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let lock = crate::git::versioned_store::cwd_lock()
+                .lock()
+                .expect("CWD mutex poisoned");
+            let original = std::env::current_dir().expect("Failed to get current dir");
+            std::env::set_current_dir(path).expect("Failed to change directory");
+            Self {
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
     /// Helper function to initialize a Git repository properly for testing
     fn init_test_git_repo(repo_path: &std::path::Path) {
         use gix::prelude::*;
@@ -1155,6 +1182,7 @@ mod tests {
     fn test_worktree_manager_creation() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
 
         // Initialize a git repository properly
         init_test_git_repo(repo_path);
@@ -1171,6 +1199,7 @@ mod tests {
     fn test_add_worktree() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
 
         // Initialize a git repository properly
         init_test_git_repo(repo_path);
@@ -1193,6 +1222,7 @@ mod tests {
     fn test_worktree_locking() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
 
         // Initialize a git repository properly
         init_test_git_repo(repo_path);
@@ -1222,6 +1252,7 @@ mod tests {
     fn test_worktree_concept_validation() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
 
         // Initialize repository properly
         init_test_git_repo(repo_path);
@@ -1274,6 +1305,7 @@ mod tests {
     fn test_worktree_merge_functionality() {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
 
         // Initialize repository properly
         init_test_git_repo(repo_path);
@@ -1366,6 +1398,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
 
         // Initialize repository properly
         init_test_git_repo(repo_path);
@@ -1484,6 +1517,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
 
         // Initialize repository properly
         init_test_git_repo(repo_path);

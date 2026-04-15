@@ -70,6 +70,16 @@ impl<const N: usize> GitNodeStorage<N> {
         self.hash_to_object_id.lock().clone()
     }
 
+    /// Merge additional hash mappings into this storage instance.
+    ///
+    /// This is used by [`NamespacedKvStore`] to consolidate hash mappings from
+    /// namespace subtrees into the main storage before committing, so that
+    /// `save_tree_config_to_git` writes all mappings.
+    pub fn merge_hash_mappings(&self, other_mappings: HashMap<ValueDigest<N>, gix::ObjectId>) {
+        let mut map = self.hash_to_object_id.lock();
+        map.extend(other_mappings);
+    }
+
     /// Create a new GitNodeStorage instance
     pub fn new(
         repository: gix::Repository,

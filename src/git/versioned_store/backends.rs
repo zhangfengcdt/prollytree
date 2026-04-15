@@ -403,7 +403,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
     }
 
     /// Create a merge commit with two parents (current HEAD + source branch)
-    fn create_merge_commit(
+    pub(crate) fn create_merge_commit(
         &mut self,
         message: &str,
         source_branch: &str,
