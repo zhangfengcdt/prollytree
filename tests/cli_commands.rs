@@ -17,7 +17,7 @@ limitations under the License.
 //! Each test creates an isolated temporary git repository, initializes a
 //! dataset, and exercises CLI commands end-to-end.
 
-#![cfg(feature = "git")]
+#![cfg(all(feature = "git", feature = "sql"))]
 
 mod common;
 
