@@ -178,15 +178,27 @@ where
         }
     }
 
-    /// Insert a key-value pair (stages the change)
+    /// Insert a key-value pair (stages the change).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitKvError::ValidationError`] if the key is empty, the key
+    /// exceeds 64 KB, or the value exceeds 100 MB.
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
+        crate::validation::validate_kv(&key, &value)?;
         self.staging_area.insert(key, Some(value));
         self.save_staging_area()?;
         Ok(())
     }
 
-    /// Update an existing key-value pair (stages the change)
+    /// Update an existing key-value pair (stages the change).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitKvError::ValidationError`] if the key is empty, the key
+    /// exceeds 64 KB, or the value exceeds 100 MB.
     pub fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<bool, GitKvError> {
+        crate::validation::validate_kv(&key, &value)?;
         let exists = self.get(&key).is_some();
         if exists {
             self.staging_area.insert(key, Some(value));
