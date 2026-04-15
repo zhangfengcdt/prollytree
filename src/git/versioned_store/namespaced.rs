@@ -281,17 +281,18 @@ where
         if !self.namespaces.contains_key(prefix) {
             // Check if we have a registry entry to load from
             if let Some(entry) = self.registry.get(prefix) {
+                // Ensure root_hash is set on the config so load_from_storage
+                // can find the root node (entry.config.root_hash may be None
+                // even when entry.root_hash is Some).
+                let mut config = entry.config.clone();
+                config.root_hash = entry.root_hash.clone();
+
                 // Try loading from storage
                 let tree = if entry.root_hash.is_some() {
-                    ProllyTree::load_from_storage(
-                        self.inner.tree.storage.clone(),
-                        entry.config.clone(),
-                    )
-                    .unwrap_or_else(|| {
-                        ProllyTree::new(self.inner.tree.storage.clone(), entry.config.clone())
-                    })
+                    ProllyTree::load_from_storage(self.inner.tree.storage.clone(), config.clone())
+                        .unwrap_or_else(|| ProllyTree::new(self.inner.tree.storage.clone(), config))
                 } else {
-                    ProllyTree::new(self.inner.tree.storage.clone(), entry.config.clone())
+                    ProllyTree::new(self.inner.tree.storage.clone(), config)
                 };
                 self.namespaces.insert(prefix.to_string(), tree);
             } else {
@@ -734,8 +735,32 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             // Also update the on-disk files to match the checked-out commit
             self.save_namespace_registry()?;
         } else {
-            // No registry at this commit — either V1 or pre-namespace commit
+            // No registry at this commit — either V1 or pre-namespace commit.
+            // Mirror `open()`'s V1 handling by exposing the checked-out inner
+            // flat tree through the default namespace view.
             self.format_version = StoreFormatVersion::V1;
+
+            let mut kv_pairs = Vec::new();
+            for key in self.inner.tree.collect_keys() {
+                if let Some(value) = self.inner.get(&key) {
+                    kv_pairs.push((key, value));
+                }
+            }
+            if !kv_pairs.is_empty() {
+                let mut default_tree =
+                    ProllyTree::new(self.inner.tree.storage.clone(), TreeConfig::default());
+                for (key, value) in kv_pairs {
+                    default_tree.insert(key, value);
+                }
+                default_tree.persist_root();
+                self.namespaces
+                    .insert(DEFAULT_NAMESPACE.to_string(), default_tree);
+            } else {
+                let default_tree =
+                    ProllyTree::new(self.inner.tree.storage.clone(), TreeConfig::default());
+                self.namespaces
+                    .insert(DEFAULT_NAMESPACE.to_string(), default_tree);
+            }
         }
 
         Ok(())
@@ -817,7 +842,26 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             let source_kv =
                 self.collect_ns_keys_at_commit(ns_name, &source_commit, &source_registry)?;
 
-            // Get dest KV from in-memory tree
+            // Get dest KV — ensure namespace is loaded first (namespaces are lazily
+            // loaded, so a namespace that exists in dest_registry but hasn't been
+            // accessed would appear empty if we only checked self.namespaces).
+            if !self.namespaces.contains_key(ns_name) {
+                if let Some(entry) = dest_registry.get(ns_name) {
+                    let mut config = entry.config.clone();
+                    config.root_hash = entry.root_hash.clone();
+                    let tree = if entry.root_hash.is_some() {
+                        ProllyTree::load_from_storage(
+                            self.inner.tree.storage.clone(),
+                            config.clone(),
+                        )
+                        .unwrap_or_else(|| ProllyTree::new(self.inner.tree.storage.clone(), config))
+                    } else {
+                        ProllyTree::new(self.inner.tree.storage.clone(), config)
+                    };
+                    self.namespaces.insert(ns_name.clone(), tree);
+                }
+            }
+
             let mut dest_kv = HashMap::new();
             if let Some(tree) = self.namespaces.get(ns_name) {
                 for key in tree.collect_keys() {
@@ -877,8 +921,41 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
                             merge_results.push(crate::diff::MergeResult::Conflict(conflict));
                         }
                     }
-                    (Some(_), None, Some(_)) => {
-                        merge_results.push(crate::diff::MergeResult::Removed(key.clone()));
+                    (Some(b), None, Some(d)) => {
+                        // Source deleted, dest may have modified
+                        if b == d {
+                            // Dest unchanged from base — safe to apply source deletion
+                            merge_results.push(crate::diff::MergeResult::Removed(key.clone()));
+                        } else {
+                            // Dest modified while source deleted — conflict
+                            let conflict = MergeConflict {
+                                key: key.clone(),
+                                base_value: Some(b.clone()),
+                                source_value: None,
+                                destination_value: Some(d.clone()),
+                            };
+                            merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                        }
+                    }
+                    (Some(b), Some(s), None) => {
+                        // Dest deleted, source may have modified
+                        if b == s {
+                            // Source unchanged from base — keep dest deletion (no-op)
+                            continue;
+                        } else {
+                            // Source modified while dest deleted — conflict
+                            let conflict = MergeConflict {
+                                key: key.clone(),
+                                base_value: Some(b.clone()),
+                                source_value: Some(s.clone()),
+                                destination_value: None,
+                            };
+                            merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                        }
+                    }
+                    (Some(_), None, None) => {
+                        // Both deleted — no-op
+                        continue;
                     }
                     _ => continue,
                 }
@@ -943,6 +1020,11 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
                 },
             );
         }
+
+        // Consolidate namespace hash mappings into inner storage before
+        // creating the merge commit, so prolly_hash_mappings includes all
+        // blob mappings needed to reload merged namespace roots.
+        self.merge_ns_hash_mappings_to_inner_git();
 
         self.inner.create_merge_commit_for_namespaced(source_branch)
     }

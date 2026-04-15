@@ -78,7 +78,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_insert_get_delete() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -117,7 +117,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_list_keys() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -138,7 +138,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_multiple_namespaces_isolation() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -176,7 +176,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_default_namespace_backward_compat() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -204,7 +204,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_list_namespaces() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -237,7 +237,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_delete_namespace() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -261,7 +261,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_get_namespace_root_hash() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -305,7 +305,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_commit_and_reopen() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         // Create and populate
@@ -356,7 +356,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_staging_isolation() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -392,7 +392,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_dirty_tracking() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -425,7 +425,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_branch_checkout() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -461,7 +461,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_across_branches() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -497,7 +497,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_merge_no_conflict() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -536,7 +536,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_merge_same_namespace() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -588,7 +588,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_namespace_changed_detection() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
@@ -644,7 +644,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_v1_to_v2_migration() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         // Create a V1 (flat) store using VersionedKvStore directly
@@ -696,7 +696,7 @@ mod namespaced_tests {
 
     #[test]
     fn test_thread_safe_namespace_operations() {
-        let (temp_dir, dataset_path) = setup_git_repo();
+        let (_temp_dir, dataset_path) = setup_git_repo();
         let _cwd = CwdGuard::set(&dataset_path);
 
         let store =
