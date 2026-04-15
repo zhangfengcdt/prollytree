@@ -109,11 +109,12 @@ if let Some(node) = mem_tree.find(b"session:abc123") {
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `git` | Git-backed versioned storage | Yes |
-| `sql` | SQL interface via GlueSQL | Yes |
+| `git` | Git-backed versioned storage with branching, merging, and history | Yes |
+| `sql` | SQL query interface via GlueSQL | Yes |
 | `rocksdb_storage` | RocksDB persistent storage backend | No |
 | `python` | Python bindings via PyO3 | No |
-| `rig` | Rig framework integration for AI agents | No |
+| `tracing` | Observability via the `tracing` crate | No |
+| `digest_base64` | Base64 encoding for digests | Yes |
 
 ```toml
 [dependencies.prollytree]
