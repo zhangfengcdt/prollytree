@@ -151,7 +151,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features python,git,sql,rig
+          args: --release --out dist --features python,git,sql
           manylinux: ${{ matrix.manylinux }}
           before-script-linux: |
             # Install any system dependencies if needed
