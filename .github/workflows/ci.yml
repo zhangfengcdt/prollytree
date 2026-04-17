@@ -43,7 +43,20 @@ jobs:
       run: cargo test --locked --verbose ${{ matrix.feature_flags }}
 
     - name: clippy (${{ matrix.name }})
-      run: cargo clippy --locked --all ${{ matrix.feature_flags }}
+      run: cargo clippy --locked --all ${{ matrix.feature_flags }} -- -D warnings
+
+  clippy-all-features:
+    needs: pre-commit
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: clippy (all features)
+      run: cargo clippy --locked --all --all-features -- -D warnings
 
   docs:
     needs: pre-commit
