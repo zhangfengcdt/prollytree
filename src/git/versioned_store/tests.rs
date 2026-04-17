@@ -224,6 +224,8 @@ mod tests {
         FileVersionedKvStore, GitVersionedKvStore, HistoricalAccess, HistoricalCommitAccess,
         InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
     };
+    #[cfg(feature = "rocksdb_storage")]
+    use crate::git::versioned_store::RocksDBVersionedKvStore;
     use tempfile::TempDir;
 
     /// RAII guard that holds the global CWD mutex and restores the working
