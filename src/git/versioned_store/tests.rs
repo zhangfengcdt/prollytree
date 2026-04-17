@@ -220,6 +220,8 @@ mod proof_tests {
 #[cfg(test)]
 mod tests {
     use crate::git::types::DiffOperation;
+    #[cfg(feature = "rocksdb_storage")]
+    use crate::git::versioned_store::RocksDBVersionedKvStore;
     use crate::git::versioned_store::{
         FileVersionedKvStore, GitVersionedKvStore, HistoricalAccess, HistoricalCommitAccess,
         InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,

@@ -124,11 +124,7 @@ jobs:
           - os: windows-latest
             target: x64
             manylinux: false
-          # macOS x86_64
-          - os: macos-13
-            target: x86_64
-            manylinux: false
-          # macOS ARM64
+          # macOS ARM64 (Apple Silicon) — arm64 wheel works on Intel Macs via Rosetta
           - os: macos-14
             target: aarch64
             manylinux: false
@@ -151,7 +147,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features python,git,sql,rig
+          args: --release --out dist --features python,git,sql -i python3.11
           manylinux: ${{ matrix.manylinux }}
           before-script-linux: |
             # Install any system dependencies if needed

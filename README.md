@@ -22,10 +22,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-prollytree = "0.3.2-beta"
+prollytree = "0.3.2"
 
 # Optional features
-prollytree = { version = "0.3.2-beta", features = ["git", "sql"] }
+prollytree = { version = "0.3.2", features = ["git", "sql"] }
 ```
 
 ## Examples
@@ -118,7 +118,7 @@ if let Some(node) = mem_tree.find(b"session:abc123") {
 
 ```toml
 [dependencies.prollytree]
-version = "0.3.2-beta"
+version = "0.3.2"
 features = ["git", "sql", "rocksdb_storage"]
 ```
 

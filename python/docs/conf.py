@@ -26,8 +26,8 @@ copyright = '2025, ProllyTree Contributors'
 author = 'ProllyTree Contributors'
 
 # The full version, including alpha/beta/rc tags
-release = '0.3.2-beta'
-version = '0.3.2-beta'
+release = '0.3.2'
+version = '0.3.2'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
