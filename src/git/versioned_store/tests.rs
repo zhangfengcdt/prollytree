@@ -220,12 +220,12 @@ mod proof_tests {
 #[cfg(test)]
 mod tests {
     use crate::git::types::DiffOperation;
+    #[cfg(feature = "rocksdb_storage")]
+    use crate::git::versioned_store::RocksDBVersionedKvStore;
     use crate::git::versioned_store::{
         FileVersionedKvStore, GitVersionedKvStore, HistoricalAccess, HistoricalCommitAccess,
         InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
     };
-    #[cfg(feature = "rocksdb_storage")]
-    use crate::git::versioned_store::RocksDBVersionedKvStore;
     use tempfile::TempDir;
 
     /// RAII guard that holds the global CWD mutex and restores the working
