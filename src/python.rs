@@ -12,6 +12,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// PyO3 0.22 `#[pymethods]` expansion inserts `.into()` on PyErr-returning results,
+// which clippy flags as `useless_conversion`. The generated code is not under our
+// control, so suppress the lint at the module level.
+#![allow(clippy::useless_conversion)]
+
 use parking_lot::Mutex;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -1581,7 +1586,7 @@ impl PyProllySQLStore {
                                         let mut json_row = serde_json::Map::new();
                                         for (i, value) in row.iter().enumerate() {
                                             if i < labels.len() {
-                                                let json_value = sql_value_to_json(&value);
+                                                let json_value = sql_value_to_json(value);
                                                 json_row.insert(labels[i].clone(), json_value);
                                             }
                                         }
@@ -1740,7 +1745,7 @@ impl PyProllySQLStore {
                     } else if value.is_none(py) {
                         Ok("NULL".to_string())
                     } else {
-                        Ok(format!("'{}'", value.to_string()))
+                        Ok(format!("'{}'", value))
                     }
                 })?;
                 row_values.push(value_str);
