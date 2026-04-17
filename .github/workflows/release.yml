@@ -124,11 +124,7 @@ jobs:
           - os: windows-latest
             target: x64
             manylinux: false
-          # macOS x86_64
-          - os: macos-13
-            target: x86_64
-            manylinux: false
-          # macOS ARM64
+          # macOS ARM64 (Apple Silicon) — arm64 wheel works on Intel Macs via Rosetta
           - os: macos-14
             target: aarch64
             manylinux: false
