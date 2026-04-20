@@ -448,7 +448,6 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
             time: gix::date::Time {
                 seconds: now,
                 offset: 0,
-                sign: gix::date::time::Sign::Plus,
             },
         };
 

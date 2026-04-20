@@ -1124,7 +1124,6 @@ mod tests {
             time: gix::date::Time {
                 seconds: 1700000000,
                 offset: 0,
-                sign: gix::date::time::Sign::Plus,
             },
         };
 
