@@ -201,7 +201,7 @@ impl MetadataBackend for GitMetadataBackend {
     }
 
     fn work_dir(&self) -> Option<PathBuf> {
-        self.repo.work_dir().map(|p| p.to_path_buf())
+        self.repo.workdir().map(|p| p.to_path_buf())
     }
 
     // ── User identity ────────────────────────────────────────────────
@@ -275,7 +275,6 @@ impl MetadataBackend for GitMetadataBackend {
             time: gix::date::Time {
                 seconds: now,
                 offset: 0,
-                sign: gix::date::time::Sign::Plus,
             },
         };
 
@@ -381,7 +380,7 @@ impl MetadataBackend for GitMetadataBackend {
     fn resolve_reference(&self, reference: &str) -> Result<gix::ObjectId, GitKvError> {
         // Try branch
         if let Ok(mut branch_ref) = self.repo.find_reference(&format!("refs/heads/{reference}")) {
-            if let Ok(peeled) = branch_ref.peel_to_id_in_place() {
+            if let Ok(peeled) = branch_ref.peel_to_id() {
                 return Ok(peeled.detach());
             }
         }
@@ -396,7 +395,7 @@ impl MetadataBackend for GitMetadataBackend {
 
         // Try other reference formats
         if let Ok(mut reference) = self.repo.find_reference(reference) {
-            if let Ok(peeled) = reference.peel_to_id_in_place() {
+            if let Ok(peeled) = reference.peel_to_id() {
                 return Ok(peeled.detach());
             }
         }
@@ -423,20 +422,29 @@ impl MetadataBackend for GitMetadataBackend {
                 for info in walk.take(limit).flatten() {
                     if let Ok(commit_obj) = info.object() {
                         if let Ok(commit_ref) = commit_obj.decode() {
+                            let author = match commit_ref.author() {
+                                Ok(sig) => sig,
+                                Err(_) => continue,
+                            };
+                            let committer = match commit_ref.committer() {
+                                Ok(sig) => sig,
+                                Err(_) => continue,
+                            };
+                            let timestamp = author.time().map(|t| t.seconds).unwrap_or(0);
                             history.push(CommitInfo {
                                 id: commit_obj.id().into(),
                                 author: format!(
                                     "{} <{}>",
-                                    String::from_utf8_lossy(commit_ref.author.name),
-                                    String::from_utf8_lossy(commit_ref.author.email)
+                                    String::from_utf8_lossy(author.name),
+                                    String::from_utf8_lossy(author.email)
                                 ),
                                 committer: format!(
                                     "{} <{}>",
-                                    String::from_utf8_lossy(commit_ref.committer.name),
-                                    String::from_utf8_lossy(commit_ref.committer.email)
+                                    String::from_utf8_lossy(committer.name),
+                                    String::from_utf8_lossy(committer.email)
                                 ),
                                 message: String::from_utf8_lossy(commit_ref.message).to_string(),
-                                timestamp: commit_ref.author.time.seconds,
+                                timestamp,
                             });
                         }
                     }

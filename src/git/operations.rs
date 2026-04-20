@@ -194,12 +194,21 @@ impl<const N: usize> GitOperations<N> {
         };
 
         // Extract commit info
+        let author_sig = commit
+            .author()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode author: {e}")))?;
+        let committer_sig = commit
+            .committer()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode committer: {e}")))?;
+        let commit_time = commit
+            .time()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode time: {e}")))?;
         let info = CommitInfo {
             id: commit_id,
-            author: commit.author().name.to_string(),
-            committer: commit.committer().name.to_string(),
+            author: author_sig.name.to_string(),
+            committer: committer_sig.name.to_string(),
             message: commit.message().title.to_string(),
-            timestamp: commit.time().seconds,
+            timestamp: commit_time.seconds,
         };
 
         // Get parent commits
@@ -334,7 +343,7 @@ impl<const N: usize> GitOperations<N> {
 
         // Get the dataset directory name relative to git root
         let git_root =
-            self.store.git_repo().work_dir().ok_or_else(|| {
+            self.store.git_repo().workdir().ok_or_else(|| {
                 GitKvError::GitObjectError("Not in a working directory".to_string())
             })?;
 

@@ -77,3 +77,6 @@ python/docs/_templates/
 *.inv
 searchindex.js
 tests/test-data/
+
+# Local memsearch index
+.memsearch/
