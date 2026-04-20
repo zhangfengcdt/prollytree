@@ -197,9 +197,9 @@ impl<const N: usize> GitOperations<N> {
         let author_sig = commit
             .author()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode author: {e}")))?;
-        let committer_sig = commit.committer().map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to decode committer: {e}"))
-        })?;
+        let committer_sig = commit
+            .committer()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode committer: {e}")))?;
         let commit_time = commit
             .time()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode time: {e}")))?;
