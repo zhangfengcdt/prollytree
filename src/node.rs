@@ -889,8 +889,15 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
                 None
             }
         } else {
-            // The node is an internal (non-leaf) node, so find the child node to search the key
+            // The node is an internal (non-leaf) node, so find the child node to search the key.
+            // After certain delete patterns an internal node can transiently end up with no
+            // children to descend into; treat that as "key not present" rather than panicking
+            // with an out-of-bounds index.
+            if self.values.is_empty() {
+                return None;
+            }
             let i = self.keys.iter().rposition(|k| key >= &k[..]).unwrap_or(0);
+            let i = i.min(self.values.len() - 1);
 
             // Retrieve the child node using the stored hash
             let child_hash = self.values[i].clone();

@@ -1080,16 +1080,26 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         keys
     }
 
-    /// Recursively collect keys from a node and its children
+    /// Recursively collect keys from a node and its children.
+    ///
+    /// Only keys that live in leaf nodes are collected. Internal-node `keys`
+    /// entries are split-key pivots that *should* equal the first key of each
+    /// child subtree, but a `delete` that removes a subtree's first key does
+    /// not currently propagate the new first-key back to the parent pivot
+    /// (the pivot becomes stale). Including pivots here would surface those
+    /// stale entries as live keys — non-deterministically, since it depends
+    /// on whether the deleted key happened to land as a pivot during the last
+    /// balance. Leaf-only traversal matches the canonical walker in
+    /// `history.rs::collect_keys_recursive` and keeps `list_keys` stable.
     fn collect_keys_recursive(&self, node: &ProllyNode<N>, keys: &mut Vec<Vec<u8>>) {
-        // Add all keys from this node
-        for key in &node.keys {
-            keys.push(key.clone());
-        }
-
-        // Recursively collect keys from child nodes
-        for child_node in node.children(&self.storage) {
-            self.collect_keys_recursive(&child_node, keys);
+        if node.is_leaf {
+            for key in &node.keys {
+                keys.push(key.clone());
+            }
+        } else {
+            for child_node in node.children(&self.storage) {
+                self.collect_keys_recursive(&child_node, keys);
+            }
         }
     }
 }
