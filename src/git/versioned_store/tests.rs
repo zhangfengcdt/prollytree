@@ -1989,6 +1989,76 @@ mod tests {
         );
     }
 
+    // Regression for issue #161: `checkout` left `git status` dirty on prolly's own
+    // files (prolly_config_tree_config, prolly_hash_mappings) because it only
+    // updated .git/HEAD without syncing the working tree / index, and because the
+    // per-insert append to `prolly_hash_mappings` in unsorted order drifted against
+    // the sorted commit-time snapshot. After the fix, `git status` must be clean
+    // after any checkout regardless of how many branches have been touched.
+    #[test]
+    fn test_git_checkout_leaves_working_tree_clean() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_root = temp_dir.path();
+
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(repo_root)
+            .output()
+            .expect("git init failed");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(repo_root)
+            .output()
+            .expect("git config name failed");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(repo_root)
+            .output()
+            .expect("git config email failed");
+
+        let dataset_dir = repo_root.join("data");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        store.insert(b"A".to_vec(), b"1".to_vec()).unwrap();
+        store.insert(b"B".to_vec(), b"2".to_vec()).unwrap();
+        store.commit("seed").unwrap();
+
+        store.create_branch("feat").unwrap();
+        store.checkout("feat").unwrap();
+        store.insert(b"C".to_vec(), b"3".to_vec()).unwrap();
+        store.commit("add C on feat").unwrap();
+
+        store.checkout("main").unwrap();
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(repo_root)
+            .output()
+            .expect("git status failed");
+        let status_stdout = String::from_utf8_lossy(&status.stdout);
+        assert!(
+            status_stdout.is_empty(),
+            "expected clean working tree after checkout, got:\n{status_stdout}"
+        );
+
+        // Round-tripping back to feat and then main must also leave things clean.
+        store.checkout("feat").unwrap();
+        store.checkout("main").unwrap();
+        let status2 = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(repo_root)
+            .output()
+            .expect("git status failed");
+        let status2_stdout = String::from_utf8_lossy(&status2.stdout);
+        assert!(
+            status2_stdout.is_empty(),
+            "expected clean working tree after checkout roundtrip, got:\n{status2_stdout}"
+        );
+    }
+
     // Regression for issue #162 specific to the Git backend's cross-branch merge:
     //
     // When a workflow writes on `feat`, switches back to `main`, and then runs

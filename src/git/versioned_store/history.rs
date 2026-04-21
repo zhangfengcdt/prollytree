@@ -331,8 +331,73 @@ where
         // Update HEAD to point to the new branch
         self.metadata.update_head(branch_or_commit)?;
 
+        // Sync git's index and working tree under the dataset directory to match
+        // the new HEAD. Without this, prolly's own committed files
+        // (prolly_config_tree_config, prolly_hash_mappings, ...) retain the previous
+        // branch's content on disk and `git status` reports them as modified —
+        // confusing any outside tool working against the repo (see GH-161). Doing
+        // the sync before `reload_tree_from_head_generic` also makes the in-memory
+        // tree consistent with what any subsequent git-level reader would see.
+        self.sync_working_tree_to_head()?;
+
         // Reload the tree from the HEAD commit
         self.reload_tree_from_head_generic()?;
+
+        Ok(())
+    }
+
+    /// Restore the working tree and index under the dataset directory to match the
+    /// current HEAD commit. This is the moral equivalent of `git checkout HEAD -- .`
+    /// scoped to `dataset_dir`, so non-prolly files living outside the dataset are
+    /// left untouched. Used by `checkout_generic` (GH-161).
+    pub(super) fn sync_working_tree_to_head(&self) -> Result<(), GitKvError> {
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
+        let git_root = self
+            .metadata
+            .work_dir()
+            .or_else(|| Self::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
+
+        let relative = dataset_dir.strip_prefix(&git_root).map_err(|e| {
+            GitKvError::GitObjectError(format!("dataset_dir not under git_root: {e}"))
+        })?;
+        // `.` when the dataset is the repo root; otherwise the relative path.
+        let relative_str = if relative.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            relative.to_string_lossy().replace('\\', "/")
+        };
+
+        // `git checkout HEAD -- <path>` rewrites both the index and the working tree
+        // under <path> to match HEAD. If HEAD doesn't track a file that exists in
+        // the working tree, git leaves it alone — so user-owned untracked files in
+        // the dataset directory are preserved. Unlike `git reset --hard`, this does
+        // not touch anything outside the given pathspec.
+        let output = std::process::Command::new("git")
+            .args(["checkout", "HEAD", "--", &relative_str])
+            .current_dir(&git_root)
+            .output()
+            .map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to run `git checkout HEAD -- .`: {e}"))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // On an empty / non-existent path in HEAD, git complains but we can
+            // safely treat that as a no-op (e.g. first checkout on a fresh repo).
+            if stderr.contains("did not match any file")
+                || stderr.contains("pathspec")
+                || stderr.contains("error: pathspec")
+            {
+                return Ok(());
+            }
+            return Err(GitKvError::GitObjectError(format!(
+                "`git checkout HEAD -- {relative_str}` failed: {stderr}"
+            )));
+        }
 
         Ok(())
     }

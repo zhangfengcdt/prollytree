@@ -64,13 +64,23 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         std::fs::write(&config_path, config_json)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
 
-        // Get hash mappings from storage and save them
+        // Get hash mappings from storage and save them, sorted by hash bytes so that
+        // the on-disk file is byte-deterministic for a given set of mappings. Without
+        // this, HashMap iteration order varies between processes and `git status`
+        // spuriously reports `prolly_hash_mappings` as modified after checkout /
+        // reload even though the logical mapping set is unchanged (see GH-161).
         let mappings = self.tree.storage.get_hash_mappings();
+        let mut entries: Vec<(String, String)> = mappings
+            .iter()
+            .map(|(hash, object_id)| {
+                let hash_hex: String = hash.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+                (hash_hex, object_id.to_hex().to_string())
+            })
+            .collect();
+        entries.sort();
         let mut mappings_content = String::new();
-        for (hash, object_id) in mappings {
-            // Convert hash bytes to hex manually
-            let hash_hex: String = hash.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
-            mappings_content.push_str(&format!("{hash_hex}:{object_id}\n"));
+        for (hash_hex, object_hex) in &entries {
+            mappings_content.push_str(&format!("{hash_hex}:{object_hex}\n"));
         }
 
         // Write mappings to the dataset directory
@@ -113,6 +123,10 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
                 return Err(GitKvError::BranchNotFound(branch_or_commit.to_string()));
             }
         }
+
+        // Sync working tree and index under the dataset dir to match the new HEAD
+        // so `git status` is clean afterward (see GH-161).
+        self.sync_working_tree_to_head()?;
 
         // Git-specific: Reload the tree from the HEAD commit of the target branch
         self.reload_tree_from_head()?;
