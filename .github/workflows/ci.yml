@@ -17,6 +17,13 @@ jobs:
         python-version: '3.11'
     - uses: pre-commit/action@v3.0.1
 
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check version is consistent across all files
+      run: ./scripts/check-version-consistency.sh
+
   test:
     needs: pre-commit
     strategy:
