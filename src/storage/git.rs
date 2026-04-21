@@ -199,24 +199,25 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         hash: ValueDigest<N>,
         node: ProllyNode<N>,
     ) -> Result<(), StorageError> {
-        // Check if this node already exists in our mappings
-        let already_exists = self.hash_to_object_id.lock().contains_key(&hash);
-
         // Store in cache
         self.cache.lock().put(hash.clone(), Arc::new(node.clone()));
 
-        // Store as Git blob
+        // Store as Git blob (this is durable — the blob lives in the git object db)
         let blob_id = self
             .store_node_as_blob(&node)
             .map_err(|e| StorageError::Other(e.to_string()))?;
 
-        // Store the mapping between ProllyTree hash and Git object ID
+        // Record the mapping in memory. We used to also append it to
+        // `dataset_dir/prolly_hash_mappings` on every new insert, but doing so
+        // added each transient intermediate node (including ones produced by
+        // rebalances during `reload_tree_from_head`) to the working-tree file in
+        // unsorted append order. The result: `git status` spuriously reported
+        // the file as modified after any checkout, and cross-branch narrowing
+        // via `git reset` dropped mappings that merge later needed (GH-161, GH-162).
+        // The canonical on-disk snapshot is written atomically by
+        // `save_tree_config_to_git` at commit time, in sorted order, from the
+        // full in-memory map — so the per-insert write is redundant.
         self.hash_to_object_id.lock().insert(hash.clone(), blob_id);
-
-        // Only persist the mapping to filesystem if it's a new node
-        if !already_exists {
-            self.save_hash_mapping(&hash, &blob_id);
-        }
 
         Ok(())
     }
@@ -238,7 +239,19 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         let mut configs = self.configs.lock();
         configs.insert(key.to_string(), config.to_vec());
 
-        // Also persist to filesystem for durability in the dataset directory
+        // The `tree_config` key is the canonical serialized TreeConfig used during
+        // merge/checkout/commit. Its on-disk form lives in
+        // `dataset_dir/prolly_config_tree_config` and is written by
+        // `save_tree_config_to_git` with `serde_json::to_string_pretty`. The compact
+        // `serde_json::to_vec` bytes handed in here are a byte-different
+        // serialization of the same logical config — writing them would leave the
+        // working tree file out of sync with what the last commit recorded and
+        // cause `git status` to spuriously report the file as modified (see GH-161).
+        // Skip the on-disk write for `tree_config` and keep only the in-memory copy.
+        if key == "tree_config" {
+            return;
+        }
+
         let config_path = self.dataset_dir.join(format!("prolly_config_{key}"));
         let _ = std::fs::write(config_path, config);
     }
@@ -262,27 +275,6 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 }
 
 impl<const N: usize> GitNodeStorage<N> {
-    /// Save hash mapping to filesystem
-    fn save_hash_mapping(&self, hash: &ValueDigest<N>, object_id: &gix::ObjectId) {
-        let mapping_path = self.dataset_dir.join("prolly_hash_mappings");
-
-        // Read existing mappings
-        let mut mappings = if mapping_path.exists() {
-            std::fs::read_to_string(&mapping_path).unwrap_or_default()
-        } else {
-            String::new()
-        };
-
-        // Add new mapping - use simple format for now without hex dependency
-        let hash_bytes: Vec<String> = hash.0.iter().map(|b| format!("{b:02x}")).collect();
-        let hash_hex = hash_bytes.join("");
-        let object_hex = object_id.to_hex().to_string();
-        mappings.push_str(&format!("{hash_hex}:{object_hex}\n"));
-
-        // Write back
-        let _ = std::fs::write(mapping_path, mappings);
-    }
-
     /// Load hash mappings from filesystem
     fn load_hash_mappings(&self) {
         let mapping_path = self.dataset_dir.join("prolly_hash_mappings");

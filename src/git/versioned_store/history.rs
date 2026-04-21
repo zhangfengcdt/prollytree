@@ -289,8 +289,12 @@ where
         // Get the current HEAD commit
         let head_object_id = self.metadata.head_commit_id()?;
 
-        // Load all key-value pairs from the HEAD commit using HistoricalAccess
-        let keys_at_head = self.collect_keys_from_commit_generic(&head_object_id)?;
+        // Load keys via HistoricalAccess::get_keys_at_ref so the Git backend reads
+        // the per-commit `prolly_hash_mappings` blob (via `collect_keys_at_commit`)
+        // rather than looking up the commit's root hash in the current in-memory
+        // mappings, which can be narrower than the commit's view after a
+        // `git reset` / working-tree switch (see GH-162).
+        let keys_at_head = self.get_keys_at_ref(&head_object_id.to_hex().to_string())?;
 
         // Get the config from the commit
         let config = self.read_tree_config_from_commit(&head_object_id)?;
@@ -311,18 +315,6 @@ where
         Ok(())
     }
 
-    /// Collect all key-value pairs from a specific commit (generic version)
-    pub(super) fn collect_keys_from_commit_generic(
-        &self,
-        commit_id: &gix::ObjectId,
-    ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
-        // Read the tree config from the commit
-        let tree_config = self.read_tree_config_from_commit(commit_id)?;
-
-        // Use the generic collect_keys_from_config which works for all storage types
-        self.collect_keys_from_config(&tree_config)
-    }
-
     /// Switch to a different branch or commit (generic version for all backends)
     pub fn checkout_generic(&mut self, branch_or_commit: &str) -> Result<(), GitKvError>
     where
@@ -339,8 +331,73 @@ where
         // Update HEAD to point to the new branch
         self.metadata.update_head(branch_or_commit)?;
 
+        // Sync git's index and working tree under the dataset directory to match
+        // the new HEAD. Without this, prolly's own committed files
+        // (prolly_config_tree_config, prolly_hash_mappings, ...) retain the previous
+        // branch's content on disk and `git status` reports them as modified —
+        // confusing any outside tool working against the repo (see GH-161). Doing
+        // the sync before `reload_tree_from_head_generic` also makes the in-memory
+        // tree consistent with what any subsequent git-level reader would see.
+        self.sync_working_tree_to_head()?;
+
         // Reload the tree from the HEAD commit
         self.reload_tree_from_head_generic()?;
+
+        Ok(())
+    }
+
+    /// Restore the working tree and index under the dataset directory to match the
+    /// current HEAD commit. This is the moral equivalent of `git checkout HEAD -- .`
+    /// scoped to `dataset_dir`, so non-prolly files living outside the dataset are
+    /// left untouched. Used by `checkout_generic` (GH-161).
+    pub(super) fn sync_working_tree_to_head(&self) -> Result<(), GitKvError> {
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
+        let git_root = self
+            .metadata
+            .work_dir()
+            .or_else(|| Self::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
+
+        let relative = dataset_dir.strip_prefix(&git_root).map_err(|e| {
+            GitKvError::GitObjectError(format!("dataset_dir not under git_root: {e}"))
+        })?;
+        // `.` when the dataset is the repo root; otherwise the relative path.
+        let relative_str = if relative.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            relative.to_string_lossy().replace('\\', "/")
+        };
+
+        // `git checkout HEAD -- <path>` rewrites both the index and the working tree
+        // under <path> to match HEAD. If HEAD doesn't track a file that exists in
+        // the working tree, git leaves it alone — so user-owned untracked files in
+        // the dataset directory are preserved. Unlike `git reset --hard`, this does
+        // not touch anything outside the given pathspec.
+        let output = std::process::Command::new("git")
+            .args(["checkout", "HEAD", "--", &relative_str])
+            .current_dir(&git_root)
+            .output()
+            .map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to run `git checkout HEAD -- .`: {e}"))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // On an empty / non-existent path in HEAD, git complains but we can
+            // safely treat that as a no-op (e.g. first checkout on a fresh repo).
+            if stderr.contains("did not match any file")
+                || stderr.contains("pathspec")
+                || stderr.contains("error: pathspec")
+            {
+                return Ok(());
+            }
+            return Err(GitKvError::GitObjectError(format!(
+                "`git checkout HEAD -- {relative_str}` failed: {stderr}"
+            )));
+        }
 
         Ok(())
     }
@@ -359,10 +416,19 @@ where
         // Find common base commit
         let base_commit = self.find_merge_base_generic(&dest_branch, source_branch)?;
 
-        // Get key-value data from each state
-        let base_kv = self.collect_keys_from_commit_generic(&base_commit)?;
+        // Get key-value data from each state via HistoricalAccess::get_keys_at_ref.
+        //
+        // The Git backend's specialization reads the per-commit `prolly_hash_mappings`
+        // blob out of each commit's tree (see `collect_keys_at_commit`), so it works
+        // even when the working-tree mappings file was narrowed by `git reset` /
+        // `git checkout` back to a single branch's view (see GH-162). Using the
+        // generic `collect_keys_from_config` path here would look the commit's root
+        // hash up in the *current in-memory* mappings and spuriously return an empty
+        // set for roots that only existed on the other branch.
         let source_commit = self.get_branch_commit_generic(source_branch)?;
-        let source_kv = self.collect_keys_from_commit_generic(&source_commit)?;
+        let base_kv = self.get_keys_at_ref(&base_commit.to_hex().to_string())?;
+        let source_kv = self.get_keys_at_ref(&source_commit.to_hex().to_string())?;
+
         let mut dest_kv = HashMap::new();
 
         for key in self.tree.collect_keys() {
