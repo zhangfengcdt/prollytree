@@ -1600,4 +1600,534 @@ mod tests {
         assert_eq!(store.get(b"key1"), Some(b"main_value".to_vec())); // Keep main value
         assert_eq!(store.get(b"key2"), Some(b"feature_only".to_vec())); // Add from feature
     }
+
+    // Regression for issue #162: VersionedKvStore.merge on the File backend left the
+    // destination tree empty, and the merge commit's root hash pointed at nodes absent
+    // from .git/prolly/nodes/files/. Covers both the in-memory read after merge and the
+    // drop/reopen round-trip.
+    #[test]
+    fn test_file_versioned_kv_store_merge_persists_tree() {
+        use crate::diff::TakeSourceResolver;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to configure git user name");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to configure git user email");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = FileVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        store.insert(b"A".to_vec(), b"1".to_vec()).unwrap();
+        store.insert(b"B".to_vec(), b"2".to_vec()).unwrap();
+        store.commit("seed").unwrap();
+
+        store.create_branch("feat").unwrap();
+        store.insert(b"C".to_vec(), b"3".to_vec()).unwrap();
+        store.commit("add C").unwrap();
+
+        store.checkout_generic("main").unwrap();
+        let resolver = TakeSourceResolver;
+        store.merge_generic("feat", &resolver).unwrap();
+
+        let mut keys = store.list_keys();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![b"A".to_vec(), b"B".to_vec(), b"C".to_vec()],
+            "list_keys after merge returned the wrong set"
+        );
+        assert_eq!(store.get(b"A"), Some(b"1".to_vec()));
+        assert_eq!(store.get(b"B"), Some(b"2".to_vec()));
+        assert_eq!(store.get(b"C"), Some(b"3".to_vec()));
+
+        drop(store);
+        let store2 = FileVersionedKvStore::<32>::open(&dataset_dir).unwrap();
+        let mut keys2 = store2.list_keys();
+        keys2.sort();
+        assert_eq!(
+            keys2,
+            vec![b"A".to_vec(), b"B".to_vec(), b"C".to_vec()],
+            "list_keys after drop/reopen returned wrong set — merge did not persist root+children"
+        );
+    }
+
+    // Regression for issue #162 (try_merge variant, matches the Python reproduction).
+    // Uses a larger dataset to force a multi-level tree, so the merge exercises both
+    // leaf-level inserts and internal-node rebalancing.
+    #[test]
+    fn test_file_versioned_kv_store_try_merge_persists_tree_multi_level() {
+        let temp_dir = TempDir::new().unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to initialize git repository");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to configure git user name");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("Failed to configure git user email");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = FileVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        // Seed main with 50 keys — enough to force the tree past a single leaf.
+        for i in 0..50 {
+            let k = format!("main_key_{i:04}").into_bytes();
+            let v = format!("main_val_{i:04}").into_bytes();
+            store.insert(k, v).unwrap();
+        }
+        store.commit("seed main").unwrap();
+
+        // Fork feat branch and add another 50 disjoint keys.
+        store.create_branch("feat").unwrap();
+        for i in 0..50 {
+            let k = format!("feat_key_{i:04}").into_bytes();
+            let v = format!("feat_val_{i:04}").into_bytes();
+            store.insert(k, v).unwrap();
+        }
+        store.commit("add feat keys").unwrap();
+
+        // Back to main, try_merge feat.
+        store.checkout_generic("main").unwrap();
+        store.try_merge_generic("feat").unwrap();
+
+        // In-memory read must see all 100 keys.
+        let keys = store.list_keys();
+        assert_eq!(
+            keys.len(),
+            100,
+            "list_keys after merge expected 100, got {}",
+            keys.len()
+        );
+
+        // Every individual key must resolve via get().
+        for i in 0..50 {
+            let mk = format!("main_key_{i:04}").into_bytes();
+            let fk = format!("feat_key_{i:04}").into_bytes();
+            assert_eq!(
+                store.get(&mk),
+                Some(format!("main_val_{i:04}").into_bytes())
+            );
+            assert_eq!(
+                store.get(&fk),
+                Some(format!("feat_val_{i:04}").into_bytes())
+            );
+        }
+
+        // Drop + reopen must also see all 100 keys (this is the persistence round-trip
+        // that was broken in the issue: the merge commit's root hash pointed at nodes
+        // that weren't on disk).
+        drop(store);
+        let store2 = FileVersionedKvStore::<32>::open(&dataset_dir).unwrap();
+        let keys2 = store2.list_keys();
+        assert_eq!(
+            keys2.len(),
+            100,
+            "list_keys after drop/reopen expected 100, got {}",
+            keys2.len()
+        );
+
+        // Checkout elsewhere and back — this forces reload_tree_from_head_generic,
+        // which is the path that emits "Root node not found in storage" when the
+        // merge commit recorded a dangling root hash.
+        let mut store3 = FileVersionedKvStore::<32>::open(&dataset_dir).unwrap();
+        store3.checkout_generic("feat").unwrap();
+        store3.checkout_generic("main").unwrap();
+        let keys3 = store3.list_keys();
+        assert_eq!(
+            keys3.len(),
+            100,
+            "list_keys after checkout round-trip expected 100, got {}",
+            keys3.len()
+        );
+    }
+
+    // Regression for issue #162 — exercises the IgnoreAll resolver (Python's default),
+    // deletes that cross branches, and conflicts resolved by dropping source.
+    #[test]
+    fn test_file_versioned_kv_store_merge_with_deletes_and_conflicts() {
+        use crate::diff::IgnoreConflictsResolver;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git init failed");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git config name failed");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git config email failed");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = FileVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        // Seed with 60 keys across two shards (shard_a_*, shard_b_*).
+        for i in 0..30 {
+            store
+                .insert(
+                    format!("shard_a_{i:04}").into_bytes(),
+                    format!("base_a_{i:04}").into_bytes(),
+                )
+                .unwrap();
+            store
+                .insert(
+                    format!("shard_b_{i:04}").into_bytes(),
+                    format!("base_b_{i:04}").into_bytes(),
+                )
+                .unwrap();
+        }
+        store.commit("seed").unwrap();
+
+        // feat branch: delete 5 shard_a_* keys, modify 5 shard_b_* keys, add 10 new keys.
+        store.create_branch("feat").unwrap();
+        for i in 0..5 {
+            store
+                .delete(&format!("shard_a_{i:04}").into_bytes())
+                .unwrap();
+            store
+                .insert(
+                    format!("shard_b_{i:04}").into_bytes(),
+                    format!("feat_b_{i:04}").into_bytes(),
+                )
+                .unwrap();
+        }
+        for i in 0..10 {
+            store
+                .insert(
+                    format!("feat_new_{i:04}").into_bytes(),
+                    format!("feat_{i:04}").into_bytes(),
+                )
+                .unwrap();
+        }
+        store.commit("feat diverges").unwrap();
+
+        // main: modify some shard_a_* keys, add new keys.
+        store.checkout_generic("main").unwrap();
+        for i in 10..15 {
+            store
+                .insert(
+                    format!("shard_a_{i:04}").into_bytes(),
+                    format!("main_a_{i:04}").into_bytes(),
+                )
+                .unwrap();
+        }
+        for i in 0..8 {
+            store
+                .insert(
+                    format!("main_new_{i:04}").into_bytes(),
+                    format!("main_{i:04}").into_bytes(),
+                )
+                .unwrap();
+        }
+        store.commit("main diverges").unwrap();
+
+        // Merge feat into main with IgnoreConflictsResolver (keeps dest for conflicts).
+        let resolver = IgnoreConflictsResolver;
+        store.merge_generic("feat", &resolver).unwrap();
+
+        // Expected post-merge set:
+        //  shard_a_0000..0004 — deleted on feat, not modified on main → gone
+        //  shard_a_0005..0029 — 25 untouched
+        //  shard_b_0000..0004 — modified on feat only → feat_b_*
+        //  shard_b_0005..0029 — 25 untouched base_b_*
+        //  feat_new_0000..0009 — 10 added
+        //  main_new_0000..0007 — 8 added
+        // Total: 25 + 30 + 10 + 8 = 73
+        let keys = store.list_keys();
+        assert_eq!(
+            keys.len(),
+            73,
+            "in-memory list_keys after merge expected 73, got {}",
+            keys.len()
+        );
+
+        // Deleted keys must be gone.
+        for i in 0..5 {
+            assert_eq!(store.get(&format!("shard_a_{i:04}").into_bytes()), None);
+        }
+        // Feat values for shard_b_0..5 must win (feat modified, main didn't).
+        for i in 0..5 {
+            assert_eq!(
+                store.get(&format!("shard_b_{i:04}").into_bytes()),
+                Some(format!("feat_b_{i:04}").into_bytes())
+            );
+        }
+        // Main's new keys retained.
+        for i in 0..8 {
+            assert_eq!(
+                store.get(&format!("main_new_{i:04}").into_bytes()),
+                Some(format!("main_{i:04}").into_bytes())
+            );
+        }
+        // Feat's new keys merged in.
+        for i in 0..10 {
+            assert_eq!(
+                store.get(&format!("feat_new_{i:04}").into_bytes()),
+                Some(format!("feat_{i:04}").into_bytes())
+            );
+        }
+
+        // Drop + reopen + checkout round-trip must agree.
+        drop(store);
+        let mut store2 = FileVersionedKvStore::<32>::open(&dataset_dir).unwrap();
+        store2.checkout_generic("feat").unwrap();
+        store2.checkout_generic("main").unwrap();
+        let keys2 = store2.list_keys();
+        assert_eq!(
+            keys2.len(),
+            73,
+            "list_keys after drop/reopen/checkout-round-trip expected 73, got {}",
+            keys2.len()
+        );
+    }
+
+    // Regression for issue #162 on the Git backend. The Python binding defaults to
+    // Git backend (python.rs:617), so the issue's Python reproduction actually
+    // exercises this path. Test a drop+reopen and checkout round-trip after merge.
+    #[test]
+    fn test_git_versioned_kv_store_merge_persists_tree() {
+        let temp_dir = TempDir::new().unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git init failed");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git config name failed");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git config email failed");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        store.insert(b"A".to_vec(), b"1".to_vec()).unwrap();
+        store.insert(b"B".to_vec(), b"2".to_vec()).unwrap();
+        store.commit("seed").unwrap();
+
+        store.create_branch("feat").unwrap();
+        store.insert(b"C".to_vec(), b"3".to_vec()).unwrap();
+        store.commit("add C").unwrap();
+
+        store.checkout("main").unwrap();
+        store.try_merge_generic("feat").unwrap();
+
+        // In-memory list_keys must see 3.
+        let mut keys = store.list_keys();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![b"A".to_vec(), b"B".to_vec(), b"C".to_vec()],
+            "Git backend: list_keys after merge wrong, got {:?}",
+            keys
+        );
+
+        // Drop + reopen + checkout round-trip.
+        drop(store);
+        let mut store2 = GitVersionedKvStore::<32>::open(&dataset_dir).unwrap();
+        let mut keys2 = store2.list_keys();
+        keys2.sort();
+        assert_eq!(
+            keys2,
+            vec![b"A".to_vec(), b"B".to_vec(), b"C".to_vec()],
+            "Git backend: list_keys after drop/reopen wrong"
+        );
+        store2.checkout("feat").unwrap();
+        store2.checkout("main").unwrap();
+        let mut keys3 = store2.list_keys();
+        keys3.sort();
+        assert_eq!(
+            keys3,
+            vec![b"A".to_vec(), b"B".to_vec(), b"C".to_vec()],
+            "Git backend: list_keys after checkout round-trip wrong"
+        );
+    }
+
+    // Regression for issue #162 specific to the Git backend's cross-branch merge:
+    //
+    // When a workflow writes on `feat`, switches back to `main`, and then runs
+    // `git reset --hard HEAD` (or any other operation that narrows the working-tree
+    // `prolly_hash_mappings` file back to a single branch's view), the in-memory
+    // mappings loaded by a subsequent open are a subset of what `feat` committed.
+    // `merge_generic` then looks up `feat`'s committed root hash in the current
+    // mappings, doesn't find it, and silently treats the source side of the merge
+    // as empty — dropping every key that lived in base.
+    //
+    // The fix routes merge's base/source reads through `HistoricalAccess::get_keys_at_ref`,
+    // whose Git-backend specialization reads the per-commit `prolly_hash_mappings`
+    // blob from the commit tree itself rather than the current working-tree state.
+    #[test]
+    fn test_git_merge_after_working_tree_narrowed_by_reset() {
+        let temp_dir = TempDir::new().unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git init failed");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git config name failed");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git config email failed");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        // Seed main with enough keys to force a multi-level tree (some large values to
+        // push nodes past the single-leaf threshold, matching the reported reproduction).
+        for i in 0..6 {
+            let key = format!("seed_{i:04}").into_bytes();
+            let value = format!("v_{i:04}_").into_bytes().repeat(4000); // ~28KB each
+            store.insert(key, value).unwrap();
+        }
+        store.commit("seed").unwrap();
+        // Two more keys committed on main.
+        store.insert(b"main_a".to_vec(), b"va".to_vec()).unwrap();
+        store.commit("main a").unwrap();
+        store.insert(b"main_b".to_vec(), b"vb".to_vec()).unwrap();
+        store.commit("main b").unwrap();
+
+        // Branch feat, add C.
+        store.create_branch("feat").unwrap();
+        store.checkout("feat").unwrap();
+        store.insert(b"feat_c".to_vec(), b"vc".to_vec()).unwrap();
+        store.commit("feat c").unwrap();
+
+        // Back to main, then narrow the working-tree `prolly_hash_mappings` back to
+        // main's committed view via `git reset --hard HEAD`. This is what triggers the
+        // bug in the wild: any git operation (reset, checkout -f, clean) that rewrites
+        // the working tree wipes the cross-branch mappings from the on-disk file.
+        store.checkout("main").unwrap();
+        let reset = std::process::Command::new("git")
+            .args(["reset", "--hard", "HEAD"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git reset failed");
+        assert!(reset.status.success(), "git reset --hard failed");
+
+        // Reopen the store (mimics a fresh process).
+        drop(store);
+        let mut store = GitVersionedKvStore::<32>::open(&dataset_dir).unwrap();
+
+        // Merge feat into main. Before the fix this would log
+        // "Root node not found in storage for hash ...", treat source_kv as empty, and
+        // delete every key that lived in base.
+        store.try_merge_generic("feat").unwrap();
+
+        let keys = store.list_keys();
+        assert_eq!(
+            keys.len(),
+            9,
+            "expected 9 keys (6 seed + main_a + main_b + feat_c), got {}",
+            keys.len()
+        );
+        assert_eq!(store.get(b"main_a"), Some(b"va".to_vec()));
+        assert_eq!(store.get(b"main_b"), Some(b"vb".to_vec()));
+        assert_eq!(store.get(b"feat_c"), Some(b"vc".to_vec()));
+    }
+
+    // Mirrors the Python reproduction from issue #162 exactly: create_branch followed
+    // by explicit checkout (the Python flow does both), then try_merge on Git backend.
+    #[test]
+    fn test_git_merge_python_reproduction_exact() {
+        let temp_dir = TempDir::new().unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git init failed");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git config name failed");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output()
+            .expect("git config email failed");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        store.insert(b"A".to_vec(), b"1".to_vec()).unwrap();
+        store.insert(b"B".to_vec(), b"2".to_vec()).unwrap();
+        store.commit("seed").unwrap();
+
+        store.create_branch("feat").unwrap();
+        store.checkout("feat").unwrap(); // Python flow does this explicitly
+        store.insert(b"C".to_vec(), b"3".to_vec()).unwrap();
+        store.commit("add C").unwrap();
+
+        store.checkout("main").unwrap();
+        let (_commit_id, _) = (store.try_merge_generic("feat").unwrap(), ());
+
+        let mut keys = store.list_keys();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![b"A".to_vec(), b"B".to_vec(), b"C".to_vec()],
+            "Git backend (Python-exact reproduction): list_keys after merge returned {:?}",
+            keys
+        );
+    }
 }
