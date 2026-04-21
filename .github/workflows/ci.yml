@@ -42,6 +42,20 @@ jobs:
     - name: test (${{ matrix.name }})
       run: cargo test --locked --verbose ${{ matrix.feature_flags }}
 
+    # Re-run the tests that share process-global state (CWD, git config, on-disk
+    # prolly files) several times under parallel execution. Without this, flaky
+    # tree/merge bugs that depend on non-deterministic HashMap ordering (e.g.
+    # reload insertion order, stale pivots after delete) can slip through a
+    # single lucky run — as happened before the GH-161/162 follow-up fix.
+    - name: test stress — versioned_store (${{ matrix.name }})
+      run: |
+        set -e
+        for attempt in 1 2 3 4 5; do
+          echo "::group::versioned_store attempt $attempt"
+          cargo test --locked ${{ matrix.feature_flags }} --lib versioned_store
+          echo "::endgroup::"
+        done
+
     - name: clippy (${{ matrix.name }})
       run: cargo clippy --locked --all ${{ matrix.feature_flags }} -- -D warnings
 
