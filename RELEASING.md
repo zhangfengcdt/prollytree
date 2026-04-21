@@ -35,8 +35,35 @@ Configured once per repository:
   on the workflow — whatever is committed on the release branch is what ships.
 - Suffixes `alpha`, `beta`, or `rc` in the version string cause the GitHub
   Release to be marked as a pre-release automatically.
-- The Python package version is kept in sync via `pyproject.toml` /
-  `maturin`, which reads from `Cargo.toml`.
+- The version string appears in several places that are **not** derived from
+  `Cargo.toml` and must all be bumped together by hand. If they drift, the
+  crates.io release, the PyPI release, the CLI `--version` output, the
+  rendered docs, and the GitHub tag can all disagree.
+
+  | File | Role |
+  | --- | --- |
+  | [`Cargo.toml`](Cargo.toml) | Source of truth for crates.io and the GitHub tag (`validate` job reads this). |
+  | [`Cargo.lock`](Cargo.lock) | Regenerates automatically on `cargo check`; commit the update. |
+  | [`pyproject.toml`](pyproject.toml) | `[project].version` — what PyPI sees. Maturin uses this when it's set, so it does **not** inherit from `Cargo.toml`. |
+  | [`python/prollytree/__init__.py`](python/prollytree/__init__.py) | `__version__` exported to Python consumers. |
+  | [`python/docs/conf.py`](python/docs/conf.py) | Sphinx `version` and `release` — shows up on readthedocs. |
+  | [`src/bin/prolly-ui.rs`](src/bin/prolly-ui.rs) | `#[command(version = ...)]` for the `prolly-ui --version` output. |
+  | [`src/lib.rs`](src/lib.rs) | Version appears inside a rustdoc code example. |
+  | [`README.md`](README.md) | Install snippets. |
+
+  `src/git/git-prolly.rs` used to be in this list but now reads
+  `env!("CARGO_PKG_VERSION")`, so it inherits from `Cargo.toml`
+  automatically. The same treatment could be applied to `src/bin/prolly-ui.rs`
+  to remove one more manual step.
+
+  The [`scripts/check-version-consistency.sh`](scripts/check-version-consistency.sh)
+  script asserts that every file above reports the same version as
+  `Cargo.toml`. It runs in CI (see [`ci.yml`](.github/workflows/ci.yml)) and
+  will fail the build on drift, so there's a net waiting to catch any missed
+  file before a release even gets cut.
+
+- Suffixes `alpha`, `beta`, or `rc` in the version string cause the GitHub
+  Release to be marked as a pre-release automatically.
 
 ## Release branch convention
 
@@ -57,17 +84,32 @@ From an up-to-date `main`:
 ```bash
 git checkout -b release/<version>
 
-# Bump version in Cargo.toml (drop any -beta/-snapshot suffix if shipping stable)
-$EDITOR Cargo.toml
+# Bump the version everywhere it appears. All of these must match — see the
+# Versioning section above for what each file controls.
+$EDITOR \
+  Cargo.toml \
+  pyproject.toml \
+  python/prollytree/__init__.py \
+  python/docs/conf.py \
+  src/bin/prolly-ui.rs \
+  src/lib.rs \
+  README.md
 
 # Regenerate Cargo.lock so `cargo check --locked` passes in CI
 cargo check --all-features
+
+# Sanity-check that every version-bearing file now agrees with Cargo.toml.
+# This is the same script CI runs, so if it passes locally it'll pass there.
+./scripts/check-version-consistency.sh
 
 # Optional: update CHANGELOG.md. The release-notes step will extract the
 # section matching `## [<version>]` and include it in the GitHub Release body.
 $EDITOR CHANGELOG.md
 
-git add Cargo.toml Cargo.lock CHANGELOG.md
+git add \
+  Cargo.toml Cargo.lock pyproject.toml \
+  python/prollytree/__init__.py python/docs/conf.py \
+  src/bin/prolly-ui.rs src/lib.rs README.md CHANGELOG.md
 git commit -m "Release v<version>"
 git push -u origin release/<version>
 ```
@@ -113,8 +155,9 @@ noticeably longer than the x86_64 job.
 ### 4. Post-release
 
 - Merge the release PR into `main`.
-- Bump `Cargo.toml` to the next development version (e.g. `0.3.4-beta`) on
-  `main` in a follow-up commit.
+- Bump **all** the version-bearing files listed in the Versioning section to
+  the next development version (e.g. `0.3.4-beta`) on `main` in a follow-up
+  commit.
 - Verify the tag, GitHub Release, crates.io page, and PyPI page all show
   the new version.
 

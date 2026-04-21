@@ -28,7 +28,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "git-prolly")]
 #[command(about = "KV-aware Git operations for ProllyTree")]
-#[command(version = "0.2.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
