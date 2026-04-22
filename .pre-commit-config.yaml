@@ -17,6 +17,7 @@ repos:
       - id: end-of-file-fixer
         exclude: 'prollytree-ui\.html$'
       - id: check-yaml
+        args: [--unsafe]
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
