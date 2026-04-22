@@ -190,10 +190,10 @@ python -m pytest python/tests/
 
 ## Documentation & Examples
 
-- **[Full API Documentation](https://docs.rs/prollytree)**
-- **[Python Documentation](https://prollytree.readthedocs.io/)**
-- **[Use Cases & Examples](examples/)** - Version control, SQL, proofs, storage backends
-- **[Python Bindings](python/README.md)** - Complete Python API
+- **[User Guide & Theory](https://zhangfengcdt.github.io/prollytree/)** – mkdocs site with the full tour (theory, CLI, Python, examples)
+- **[Rust API Reference](https://docs.rs/prollytree)** – auto-generated from source
+- **[Use Cases & Examples](examples/)** – version control, SQL, proofs, storage backends
+- **[Python Bindings](python/README.md)** – Python-specific quickstart
 
 ## CLI Tool
 
