@@ -72,6 +72,9 @@ python/docs/.doctrees/
 python/docs/_static/
 python/docs/_templates/
 
+# mkdocs-material build output
+/site/
+
 # Sphinx temporary files
 .buildinfo
 *.inv

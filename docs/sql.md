@@ -1,21 +1,8 @@
-# Git-Prolly SQL Manual
+# SQL Interface
 
-## Overview
+The `git-prolly sql` command enables SQL query capabilities on top of ProllyTree's versioned key-value store. This integration combines the power of relational databases with Git-like version control, letting you query your data using standard SQL while maintaining full version history.
 
-The `git prolly sql` command enables SQL query capabilities on top of ProllyTree's versioned key-value store. This integration combines the power of relational databases with Git's version control, allowing you to query your data using standard SQL while maintaining full version history.
-
-## Table of Contents
-
-1. [Getting Started](#getting-started)
-2. [Command Options](#command-options)
-3. [Basic Usage](#basic-usage)
-4. [SQL Operations](#sql-operations)
-5. [Output Formats](#output-formats)
-6. [Interactive Mode](#interactive-mode)
-7. [Advanced Examples](#advanced-examples)
-8. [Git Integration](#git-integration)
-9. [Best Practices](#best-practices)
-10. [Troubleshooting](#troubleshooting)
+For the conceptual model see [Architecture → SQL layer](architecture.md#4-sql-layer). For Python usage see the [SQL example](examples/sql.md).
 
 ## Getting Started
 
@@ -23,34 +10,34 @@ The `git prolly sql` command enables SQL query capabilities on top of ProllyTree
 
 1. Ensure you have initialized a git-prolly repository:
 ```bash
-git prolly init
+git-prolly init
 ```
 
 2. Verify the SQL feature is enabled (it's enabled by default):
 ```bash
-git prolly sql --help
+git-prolly sql --help
 ```
 
 ### Quick Start
 
 ```bash
 # Create a table
-git prolly sql "CREATE TABLE users (id INTEGER, name TEXT, email TEXT)"
+git-prolly sql "CREATE TABLE users (id INTEGER, name TEXT, email TEXT)"
 
 # Insert data
-git prolly sql "INSERT INTO users VALUES (1, 'Alice', 'alice@example.com')"
+git-prolly sql "INSERT INTO users VALUES (1, 'Alice', 'alice@example.com')"
 
 # Query data
-git prolly sql "SELECT * FROM users"
+git-prolly sql "SELECT * FROM users"
 
 # Commit your changes
-git prolly commit -m "Added users table with initial data"
+git-prolly commit -m "Added users table with initial data"
 ```
 
 ## Command Options
 
 ```
-git prolly sql [OPTIONS] [QUERY]
+git-prolly sql [OPTIONS] [QUERY]
 
 Arguments:
   [QUERY]  SQL query to execute
@@ -71,7 +58,7 @@ Options:
 Execute a single SQL query directly from the command line:
 
 ```bash
-git prolly sql "SELECT * FROM users WHERE age > 25"
+git-prolly sql "SELECT * FROM users WHERE age > 25"
 ```
 
 ### 2. File-based Execution
@@ -94,7 +81,7 @@ INSERT INTO products VALUES
 EOF
 
 # Execute the file
-git prolly sql -f schema.sql
+git-prolly sql -f schema.sql
 ```
 
 ### 3. Interactive Mode
@@ -102,7 +89,7 @@ git prolly sql -f schema.sql
 Start an interactive SQL shell:
 
 ```bash
-git prolly sql -i
+git-prolly sql -i
 ```
 
 In interactive mode:
@@ -116,13 +103,13 @@ Query data from specific branches or commits using the `-b` parameter:
 
 ```bash
 # Query data from main branch
-git prolly sql -b main "SELECT * FROM users"
+git-prolly sql -b main "SELECT * FROM users"
 
 # Query data from a specific commit
-git prolly sql -b a1b2c3d4 "SELECT COUNT(*) FROM products"
+git-prolly sql -b a1b2c3d4 "SELECT COUNT(*) FROM products"
 
 # Query data from a feature branch
-git prolly sql -b feature/new-schema "SELECT * FROM categories"
+git-prolly sql -b feature/new-schema "SELECT * FROM categories"
 ```
 
 **Important Requirements:**
@@ -133,13 +120,13 @@ git prolly sql -b feature/new-schema "SELECT * FROM categories"
 **Example with staging changes:**
 ```bash
 # This will be blocked if you have uncommitted changes
-git prolly set user:123 "John Doe"  # Creates staging changes
-git prolly sql -b main "SELECT * FROM users"
+git-prolly set user:123 "John Doe"  # Creates staging changes
+git-prolly sql -b main "SELECT * FROM users"
 # Error: Cannot use -b/--branch parameter with uncommitted staging changes
 
 # Commit your changes first
-git prolly commit -m "Add new user"
-git prolly sql -b main "SELECT * FROM users"  # Now works
+git-prolly commit -m "Add new user"
+git-prolly sql -b main "SELECT * FROM users"  # Now works
 ```
 
 ## SQL Operations
@@ -286,7 +273,7 @@ DELETE FROM orders WHERE order_date < '2023-01-01';
 ### 1. Table Format (Default)
 
 ```bash
-git prolly sql "SELECT * FROM users"
+git-prolly sql "SELECT * FROM users"
 ```
 
 Output:
@@ -300,7 +287,7 @@ Output:
 ### 2. JSON Format
 
 ```bash
-git prolly sql -o json "SELECT * FROM users"
+git-prolly sql -o json "SELECT * FROM users"
 ```
 
 Output:
@@ -322,7 +309,7 @@ Output:
 ### 3. CSV Format
 
 ```bash
-git prolly sql -o csv "SELECT * FROM users"
+git-prolly sql -o csv "SELECT * FROM users"
 ```
 
 Output:
@@ -337,7 +324,7 @@ I64(2),Str("Bob"),Str("bob@example.com")
 The interactive SQL shell provides a convenient environment for exploring your data:
 
 ```bash
-git prolly sql -i
+git-prolly sql -i
 ```
 
 ```
@@ -368,7 +355,7 @@ Use interactive mode to explore historical data:
 
 ```bash
 # Start interactive mode against a specific branch
-git prolly sql -b feature/analytics -i
+git-prolly sql -b feature/analytics -i
 ```
 
 ```
@@ -407,18 +394,18 @@ Compare data across different points in time:
 
 ```bash
 # Query current data
-git prolly sql "SELECT COUNT(*) as current_users FROM users"
+git-prolly sql "SELECT COUNT(*) as current_users FROM users"
 
 # Query data from last week's commit
-git prolly sql -b 7d1a2b3c "SELECT COUNT(*) as users_last_week FROM users"
+git-prolly sql -b 7d1a2b3c "SELECT COUNT(*) as users_last_week FROM users"
 
 # Compare product prices between branches
-git prolly sql -b main "SELECT name, price FROM products WHERE category = 'Electronics'"
-git prolly sql -b feature/price-update "SELECT name, price FROM products WHERE category = 'Electronics'"
+git-prolly sql -b main "SELECT name, price FROM products WHERE category = 'Electronics'"
+git-prolly sql -b feature/price-update "SELECT name, price FROM products WHERE category = 'Electronics'"
 
 # Analyze data growth over time
-git prolly sql -b v1.0 "SELECT COUNT(*) as v1_orders FROM orders"
-git prolly sql -b v2.0 "SELECT COUNT(*) as v2_orders FROM orders"
+git-prolly sql -b v1.0 "SELECT COUNT(*) as v1_orders FROM orders"
+git-prolly sql -b v2.0 "SELECT COUNT(*) as v2_orders FROM orders"
 ```
 
 ### 2. Complex Data Analysis
@@ -481,14 +468,14 @@ SELECT COUNT(*) as migrated_count FROM users_new;
 EOF
 
 # Execute migration
-git prolly sql -f migrate_v2.sql
+git-prolly sql -f migrate_v2.sql
 ```
 
 ### 3. Reporting and Analytics
 
 ```bash
 # Generate daily report
-git prolly sql -o json "
+git-prolly sql -o json "
 SELECT
     DATE(order_date) as date,
     COUNT(*) as orders,
@@ -500,7 +487,7 @@ ORDER BY date
 " > daily_revenue.json
 
 # Export customer list
-git prolly sql -o csv "
+git-prolly sql -o csv "
 SELECT id, name, email, created_at
 FROM users
 WHERE status = 'active'
@@ -516,20 +503,20 @@ All SQL operations are stored in ProllyTree and can be versioned with Git:
 
 ```bash
 # Make changes
-git prolly sql "INSERT INTO users VALUES (4, 'David', 'david@example.com')"
-git prolly sql "UPDATE products SET price = 1100 WHERE id = 1"
+git-prolly sql "INSERT INTO users VALUES (4, 'David', 'david@example.com')"
+git-prolly sql "UPDATE products SET price = 1100 WHERE id = 1"
 
 # Check status
-git prolly status
+git-prolly status
 
 # Commit changes
-git prolly commit -m "Added new user David and updated laptop price"
+git-prolly commit -m "Added new user David and updated laptop price"
 
 # View history
-git prolly show HEAD
+git-prolly show HEAD
 
 # Diff between commits
-git prolly diff HEAD~1 HEAD
+git-prolly diff HEAD~1 HEAD
 ```
 
 ### Working with Branches
@@ -539,20 +526,20 @@ git prolly diff HEAD~1 HEAD
 git checkout -b feature/new-schema
 
 # Make schema changes
-git prolly sql "CREATE TABLE categories (id INTEGER, name TEXT)"
-git prolly sql "ALTER TABLE products ADD COLUMN category_id INTEGER"
+git-prolly sql "CREATE TABLE categories (id INTEGER, name TEXT)"
+git-prolly sql "ALTER TABLE products ADD COLUMN category_id INTEGER"
 
 # Commit on feature branch
-git prolly commit -m "Added categories support"
+git-prolly commit -m "Added categories support"
 
 # Switch back to main
 git checkout main
 
 # The new tables don't exist on main branch
-git prolly sql "SELECT * FROM categories"  # Error: table not found
+git-prolly sql "SELECT * FROM categories"  # Error: table not found
 
 # Query the new schema without switching branches
-git prolly sql -b feature/new-schema "SELECT * FROM categories"
+git-prolly sql -b feature/new-schema "SELECT * FROM categories"
 
 # Merge when ready
 git merge feature/new-schema
@@ -565,18 +552,18 @@ Compare data between branches without switching contexts:
 ```bash
 # Compare user counts between branches
 echo "Main branch users:"
-git prolly sql -b main "SELECT COUNT(*) FROM users"
+git-prolly sql -b main "SELECT COUNT(*) FROM users"
 
 echo "Feature branch users:"
-git prolly sql -b feature/user-management "SELECT COUNT(*) FROM users"
+git-prolly sql -b feature/user-management "SELECT COUNT(*) FROM users"
 
 # Generate reports from different branches
-git prolly sql -b production -o json "SELECT * FROM daily_metrics WHERE date = '2024-01-15'" > prod_metrics.json
-git prolly sql -b staging -o json "SELECT * FROM daily_metrics WHERE date = '2024-01-15'" > staging_metrics.json
+git-prolly sql -b production -o json "SELECT * FROM daily_metrics WHERE date = '2024-01-15'" > prod_metrics.json
+git-prolly sql -b staging -o json "SELECT * FROM daily_metrics WHERE date = '2024-01-15'" > staging_metrics.json
 
 # Compare table schemas between versions
-git prolly sql -b v1.0 "SELECT name FROM sqlite_master WHERE type='table'"
-git prolly sql -b v2.0 "SELECT name FROM sqlite_master WHERE type='table'"
+git-prolly sql -b v1.0 "SELECT name FROM sqlite_master WHERE type='table'"
+git-prolly sql -b v2.0 "SELECT name FROM sqlite_master WHERE type='table'"
 ```
 
 ## Best Practices
@@ -603,7 +590,7 @@ git prolly sql -b v2.0 "SELECT name FROM sqlite_master WHERE type='table'"
 
 ```bash
 # Always backup before major changes
-git prolly sql "SELECT * FROM important_table" -o json > backup.json
+git-prolly sql "SELECT * FROM important_table" -o json > backup.json
 
 # Test migrations on a branch first
 git checkout -b migration-test
@@ -620,12 +607,12 @@ git checkout -b migration-test
 
 ```bash
 # Good practice: commit first
-git prolly commit -m "Save current work"
-git prolly sql -b production "SELECT * FROM metrics"
+git-prolly commit -m "Save current work"
+git-prolly sql -b production "SELECT * FROM metrics"
 
 # Avoid: Don't leave uncommitted changes
-git prolly set user:new "data"  # Uncommitted change
-git prolly sql -b main "SELECT * FROM users"  # Will be blocked
+git-prolly set user:new "data"  # Uncommitted change
+git-prolly sql -b main "SELECT * FROM users"  # Will be blocked
 ```
 
 ## Troubleshooting
@@ -634,12 +621,12 @@ git prolly sql -b main "SELECT * FROM users"  # Will be blocked
 
 1. **"Failed to open dataset"**
    - Ensure you're in a git-prolly initialized directory
-   - Run `git prolly init` if needed
+   - Run `git-prolly init` if needed
 
 2. **"Table not found"**
    - Check table name spelling
    - Ensure the table was created and changes were committed
-   - Use `git prolly list` to see all keys (tables are stored with `:__schema__` suffix)
+   - Use `git-prolly list` to see all keys (tables are stored with `:__schema__` suffix)
 
 3. **Query errors**
    - Use `--verbose` flag for detailed error messages
@@ -647,13 +634,13 @@ git prolly sql -b main "SELECT * FROM users"  # Will be blocked
    - Ensure column names match exactly (case-sensitive)
 
 4. **"Cannot use -b/--branch parameter with uncommitted staging changes"**
-   - Check staging status with `git prolly status`
-   - Commit your changes first: `git prolly commit -m "Save changes"`
+   - Check staging status with `git-prolly status`
+   - Commit your changes first: `git-prolly commit -m "Save changes"`
    - Or discard changes if not needed
 
 5. **"Only SELECT statements are allowed when using -b/--branch parameter"**
    - Historical data is read-only for safety
-   - Use regular `git prolly sql` (without `-b`) for data modifications
+   - Use regular `git-prolly sql` (without `-b`) for data modifications
    - Switch to the target branch if you need to make changes there
 
 6. **"Failed to checkout branch/commit"**
@@ -665,19 +652,19 @@ git prolly sql -b main "SELECT * FROM users"  # Will be blocked
 
 1. **Large Result Sets**: Use LIMIT to restrict output
    ```bash
-   git prolly sql "SELECT * FROM large_table LIMIT 100"
+   git-prolly sql "SELECT * FROM large_table LIMIT 100"
    ```
 
 2. **Complex Queries**: Break them into steps
    ```bash
    # Create intermediate results
-   git prolly sql "CREATE TABLE temp_results AS SELECT ..."
+   git-prolly sql "CREATE TABLE temp_results AS SELECT ..."
    ```
 
 3. **Bulk Operations**: Use file-based execution
    ```bash
    # More efficient than individual commands
-   git prolly sql -f bulk_insert.sql
+   git-prolly sql -f bulk_insert.sql
    ```
 
 ### Debug Mode
@@ -685,7 +672,7 @@ git prolly sql -b main "SELECT * FROM users"  # Will be blocked
 Use verbose mode for debugging:
 
 ```bash
-git prolly sql --verbose "SELECT * FROM users"
+git-prolly sql --verbose "SELECT * FROM users"
 ```
 
 This will show:
@@ -705,7 +692,7 @@ Current limitations (may be addressed in future versions):
 
 ## Conclusion
 
-The `git prolly sql` command brings the power of SQL to ProllyTree's versioned storage, enabling complex data analysis while maintaining Git's version control benefits. This unique combination allows you to:
+The `git-prolly sql` command brings the power of SQL to ProllyTree's versioned storage, enabling complex data analysis while maintaining Git's version control benefits. This unique combination allows you to:
 
 - Query your data with familiar SQL syntax
 - Version control your data changes

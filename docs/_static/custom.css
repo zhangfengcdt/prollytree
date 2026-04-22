@@ -1,0 +1,28 @@
+/* Custom CSS for ProllyTree documentation */
+
+/* Slightly narrower content for readability on wide screens */
+.md-grid {
+    max-width: 75rem;
+}
+
+/* Code blocks: softer background in dark mode so hashes / hex read well */
+[data-md-color-scheme="slate"] .highlight pre {
+    background-color: #1a1a1a;
+}
+
+/* Callout boxes — tighten top spacing so they read as inline with text */
+.md-typeset .admonition {
+    margin-top: 1em;
+}
+
+/* Mermaid diagrams: center them and give them breathing room */
+.mermaid {
+    text-align: center;
+    margin: 1.5em 0;
+}
+
+/* Tables: allow them to stretch to full width when content is wide */
+.md-typeset table:not([class]) {
+    display: table;
+    width: 100%;
+}

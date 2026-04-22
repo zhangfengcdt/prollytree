@@ -1,0 +1,118 @@
+site_name: ProllyTree
+site_description: A probabilistic B-tree with Merkle-tree properties — high-performance, cryptographically verifiable, Git-backed key-value storage in Rust with Python bindings.
+site_url: https://zhangfengcdt.github.io/prollytree/
+repo_url: https://github.com/zhangfengcdt/prollytree
+repo_name: zhangfengcdt/prollytree
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+extra_css:
+  - _static/custom.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: installation.md
+      - Quickstart: quickstart.md
+      - Basic Usage: basic_usage.md
+  - User Guide:
+      - Architecture: architecture.md
+      - Storage Backends: storage.md
+      - SQL Interface: sql.md
+      - FAQ: faq.md
+  - Theory:
+      - Overview: theory/index.md
+      - Prolly Trees: theory/prolly_tree.md
+      - Probabilistic Balancing: theory/rolling_hash.md
+      - Merkle Properties & Proofs: theory/merkle.md
+      - Versioning & Merge: theory/versioning.md
+  - CLI:
+      - git-prolly: cli.md
+  - API Reference:
+      - Rust API: api/rust.md
+      - Python API: api/python.md
+  - Examples:
+      - Overview: examples/index.md
+      - Basic Tree: examples/basic.md
+      - Versioned Store: examples/versioning.md
+      - SQL Queries: examples/sql.md
+      - Python Bindings: examples/python.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/zhangfengcdt/prollytree
+    - icon: fontawesome/brands/rust
+      link: https://crates.io/crates/prollytree
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/prollytree/
