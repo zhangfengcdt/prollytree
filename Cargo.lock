@@ -3176,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "prollytree"
-version = "0.3.4-snapshot"
+version = "0.3.4-beta"
 dependencies = [
  "arrow",
  "assert_cmd",
