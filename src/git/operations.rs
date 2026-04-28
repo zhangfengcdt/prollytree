@@ -337,18 +337,18 @@ impl<const N: usize> GitOperations<N> {
         &self,
         commit_id: &gix::ObjectId,
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
-        // Try to read prolly config and hash mappings directly from the commit
-        let current_dir = std::env::current_dir()
-            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get current dir: {e}")))?;
-
-        // Get the dataset directory name relative to git root
-        let git_root =
-            self.store.git_repo().workdir().ok_or_else(|| {
-                GitKvError::GitObjectError("Not in a working directory".to_string())
+        // Resolve from the store's own dataset directory rather than process cwd
+        // (GH-167: historical reads must not depend on cwd when the store path is known).
+        let dataset_dir =
+            self.store.dataset_dir.as_ref().ok_or_else(|| {
+                GitKvError::GitObjectError("Dataset directory not set".to_string())
             })?;
 
-        let relative_path = current_dir.strip_prefix(git_root).map_err(|_| {
-            GitKvError::GitObjectError("Current directory not within git repository".to_string())
+        let git_root = GitVersionedKvStore::<N>::find_git_root(dataset_dir)
+            .ok_or_else(|| GitKvError::GitObjectError("Not in a git repository".to_string()))?;
+
+        let relative_path = dataset_dir.strip_prefix(&git_root).map_err(|_| {
+            GitKvError::GitObjectError("Dataset directory not within git repository".to_string())
         })?;
 
         let dataset_name = relative_path.to_string_lossy();

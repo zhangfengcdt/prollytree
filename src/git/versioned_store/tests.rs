@@ -2200,4 +2200,39 @@ mod tests {
             keys
         );
     }
+
+    /// Regression test for GH-167: write operations must succeed when the calling
+    /// process's cwd is outside any git working tree, as long as an explicit absolute
+    /// store path is supplied to `open()`. Before the fix, `get_staging_file_path()`
+    /// resolved the git root from `std::env::current_dir()`, so `insert`/`commit`
+    /// failed with "Not in a git repository" even though the store path was a valid
+    /// git repo.
+    #[test]
+    fn test_gh167_writes_succeed_when_cwd_is_outside_git_tree() {
+        // 1. Create a git repo with a dataset subdirectory and seed it. The init has
+        //    to run from inside the repo (CLI requirement), but the regression test
+        //    exercises the *open + write* path from a non-git cwd, which is the bug.
+        let repo = TempDir::new().unwrap();
+        gix::init(repo.path()).unwrap();
+        let dataset_dir = repo.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        {
+            let _cwd = CwdGuard::set(&dataset_dir);
+            let _store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        }
+
+        // 2. Switch to a cwd that is NOT inside any git tree.
+        let non_git_cwd = TempDir::new().unwrap();
+        let _cwd = CwdGuard::set(non_git_cwd.path());
+
+        // 3. Open the existing store via its absolute path and write to it. Before
+        //    the fix this failed at the first `insert` with "Not in a git repository".
+        let mut store = GitVersionedKvStore::<32>::open(&dataset_dir).unwrap();
+        store.insert(b"k".to_vec(), b"v".to_vec()).unwrap();
+        store.commit("gh167 write from non-git cwd").unwrap();
+
+        // 4. Re-open from the same non-git cwd and verify the write persisted.
+        let store2 = GitVersionedKvStore::<32>::open(&dataset_dir).unwrap();
+        assert_eq!(store2.get(b"k"), Some(b"v".to_vec()));
+    }
 }

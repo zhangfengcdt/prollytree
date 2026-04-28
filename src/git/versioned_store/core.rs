@@ -24,7 +24,7 @@ where
     Self: TreeConfigSaver<N>,
 {
     /// Find the git repository root by walking up the directory tree
-    pub(super) fn find_git_root<P: AsRef<Path>>(start_path: P) -> Option<std::path::PathBuf> {
+    pub(crate) fn find_git_root<P: AsRef<Path>>(start_path: P) -> Option<std::path::PathBuf> {
         let mut current = start_path.as_ref().to_path_buf();
         loop {
             if current.join(".git").exists() {
@@ -398,16 +398,21 @@ where
 
     /// Get the dataset-specific staging file path
     fn get_staging_file_path(&self) -> Result<std::path::PathBuf, GitKvError> {
-        // Get the current directory relative to git root
-        let current_dir = std::env::current_dir().map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to get current directory: {e}"))
-        })?;
+        // Resolve from the store's own dataset directory rather than process cwd
+        // (GH-167: writes from a non-git cwd must not fail when the store path is known).
+        // Walking up from `dataset_dir` keeps `git_root` in the same form as
+        // `dataset_dir`, so the `strip_prefix` below stays consistent regardless of
+        // canonicalization differences.
+        let dataset_dir = self
+            .dataset_dir
+            .as_ref()
+            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".to_string()))?;
 
-        let git_root = Self::find_git_root(&current_dir)
+        let git_root = Self::find_git_root(dataset_dir)
             .ok_or_else(|| GitKvError::GitObjectError("Not in a git repository".to_string()))?;
 
         // Create a dataset-specific identifier from the relative path
-        let relative_path = current_dir
+        let relative_path = dataset_dir
             .strip_prefix(&git_root)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to get relative path: {e}")))?;
 
