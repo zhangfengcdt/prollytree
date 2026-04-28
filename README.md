@@ -22,10 +22,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-prollytree = "0.3.3"
+prollytree = "0.3.4-snapshot"
 
 # Optional features
-prollytree = { version = "0.3.3", features = ["git", "sql"] }
+prollytree = { version = "0.3.4-snapshot", features = ["git", "sql"] }
 ```
 
 ## Examples
@@ -80,7 +80,7 @@ memory patterns.
 
 ```toml
 [dependencies.prollytree]
-version = "0.3.3"
+version = "0.3.4-snapshot"
 features = ["git", "sql", "rocksdb_storage"]
 ```
 
