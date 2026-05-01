@@ -44,7 +44,7 @@ pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"], optiona
 rocksdb = { version = "0.22", optional = true }
 
 [dev-dependencies]
-assert_cmd = "2.0"
+assert_cmd = "2.2"
 bytes = "1.10.1"
 criterion = "0.5"
 predicates = "3.0"
