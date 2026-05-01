@@ -37,7 +37,7 @@ hex = { version = "0.4", optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
 gluesql-core = { version = "0.19", optional = true }
 async-trait = { version = "0.1", optional = true }
-uuid = { version = "1.0", features = ["v4"], optional = true }
+uuid = { version = "1.23", features = ["v4"], optional = true }
 futures = { version = "0.3", optional = true }
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync"], optional = true }
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"], optional = true }
