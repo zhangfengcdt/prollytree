@@ -143,16 +143,25 @@ jobs:
         with:
           platforms: linux/arm64
 
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install -y llvm
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features python,git,sql -i python3.11
+          args: --release --out dist --features python,git,sql,rocksdb_storage -i python3.11
           manylinux: ${{ matrix.manylinux }}
           before-script-linux: |
-            # Install any system dependencies if needed
-            if [ "${{ matrix.target }}" = "aarch64" ]; then
-              echo "Setting up for ARM64 build"
+            # librocksdb-sys needs clang/libclang for bindgen and a C++ toolchain.
+            if command -v yum >/dev/null 2>&1; then
+              yum install -y clang
+            elif command -v apt-get >/dev/null 2>&1; then
+              apt-get update && apt-get install -y --no-install-recommends clang
             fi
 
       - name: Upload wheels

@@ -74,7 +74,7 @@ for arg in "$@"; do
             shift
             ;;
         --all-features)
-            FEATURES="python sql"
+            FEATURES="python sql rocksdb_storage"
             shift
             ;;
     esac

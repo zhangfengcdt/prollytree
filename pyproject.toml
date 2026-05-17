@@ -39,7 +39,10 @@ Repository = "https://github.com/zhangfengcdt/prollytree.git"
 "Bug Tracker" = "https://github.com/zhangfengcdt/prollytree/issues"
 
 [tool.maturin]
-# Default features - can be overridden with --features flag
-features = ["python", "sql"]
+# Default features - can be overridden with --features flag.
+# rocksdb_storage is bundled so PyPI wheels (and sdist installs) ship with the
+# RocksDB backend enabled; users falling back to sdist need clang + a C++
+# toolchain installed for librocksdb-sys.
+features = ["python", "sql", "rocksdb_storage"]
 module-name = "prollytree"
 python-source = "python"
