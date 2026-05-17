@@ -193,6 +193,25 @@ def test_storage_backends():
             print(f"   Backend: {store_mem.storage_backend()}")
             print("   [OK] InMemory backend works")
 
+            # Test 4: RocksDB backend (skip if wheel built without rocksdb_storage)
+            print("\n[TEST] Test: RocksDB backend")
+            rocks_dir = os.path.join(tmpdir, "rocks_data")
+            os.makedirs(rocks_dir)
+            try:
+                store_rocks = VersionedKvStore(rocks_dir, StorageBackend.RocksDB)
+            except ValueError as exc:
+                if "rocksdb_storage" in str(exc):
+                    print("   [SKIP] wheel built without rocksdb_storage feature")
+                else:
+                    raise
+            else:
+                assert store_rocks.storage_backend() == StorageBackend.RocksDB
+                store_rocks.insert(b"key1", b"value1")
+                store_rocks.commit("RocksDB backend test")
+                assert store_rocks.get(b"key1") == b"value1"
+                print(f"   Backend: {store_rocks.storage_backend()}")
+                print("   [OK] RocksDB backend works")
+
             print("\n[OK] All storage backend tests completed successfully!")
         finally:
             os.chdir(original_dir)
@@ -347,7 +366,96 @@ def test_versioning_operations_on_file_backend():
             os.chdir(original_dir)
 
 
+def test_versioning_operations_on_rocksdb_backend():
+    """Test that versioning operations work on the RocksDB backend.
+
+    Mirrors test_versioning_operations_on_file_backend so the RocksDB
+    storage layer gets the same checkout / try_merge / diff / conflict-merge
+    coverage. Skipped when the wheel was built without `rocksdb_storage`.
+    """
+
+    original_dir = os.getcwd()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            print(f"\n[DIR] Testing versioning operations on RocksDB backend in: {tmpdir}")
+
+            subprocess.run(["git", "init"], cwd=tmpdir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmpdir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmpdir, check=True, capture_output=True)
+            os.chdir(tmpdir)
+
+            rocks_dir = os.path.join(tmpdir, "rocks_data")
+            os.makedirs(rocks_dir)
+            try:
+                store = VersionedKvStore(rocks_dir, StorageBackend.RocksDB)
+            except ValueError as exc:
+                if "rocksdb_storage" in str(exc):
+                    pytest.skip("wheel built without rocksdb_storage feature")
+                raise
+
+            store.insert(b"key1", b"value1")
+            store.commit("Initial commit on main")
+
+            # Create a feature branch and add a key
+            print("\n[TEST] Test: create_branch on RocksDB backend")
+            store.create_branch("feature")
+            print(f"   [OK] Created and switched to branch: {store.current_branch()}")
+            store.insert(b"feature_key", b"feature_value")
+            store.commit("Add feature key")
+
+            # Checkout back to main
+            print("\n[TEST] Test: checkout works on RocksDB backend")
+            store.checkout("main")
+            assert store.current_branch() == "main", "Should be on main branch"
+            assert store.get(b"feature_key") is None, "Feature key should not exist on main"
+            print(f"   [OK] Checkout to main succeeded, current branch: {store.current_branch()}")
+
+            # Add a non-conflicting change on main
+            store.insert(b"main_key", b"main_value")
+            store.commit("Add main key")
+
+            # try_merge should succeed without conflicts
+            print("\n[TEST] Test: try_merge works on RocksDB backend")
+            success, conflicts = store.try_merge("feature")
+            assert success, "Merge should succeed with no conflicts"
+            assert len(conflicts) == 0, "Should have no conflicts"
+            assert store.get(b"feature_key") == b"feature_value", "Feature key should exist after merge"
+            assert store.get(b"main_key") == b"main_value", "Main key should still exist"
+            print("   [OK] try_merge succeeded and merge result verified")
+
+            # diff between two commits
+            print("\n[TEST] Test: diff works on RocksDB backend")
+            history = store.log()
+            if len(history) >= 2:
+                diffs = store.diff(history[1]["id"], history[0]["id"])
+                print(f"   [OK] diff returned {len(diffs)} differences")
+            else:
+                print("   [SKIP] Not enough commits to test diff")
+
+            # Conflict resolution via TakeDestination
+            print("\n[TEST] Test: merge with conflict resolution on RocksDB backend")
+            store.create_branch("conflict-branch")
+            store.update(b"key1", b"conflict_value")
+            store.commit("Change key1 on conflict-branch")
+
+            store.checkout("main")
+            store.update(b"key1", b"main_updated_value")
+            store.commit("Change key1 on main")
+
+            from prollytree import ConflictResolution
+            merge_commit = store.merge("conflict-branch", ConflictResolution.TakeDestination)
+            assert store.get(b"key1") == b"main_updated_value", "Should keep main's value"
+            print(f"   [OK] Merge with conflict resolution succeeded, commit: {merge_commit[:8]}")
+
+            print("\n[OK] All versioning operations on RocksDB backend completed successfully!")
+        finally:
+            os.chdir(original_dir)
+
+
 if __name__ == "__main__":
     test_versioned_kv_store()
     test_storage_backends()
+    test_rocksdb_storage_backend()
     test_versioning_operations_on_file_backend()
+    test_versioning_operations_on_rocksdb_backend()
