@@ -17,10 +17,13 @@
 # Usage:
 #   ./build_python.sh                    # Build with default Python bindings
 #   ./build_python.sh --with-sql         # Build with SQL support
-#   ./build_python.sh --all-features     # Build with all features (Python + SQL)
+#   ./build_python.sh --all-features     # Build with all features (Python + SQL + RocksDB)
 #   ./build_python.sh --features "python sql"  # Specify features explicitly
 #   ./build_python.sh --install          # Build and install the package
 #   ./build_python.sh --with-sql --install  # Build with SQL and install
+#
+# Note: --all-features compiles RocksDB from source via librocksdb-sys, which
+# requires clang/libclang and a C++ toolchain on the build host.
 
 set -e
 
@@ -33,8 +36,9 @@ if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo ""
     echo "Options:"
     echo "  --with-sql           Build with SQL support"
-    echo "  --all-features       Build with all features (Python + SQL)"
-    echo "  --features FEATURES  Specify features explicitly (e.g., 'python sql')"
+    echo "  --all-features       Build with all features (Python + SQL + RocksDB)"
+    echo "                       Requires clang/libclang + C++ toolchain for librocksdb-sys."
+    echo "  --features FEATURES  Specify features explicitly (e.g., 'python sql rocksdb_storage')"
     echo "  --install            Install the built package after building"
     echo "  --help, -h           Show this help message"
     echo ""
@@ -42,6 +46,7 @@ if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo "  ./build_python.sh                       # Basic Python bindings"
     echo "  ./build_python.sh --with-sql            # With SQL support"
     echo "  ./build_python.sh --with-sql --install  # Build and install with SQL"
+    echo "  ./build_python.sh --all-features        # With SQL + RocksDB (slower; needs clang)"
     exit 0
 fi
 

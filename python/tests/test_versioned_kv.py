@@ -20,6 +20,23 @@ import subprocess
 import pytest
 from prollytree import VersionedKvStore, StorageBackend
 
+
+# By default the RocksDB tests must FAIL when the wheel under test was not built
+# with `rocksdb_storage` — that is the packaging regression this test exists to
+# catch (CI/PyPI wheels are expected to ship the feature). For local builds that
+# intentionally omit RocksDB (e.g. `--with-sql` without the rocksdb toolchain),
+# set PROLLYTREE_TEST_SKIP_MISSING_BACKENDS=1 to opt into skip-instead-of-fail.
+_ROCKSDB_MISSING_MARKER = "rocksdb_storage"
+
+
+def _handle_missing_rocksdb(exc):
+    """Re-raise unless the local opt-in env var is set, in which case skip."""
+    if _ROCKSDB_MISSING_MARKER not in str(exc):
+        raise exc
+    if os.environ.get("PROLLYTREE_TEST_SKIP_MISSING_BACKENDS"):
+        pytest.skip("wheel built without rocksdb_storage feature (opt-in skip)")
+    raise exc
+
 def test_versioned_kv_store():
     """Test the versioned key-value store functionality."""
 
@@ -193,18 +210,26 @@ def test_storage_backends():
             print(f"   Backend: {store_mem.storage_backend()}")
             print("   [OK] InMemory backend works")
 
-            # Test 4: RocksDB backend (skip if wheel built without rocksdb_storage)
+            # Test 4: RocksDB backend.
+            # Defaults to failing if the wheel was built without rocksdb_storage
+            # (catches packaging regressions). With PROLLYTREE_TEST_SKIP_MISSING_BACKENDS=1
+            # we print-skip and continue so the prior Git/File/InMemory passes
+            # remain visible (using pytest.skip here would mark the whole test
+            # skipped and hide them).
             print("\n[TEST] Test: RocksDB backend")
             rocks_dir = os.path.join(tmpdir, "rocks_data")
             os.makedirs(rocks_dir)
+            store_rocks = None
             try:
                 store_rocks = VersionedKvStore(rocks_dir, StorageBackend.RocksDB)
             except ValueError as exc:
-                if "rocksdb_storage" in str(exc):
-                    print("   [SKIP] wheel built without rocksdb_storage feature")
+                if _ROCKSDB_MISSING_MARKER in str(exc) and os.environ.get(
+                    "PROLLYTREE_TEST_SKIP_MISSING_BACKENDS"
+                ):
+                    print("   [SKIP] wheel built without rocksdb_storage feature (opt-in)")
                 else:
                     raise
-            else:
+            if store_rocks is not None:
                 assert store_rocks.storage_backend() == StorageBackend.RocksDB
                 store_rocks.insert(b"key1", b"value1")
                 store_rocks.commit("RocksDB backend test")
@@ -220,8 +245,10 @@ def test_storage_backends():
 def test_rocksdb_storage_backend():
     """End-to-end smoke test for the RocksDB storage backend.
 
-    Skipped when the wheel under test was not built with the `rocksdb_storage`
-    feature — the Rust binding raises ValueError with that exact message string.
+    Fails by default if the wheel under test was not built with the
+    `rocksdb_storage` feature — that is the packaging regression this test
+    exists to catch. Set PROLLYTREE_TEST_SKIP_MISSING_BACKENDS=1 to opt into
+    a skip on local builds that intentionally omit RocksDB.
     """
 
     original_dir = os.getcwd()
@@ -241,9 +268,7 @@ def test_rocksdb_storage_backend():
             try:
                 store = VersionedKvStore(rocks_dir, StorageBackend.RocksDB)
             except ValueError as exc:
-                if "rocksdb_storage" in str(exc):
-                    pytest.skip("wheel built without rocksdb_storage feature")
-                raise
+                _handle_missing_rocksdb(exc)
 
             assert store.storage_backend() == StorageBackend.RocksDB
 
@@ -371,7 +396,9 @@ def test_versioning_operations_on_rocksdb_backend():
 
     Mirrors test_versioning_operations_on_file_backend so the RocksDB
     storage layer gets the same checkout / try_merge / diff / conflict-merge
-    coverage. Skipped when the wheel was built without `rocksdb_storage`.
+    coverage. Fails by default if the wheel was built without
+    `rocksdb_storage`; set PROLLYTREE_TEST_SKIP_MISSING_BACKENDS=1 to opt
+    into a skip on local builds.
     """
 
     original_dir = os.getcwd()
@@ -390,9 +417,7 @@ def test_versioning_operations_on_rocksdb_backend():
             try:
                 store = VersionedKvStore(rocks_dir, StorageBackend.RocksDB)
             except ValueError as exc:
-                if "rocksdb_storage" in str(exc):
-                    pytest.skip("wheel built without rocksdb_storage feature")
-                raise
+                _handle_missing_rocksdb(exc)
 
             store.insert(b"key1", b"value1")
             store.commit("Initial commit on main")
