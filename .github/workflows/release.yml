@@ -117,18 +117,26 @@ jobs:
           - os: ubuntu-latest
             target: x86_64
             manylinux: 2_28
-          # Linux aarch64
+            features: python,git,sql,rocksdb_storage
+          # Linux aarch64 — cross-compile via rust-cross/manylinux_2_28-cross.
+          # rocksdb_storage is OFF here: librocksdb-sys's bindgen invokes clang
+          # targeting aarch64-unknown-linux-gnu and can't resolve the aarch64
+          # multiarch `bits/libc-header-start.h` from the Debian-based cross
+          # container. aarch64-Linux users needing RocksDB can build from sdist.
           - os: ubuntu-latest
             target: aarch64
             manylinux: 2_28
+            features: python,git,sql
           # Windows x86_64
           - os: windows-latest
             target: x64
             manylinux: false
+            features: python,git,sql,rocksdb_storage
           # macOS ARM64 (Apple Silicon) — arm64 wheel works on Intel Macs via Rosetta
           - os: macos-14
             target: aarch64
             manylinux: false
+            features: python,git,sql,rocksdb_storage
 
     steps:
       - uses: actions/checkout@v4
@@ -155,15 +163,11 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features python,git,sql,rocksdb_storage -i python3.11
+          args: --release --out dist --features ${{ matrix.features }} -i python3.11
           manylinux: ${{ matrix.manylinux }}
           before-script-linux: |
-            # librocksdb-sys needs:
-            #   - clang/libclang for bindgen
-            #   - a C++ toolchain (g++) to compile RocksDB itself
-            #   - glibc-devel for `bits/libc-header-start.h` (missing in the
-            #     aarch64 manylinux_2_28 container, present on x86_64 — install
-            #     it unconditionally so both matrix entries succeed)
+            # Install clang/libclang for bindgen and a C++ toolchain for any
+            # C++ deps. (rocksdb_storage is disabled on aarch64 — see matrix.)
             if command -v yum >/dev/null 2>&1; then
               yum install -y clang gcc gcc-c++ glibc-devel
             elif command -v apt-get >/dev/null 2>&1; then
