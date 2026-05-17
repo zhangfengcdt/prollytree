@@ -17,6 +17,7 @@
 import tempfile
 import os
 import subprocess
+import pytest
 from prollytree import VersionedKvStore, StorageBackend
 
 def test_versioned_kv_store():
@@ -193,6 +194,63 @@ def test_storage_backends():
             print("   [OK] InMemory backend works")
 
             print("\n[OK] All storage backend tests completed successfully!")
+        finally:
+            os.chdir(original_dir)
+
+
+def test_rocksdb_storage_backend():
+    """End-to-end smoke test for the RocksDB storage backend.
+
+    Skipped when the wheel under test was not built with the `rocksdb_storage`
+    feature — the Rust binding raises ValueError with that exact message string.
+    """
+
+    original_dir = os.getcwd()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            print(f"\n[DIR] Testing RocksDB backend in: {tmpdir}")
+
+            subprocess.run(["git", "init"], cwd=tmpdir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmpdir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmpdir, check=True, capture_output=True)
+
+            rocks_dir = os.path.join(tmpdir, "rocks_data")
+            os.makedirs(rocks_dir)
+            os.chdir(rocks_dir)
+
+            try:
+                store = VersionedKvStore(rocks_dir, StorageBackend.RocksDB)
+            except ValueError as exc:
+                if "rocksdb_storage" in str(exc):
+                    pytest.skip("wheel built without rocksdb_storage feature")
+                raise
+
+            assert store.storage_backend() == StorageBackend.RocksDB
+
+            # Round-trip: insert, commit, read back
+            store.insert(b"alpha", b"1")
+            store.insert(b"beta", b"2")
+            commit_id = store.commit("RocksDB initial")
+            assert store.get(b"alpha") == b"1"
+            assert store.get(b"beta") == b"2"
+            assert commit_id  # non-empty commit hash
+
+            # Update + delete should also persist
+            store.insert(b"alpha", b"1-updated")
+            store.delete(b"beta")
+            store.commit("RocksDB update")
+            assert store.get(b"alpha") == b"1-updated"
+            assert store.get(b"beta") is None
+
+            # Reopen the on-disk store and confirm the data survives the drop
+            del store
+            reopened = VersionedKvStore.open(rocks_dir, StorageBackend.RocksDB)
+            assert reopened.storage_backend() == StorageBackend.RocksDB
+            assert reopened.get(b"alpha") == b"1-updated"
+            assert reopened.get(b"beta") is None
+
+            print("   [OK] RocksDB backend round-trip + reopen passed")
         finally:
             os.chdir(original_dir)
 
