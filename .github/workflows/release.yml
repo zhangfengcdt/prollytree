@@ -158,11 +158,16 @@ jobs:
           args: --release --out dist --features python,git,sql,rocksdb_storage -i python3.11
           manylinux: ${{ matrix.manylinux }}
           before-script-linux: |
-            # librocksdb-sys needs clang/libclang for bindgen and a C++ toolchain.
+            # librocksdb-sys needs:
+            #   - clang/libclang for bindgen
+            #   - a C++ toolchain (g++) to compile RocksDB itself
+            #   - glibc-devel for `bits/libc-header-start.h` (missing in the
+            #     aarch64 manylinux_2_28 container, present on x86_64 — install
+            #     it unconditionally so both matrix entries succeed)
             if command -v yum >/dev/null 2>&1; then
-              yum install -y clang
+              yum install -y clang gcc gcc-c++ glibc-devel
             elif command -v apt-get >/dev/null 2>&1; then
-              apt-get update && apt-get install -y --no-install-recommends clang
+              apt-get update && apt-get install -y --no-install-recommends clang g++ libc6-dev
             fi
 
       - name: Upload wheels
