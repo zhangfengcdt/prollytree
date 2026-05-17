@@ -112,14 +112,15 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux x86_64
+          # Linux x86_64. Pinned to manylinux_2_28 (AlmaLinux 8) — manylinux2014
+          # (CentOS 7) ships libclang 3.4 which is too old for zstd-sys/bindgen.
           - os: ubuntu-latest
             target: x86_64
-            manylinux: auto
+            manylinux: 2_28
           # Linux aarch64
           - os: ubuntu-latest
             target: aarch64
-            manylinux: auto
+            manylinux: 2_28
           # Windows x86_64
           - os: windows-latest
             target: x64

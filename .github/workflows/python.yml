@@ -28,10 +28,12 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux
+          # Linux. Pinned to manylinux_2_28 (AlmaLinux 8) because manylinux2014
+          # (CentOS 7) ships libclang 3.4 — too old for zstd-sys/bindgen, which
+          # needs clang_getTranslationUnitTargetInfo (libclang ≥ 6.0).
           - os: ubuntu-latest
             target: x86_64
-            manylinux: auto
+            manylinux: 2_28
 #          - os: ubuntu-latest
 #            target: aarch64
 #            manylinux: auto
