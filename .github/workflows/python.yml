@@ -72,11 +72,15 @@ jobs:
         manylinux: ${{ matrix.manylinux }}
         rust-toolchain: stable
         before-script-linux: |
-          # librocksdb-sys needs clang/libclang for bindgen.
+          # librocksdb-sys needs:
+          #   - clang/libclang for bindgen
+          #   - a C++ toolchain (g++) to compile RocksDB itself
+          #   - glibc-devel for `bits/libc-header-start.h` (missing in aarch64
+          #     manylinux_2_28 by default; harmless on x86_64)
           if command -v yum >/dev/null 2>&1; then
-            yum install -y clang
+            yum install -y clang gcc gcc-c++ glibc-devel
           elif command -v apt-get >/dev/null 2>&1; then
-            apt-get update && apt-get install -y --no-install-recommends clang
+            apt-get update && apt-get install -y --no-install-recommends clang g++ libc6-dev
           fi
 
     - name: Configure git identity for tests
