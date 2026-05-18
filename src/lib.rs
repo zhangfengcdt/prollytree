@@ -36,7 +36,7 @@ limitations under the License.
 //!
 //! ```toml
 //! [dependencies]
-//! prollytree = "0.3.4"
+//! prollytree = "0.3.5-beta"
 //! ```
 //!
 //! Follow examples in the github repository to get started.
