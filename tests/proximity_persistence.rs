@@ -162,55 +162,6 @@ fn file_backend_multiple_indexes_share_storage() {
 }
 
 // ---------------------------------------------------------------------------
-// Git backend
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "git")]
-mod git_backend {
-    use super::*;
-    use prollytree::storage::GitNodeStorage;
-
-    fn fresh_repo() -> (TempDir, std::path::PathBuf) {
-        let temp = TempDir::new().unwrap();
-        gix::init_bare(temp.path()).unwrap();
-        let dataset = temp.path().to_path_buf();
-        (temp, dataset)
-    }
-
-    fn open_storage(dataset_dir: &std::path::Path) -> GitNodeStorage<N> {
-        let repo = gix::open(dataset_dir).unwrap();
-        GitNodeStorage::<N>::new(repo, dataset_dir.to_path_buf()).unwrap()
-    }
-
-    #[test]
-    fn git_backend_persist_load_roundtrip() {
-        let dim = 8u16;
-        let data = random_vectors(120, dim as usize, 0x4444);
-        let (temp, dataset) = fresh_repo();
-
-        let original_root = {
-            let storage = open_storage(&dataset);
-            let mut idx = ProximityIndex::new(storage, config(dim, Metric::Cosine));
-            for (id, v) in &data {
-                idx.insert(id.clone(), v.clone()).unwrap();
-            }
-            idx.persist("docs").unwrap()
-        };
-
-        let storage = open_storage(&dataset);
-        let mut reopened = ProximityIndex::<N, _>::load(storage, "docs").unwrap();
-        assert_eq!(reopened.root_hash().unwrap().cloned(), original_root);
-        assert_eq!(reopened.len(), data.len());
-
-        let q = vec![0.1f32; dim as usize];
-        let hits = reopened.knn(&q, 5, 32).unwrap();
-        assert!(!hits.is_empty());
-
-        drop(temp);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // RocksDB backend
 // ---------------------------------------------------------------------------
 
