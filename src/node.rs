@@ -13,6 +13,7 @@ limitations under the License.
 */
 #![allow(clippy::too_many_arguments)]
 
+use crate::config::TreeConfig;
 use crate::digest::ValueDigest;
 use crate::encoding::EncodingType;
 use crate::proof::Proof;
@@ -28,20 +29,10 @@ use twox_hash::XxHash64;
 const INIT_LEVEL: u8 = 0;
 /// seed for the hash function
 const HASH_SEED: u64 = 0;
-/// default base for the rolling hash
-const DEFAULT_BASE: u64 = 257;
-/// default modulus for the rolling hash
-const DEFAULT_MOD: u64 = 1_000_000_007;
-/// min_chunk_size also known as the window size of the rolling hash
-const DEFAULT_MIN_CHUNK_SIZE: usize = 8;
-/// max_chunk_size is the maximum number of key-value pairs in a node
-const DEFAULT_MAX_CHUNK_SIZE: usize = 1024 * 1024;
 
-/// The default pattern is 0b11, which is used to determine the split points
-/// The number of bit 1 determines the probability of split,
-/// e.g., 0b11 has a higher probability of split than 0b1111
-/// default pattern is 0b111111 (value=63)
-const DEFAULT_PATTERN: u64 = 0b111111;
+// Chunking defaults (base, modulus, min_chunk_size, max_chunk_size, pattern) live
+// on `TreeConfig::default()` in `crate::config`. `ProllyNode::default()` and
+// `ProllyNodeBuilder::default()` read from there so there is one source of truth.
 
 /// Trait representing a node with a fixed size N.
 /// This trait provides methods for inserting, deleting, and finding key-value pairs in the node.
@@ -170,18 +161,19 @@ pub struct ProllyNode<const N: usize> {
 
 impl<const N: usize> Default for ProllyNode<N> {
     fn default() -> Self {
+        let cfg = TreeConfig::<N>::default();
         ProllyNode {
             keys: Vec::new(),
             key_schema: None,
             values: Vec::new(),
             value_schema: None,
             is_leaf: true,
-            level: 0,
-            base: DEFAULT_BASE,
-            modulus: DEFAULT_MOD,
-            min_chunk_size: DEFAULT_MIN_CHUNK_SIZE,
-            max_chunk_size: DEFAULT_MAX_CHUNK_SIZE,
-            pattern: DEFAULT_PATTERN,
+            level: INIT_LEVEL,
+            base: cfg.base,
+            modulus: cfg.modulus,
+            min_chunk_size: cfg.min_chunk_size,
+            max_chunk_size: cfg.max_chunk_size,
+            pattern: cfg.pattern,
             split: false,
             merged: false,
             encode_types: Vec::new(),
@@ -204,16 +196,17 @@ pub struct ProllyNodeBuilder<const N: usize> {
 
 impl<const N: usize> Default for ProllyNodeBuilder<N> {
     fn default() -> Self {
+        let cfg = TreeConfig::<N>::default();
         ProllyNodeBuilder {
             keys: Vec::new(),
             values: Vec::new(),
             is_leaf: true,
             level: INIT_LEVEL,
-            base: DEFAULT_BASE,
-            modulus: DEFAULT_MOD,
-            min_chunk_size: DEFAULT_MIN_CHUNK_SIZE,
-            max_chunk_size: DEFAULT_MAX_CHUNK_SIZE,
-            pattern: DEFAULT_PATTERN,
+            base: cfg.base,
+            modulus: cfg.modulus,
+            min_chunk_size: cfg.min_chunk_size,
+            max_chunk_size: cfg.max_chunk_size,
+            pattern: cfg.pattern,
         }
     }
 }
