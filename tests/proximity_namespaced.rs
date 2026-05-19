@@ -273,3 +273,271 @@ fn drop_proximity_index_removes_from_in_memory_cache() {
     assert!(personal.drop_proximity_index("docs"));
     assert!(!personal.drop_proximity_index("docs"));
 }
+
+// ---------------------------------------------------------------------------
+// PR 3c — Git-backed merge integration
+// ---------------------------------------------------------------------------
+//
+// `merge_with_proximity_resolver` is only on `GitNamespacedKvStore` (the
+// merge API itself only exists for the Git backend). These tests exercise the
+// full path: insert + commit on dest, branch + insert + commit on source,
+// switch back, merge with a proximity resolver, verify the result.
+
+mod git_merge {
+    use super::*;
+    use prollytree::diff::IgnoreConflictsResolver;
+    use prollytree::git::versioned_store::GitNamespacedKvStore;
+    use prollytree::proximity::{
+        LatestVectorResolver, MeanVectorResolver, TakeSourceProximityResolver,
+    };
+
+    fn checkout(store: &mut GitNamespacedKvStore<N>, branch: &str) {
+        store.checkout(branch).expect("checkout failed");
+    }
+
+    fn create_branch(store: &mut GitNamespacedKvStore<N>, branch: &str) {
+        store.create_branch(branch).expect("create_branch failed");
+    }
+
+    #[test]
+    fn git_proximity_insert_commit_reopen() {
+        // Sanity check — verifies PR 3a's flush + PR 3c's hash-mapping
+        // consolidation work end-to-end on Git.
+        let (_temp, dataset) = setup_repo_and_dataset();
+        let data = random_vectors(40, 4, 0xa1);
+
+        let original_root;
+        {
+            let mut store = GitNamespacedKvStore::<N>::init(&dataset).unwrap();
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(4, Metric::L2))
+                .unwrap();
+            for (id, v) in &data {
+                docs.insert(id.clone(), v.clone()).unwrap();
+            }
+            original_root = docs.root_hash().unwrap();
+            drop(docs);
+            drop(personal);
+            store.commit("ingest").unwrap();
+        }
+
+        let mut store = GitNamespacedKvStore::<N>::open(&dataset).unwrap();
+        let mut personal = store.namespace("personal");
+        let mut docs = personal
+            .proximity_index("docs", config(4, Metric::L2))
+            .unwrap();
+        assert_eq!(docs.len(), data.len());
+        assert_eq!(docs.root_hash().unwrap(), original_root);
+        // Query something — exercises the full read path through the
+        // consolidated `prolly_hash_mappings`.
+        let _hits = docs.knn(&vec![0.1f32; 4], 5, 32).unwrap();
+    }
+
+    #[test]
+    fn merge_with_proximity_disjoint_inserts() {
+        // Two branches insert disjoint id ranges; merge should produce a
+        // union with no conflicts regardless of which proximity resolver
+        // is used (no overlapping ids).
+        let (_temp, dataset) = setup_repo_and_dataset();
+        let dim = 4u16;
+
+        let main_data = random_vectors(20, dim as usize, 0xb1);
+        let feature_data = random_vectors(20, dim as usize, 0xb2);
+        // Rename feature_data ids so they don't clash with main_data.
+        let feature_data: Vec<_> = feature_data
+            .into_iter()
+            .map(|(id, v)| {
+                let mut k = b"f-".to_vec();
+                k.extend(id);
+                (k, v)
+            })
+            .collect();
+
+        let mut store = GitNamespacedKvStore::<N>::init(&dataset).unwrap();
+        // Initial commit with main_data.
+        {
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+            for (id, v) in &main_data {
+                docs.insert(id.clone(), v.clone()).unwrap();
+            }
+        }
+        store.commit("main: ingest").unwrap();
+
+        // Create feature branch and add feature_data.
+        create_branch(&mut store, "feature");
+        {
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+            for (id, v) in &feature_data {
+                docs.insert(id.clone(), v.clone()).unwrap();
+            }
+        }
+        store.commit("feature: ingest").unwrap();
+
+        // Switch back to main, merge feature.
+        checkout(&mut store, "main");
+        // Re-open the index so it's loaded into memory for merge to consider.
+        {
+            let mut personal = store.namespace("personal");
+            let _ = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+        }
+
+        store
+            .merge_with_proximity_resolver(
+                "feature",
+                &IgnoreConflictsResolver,
+                &TakeSourceProximityResolver,
+            )
+            .expect("merge with proximity should succeed");
+
+        // After merge, the index should contain both sets of ids.
+        let mut personal = store.namespace("personal");
+        let mut docs = personal
+            .proximity_index("docs", config(dim, Metric::L2))
+            .unwrap();
+        assert_eq!(docs.len(), main_data.len() + feature_data.len());
+
+        // Spot-check: each id is queryable.
+        let q = vec![0.0f32; dim as usize];
+        let hits = docs
+            .knn(&q, main_data.len() + feature_data.len(), 64)
+            .unwrap();
+        assert_eq!(hits.len(), main_data.len() + feature_data.len());
+    }
+
+    #[test]
+    fn merge_with_proximity_conflicting_update_uses_mean() {
+        // Both branches modify the same id's vector differently. With the
+        // MeanVectorResolver the merged vector is the element-wise average.
+        let (_temp, dataset) = setup_repo_and_dataset();
+        let dim = 2u16;
+
+        let mut store = GitNamespacedKvStore::<N>::init(&dataset).unwrap();
+        {
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+            docs.insert(b"k".to_vec(), vec![0.0, 0.0]).unwrap();
+        }
+        store.commit("base").unwrap();
+
+        create_branch(&mut store, "feature");
+        {
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+            docs.insert(b"k".to_vec(), vec![4.0, 8.0]).unwrap();
+        }
+        store.commit("feature: update k").unwrap();
+
+        checkout(&mut store, "main");
+        {
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+            docs.insert(b"k".to_vec(), vec![2.0, 4.0]).unwrap();
+        }
+        store.commit("main: update k").unwrap();
+
+        // Reopen the index on main so merge considers it.
+        {
+            let mut personal = store.namespace("personal");
+            let _ = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+        }
+
+        let mean = MeanVectorResolver::new(Metric::L2).unwrap();
+        store
+            .merge_with_proximity_resolver("feature", &IgnoreConflictsResolver, &mean)
+            .expect("merge should succeed with MeanVectorResolver");
+
+        // Mean of [4, 8] (source) and [2, 4] (dest) = [3, 6].
+        let mut personal = store.namespace("personal");
+        let mut docs = personal
+            .proximity_index("docs", config(dim, Metric::L2))
+            .unwrap();
+        let hits = docs.knn(&[3.0, 6.0], 1, 8).unwrap();
+        assert_eq!(hits[0].0, b"k".to_vec());
+        // Distance from [3,6] to merged value [3,6] should be ~0.
+        assert!(
+            hits[0].1 < 1e-3,
+            "expected mean-merged vector, got distance {}",
+            hits[0].1
+        );
+    }
+
+    #[test]
+    fn merge_with_proximity_latest_picks_higher_timestamp() {
+        // Encode a timestamp into the vector's last element. Source has a
+        // higher timestamp on the conflicting id, so LatestVectorResolver
+        // should pick source's vector.
+        let (_temp, dataset) = setup_repo_and_dataset();
+        let dim = 3u16;
+
+        let mut store = GitNamespacedKvStore::<N>::init(&dataset).unwrap();
+        {
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+            // ts = 100
+            docs.insert(b"k".to_vec(), vec![1.0, 1.0, 100.0]).unwrap();
+        }
+        store.commit("base").unwrap();
+
+        create_branch(&mut store, "feature");
+        {
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+            // ts = 500 (newer)
+            docs.insert(b"k".to_vec(), vec![5.0, 5.0, 500.0]).unwrap();
+        }
+        store.commit("feature: bump k").unwrap();
+
+        checkout(&mut store, "main");
+        {
+            let mut personal = store.namespace("personal");
+            let mut docs = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+            // ts = 300 (newer than base but older than feature's update)
+            docs.insert(b"k".to_vec(), vec![3.0, 3.0, 300.0]).unwrap();
+        }
+        store.commit("main: nudge k").unwrap();
+
+        {
+            let mut personal = store.namespace("personal");
+            let _ = personal
+                .proximity_index("docs", config(dim, Metric::L2))
+                .unwrap();
+        }
+
+        let latest = LatestVectorResolver::new(|_id, v| v[2] as u64);
+        store
+            .merge_with_proximity_resolver("feature", &IgnoreConflictsResolver, &latest)
+            .expect("merge should succeed");
+
+        // Source wins (ts 500 > 300): merged value is [5, 5, 500].
+        let mut personal = store.namespace("personal");
+        let mut docs = personal
+            .proximity_index("docs", config(dim, Metric::L2))
+            .unwrap();
+        let hits = docs.knn(&[5.0, 5.0, 500.0], 1, 8).unwrap();
+        assert_eq!(hits[0].0, b"k".to_vec());
+        assert!(hits[0].1 < 1e-3, "expected source vector to win");
+    }
+}

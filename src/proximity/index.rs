@@ -143,6 +143,34 @@ pub struct ProximityIndexEntry<const N: usize> {
     pub config: ProximityConfig,
 }
 
+/// Deserialised view of a persisted `SavedProximityState` blob.
+///
+/// PR 3c uses this to read proximity-index state from arbitrary git commits
+/// (via [`crate::git::metadata::MetadataBackend::read_file_at_commit`])
+/// during namespaced merge — without instantiating a full
+/// [`ProximityIndex`] for the historical state.
+#[derive(Debug, Clone)]
+pub struct PersistedProximityState<const N: usize> {
+    pub config: ProximityConfig,
+    pub entries: BTreeMap<Vec<u8>, Vec<f32>>,
+    pub root_hash: Option<ValueDigest<N>>,
+}
+
+/// Deserialise a `SavedProximityState` bincode blob into a typed view.
+///
+/// Used by the namespaced merge integration in PR 3c.
+pub fn deserialize_persisted_state<const N: usize>(
+    bytes: &[u8],
+) -> Result<PersistedProximityState<N>, ProximityError> {
+    let state: SavedProximityState<N> = bincode::deserialize(bytes)
+        .map_err(|e| ProximityError::InvalidSavedState(e.to_string()))?;
+    Ok(PersistedProximityState {
+        config: state.config,
+        entries: state.entries,
+        root_hash: state.root,
+    })
+}
+
 impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
     /// Build a new, empty index backed by `storage`.
     pub fn new(storage: S, config: ProximityConfig) -> Self {
@@ -316,6 +344,38 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
             dirty: false,
             config: state.config,
         })
+    }
+
+    /// Snapshot of the current `(id, vector)` entries. The returned `BTreeMap`
+    /// is a deep clone of the canonical source-of-truth set, useful for
+    /// passing into [`crate::proximity::merge_proximity_index_sets`].
+    pub fn entries_snapshot(&self) -> BTreeMap<Vec<u8>, Vec<f32>> {
+        self.entries.clone()
+    }
+
+    /// Replace the entry set wholesale and mark the materialised tree dirty.
+    ///
+    /// Used by the namespaced merge logic: after three-way merging the entry
+    /// sets across base/source/dest, the result is installed back via this
+    /// method, then `commit_impl` flushes it through `persist()`.
+    ///
+    /// Returns `Err(DimensionMismatch)` if any vector's length differs from
+    /// `self.config.dim`.
+    pub fn replace_entries(
+        &mut self,
+        entries: BTreeMap<Vec<u8>, Vec<f32>>,
+    ) -> Result<(), ProximityError> {
+        for v in entries.values() {
+            if v.len() as u16 != self.config.dim {
+                return Err(ProximityError::DimensionMismatch {
+                    expected: self.config.dim,
+                    got: v.len() as u16,
+                });
+            }
+        }
+        self.entries = entries;
+        self.dirty = true;
+        Ok(())
     }
 
     /// Force a rebuild of the materialised tree if it is dirty. Idempotent

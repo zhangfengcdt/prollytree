@@ -584,6 +584,19 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
         }
     }
 
+    /// Mirror of [`Self::merge_ns_hash_mappings_to_inner_git`] for proximity
+    /// sub-indexes. Each proximity index holds a clone of the inner storage
+    /// with its own `hash_to_object_id` map; this consolidates those maps
+    /// into the inner store before `save_tree_config_to_git` snapshots the
+    /// canonical `prolly_hash_mappings` file.
+    #[cfg(feature = "proximity")]
+    fn merge_proximity_hash_mappings_to_inner_git(&self) {
+        for idx in self.proximity_indexes.values() {
+            let mappings = idx.storage().get_hash_mappings();
+            self.inner.tree.storage.merge_hash_mappings(mappings);
+        }
+    }
+
     /// Commit staged changes across all namespaces.
     ///
     /// Before delegating to the generic commit logic, merges hash mappings
@@ -645,7 +658,13 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
         // 5. Merge namespace hash mappings into inner storage
         self.merge_ns_hash_mappings_to_inner_git();
 
-        // 6. Delegate to inner for git commit
+        // 6. Merge proximity-index hash mappings into inner storage so the
+        //    canonical `prolly_hash_mappings` written by inner.commit covers
+        //    every proximity node we just wrote.
+        #[cfg(feature = "proximity")]
+        self.merge_proximity_hash_mappings_to_inner_git();
+
+        // 7. Delegate to inner for git commit
         self.inner.commit(message)
     }
 
@@ -1057,6 +1076,181 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
         self.merge_ns_hash_mappings_to_inner_git();
 
         self.inner.create_merge_commit_for_namespaced(source_branch)
+    }
+
+    /// Three-way merge that includes proximity (vector) sub-indexes.
+    ///
+    /// Compared to [`Self::merge`] (which only merges the primary KV tree per
+    /// namespace), this method also runs
+    /// [`crate::proximity::merge_proximity_index_sets`] on every proximity
+    /// index **currently loaded into memory** (via earlier
+    /// `NamespaceHandle::proximity_index` calls). Indexes that have never
+    /// been opened in this process are not auto-discovered yet — open them
+    /// first if you want them to participate in the merge.
+    ///
+    /// # Strategy
+    ///
+    /// 1. Pre-compute the proximity-merge result for every loaded index
+    ///    against the base and source commits. If any index has unresolved
+    ///    conflicts, the whole call fails with
+    ///    [`GitKvError::ProximityMergeConflictError`] before mutating the
+    ///    repository.
+    /// 2. Run the existing [`Self::merge`] (primary-tree three-way merge,
+    ///    creates a merge commit).
+    /// 3. Apply the pre-computed proximity merges into the in-memory indexes
+    ///    and create a **follow-up commit** that records the merged proximity
+    ///    state.
+    ///
+    /// The two-commit shape (primary merge commit + proximity follow-up) is a
+    /// known limitation; a future refactor can fold both into one commit by
+    /// extracting helpers from `merge`.
+    ///
+    /// Returns the object id of the proximity follow-up commit when any
+    /// proximity changes were applied, otherwise the primary merge commit.
+    #[cfg(feature = "proximity")]
+    pub fn merge_with_proximity_resolver<KR, PR>(
+        &mut self,
+        source_branch: &str,
+        kv_resolver: &KR,
+        proximity_resolver: &PR,
+    ) -> Result<gix::ObjectId, GitKvError>
+    where
+        KR: ConflictResolver,
+        PR: crate::proximity::ProximityConflictResolver,
+    {
+        let dest_branch = self.inner.current_branch.clone();
+        let base_commit = self.find_merge_base(&dest_branch, source_branch)?;
+        let source_commit = self.get_branch_commit(source_branch)?;
+
+        // -- 1. Pre-compute proximity merges; fail fast on unresolved conflicts.
+        let prox_keys: Vec<(String, String)> = self.proximity_indexes.keys().cloned().collect();
+        let mut prox_merged: Vec<((String, String), ProximityEntrySet)> = Vec::new();
+        let mut all_conflicts: Vec<crate::proximity::ProximityConflict> = Vec::new();
+
+        for (ns_name, idx_name) in &prox_keys {
+            let base = self
+                .load_proximity_entries_at_commit(&base_commit, ns_name, idx_name)?
+                .unwrap_or_default();
+            let source = self
+                .load_proximity_entries_at_commit(&source_commit, ns_name, idx_name)?
+                .unwrap_or_default();
+            let dest = self
+                .proximity_indexes
+                .get(&(ns_name.clone(), idx_name.clone()))
+                .map(|i| i.entries_snapshot())
+                .unwrap_or_default();
+
+            match crate::proximity::merge_proximity_index_sets(
+                &base,
+                &source,
+                &dest,
+                proximity_resolver,
+            ) {
+                Ok(merged) => {
+                    prox_merged.push(((ns_name.clone(), idx_name.clone()), merged));
+                }
+                Err(failure) => {
+                    all_conflicts.extend(failure.conflicts);
+                }
+            }
+        }
+
+        if !all_conflicts.is_empty() {
+            return Err(GitKvError::ProximityMergeConflictError(all_conflicts));
+        }
+
+        // -- 2. Run the existing primary-tree merge (creates the merge commit).
+        let primary_commit = self.merge(source_branch, kv_resolver)?;
+
+        // -- 3. Apply the pre-computed proximity merges + follow-up commit.
+        if prox_merged.is_empty() {
+            return Ok(primary_commit);
+        }
+
+        let mut any_changes = false;
+        for ((ns_name, idx_name), merged_entries) in prox_merged {
+            // Skip indexes whose three-way merge was a no-op (dest already
+            // matched the merged result). This keeps the follow-up commit
+            // empty in the no-op case.
+            let dest_unchanged = self
+                .proximity_indexes
+                .get(&(ns_name.clone(), idx_name.clone()))
+                .map(|i| i.entries_snapshot() == merged_entries)
+                .unwrap_or(false);
+            if dest_unchanged {
+                continue;
+            }
+            if let Some(idx) = self
+                .proximity_indexes
+                .get_mut(&(ns_name.clone(), idx_name.clone()))
+            {
+                idx.replace_entries(merged_entries).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Failed to install merged proximity entries for {ns_name}:{idx_name}: {e}"
+                    ))
+                })?;
+                self.dirty_proximity_indexes
+                    .insert((ns_name.clone(), idx_name.clone()));
+                any_changes = true;
+            }
+        }
+
+        if !any_changes {
+            return Ok(primary_commit);
+        }
+
+        self.commit("Proximity index merge follow-up")
+    }
+
+    /// Load the persisted `(id → vector)` entry set for a proximity sub-index
+    /// at a specific commit, by reading the canonical
+    /// `prolly_config_proximity:<ns>:<idx>:state` blob via git.
+    ///
+    /// Returns `Ok(None)` if the file doesn't exist at that commit (i.e. the
+    /// index didn't exist there yet).
+    #[cfg(feature = "proximity")]
+    fn load_proximity_entries_at_commit(
+        &self,
+        commit_id: &gix::ObjectId,
+        ns_name: &str,
+        idx_name: &str,
+    ) -> Result<Option<ProximityEntrySet>, GitKvError> {
+        let dataset_dir = self.inner.tree.storage.dataset_dir();
+        let git_root = self
+            .inner
+            .metadata
+            .work_dir()
+            .or_else(|| VersionedKvStore::<N, GitNodeStorage<N>>::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
+
+        let dataset_relative = dataset_dir
+            .strip_prefix(&git_root)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get relative path: {e}")))?;
+        let rel_str = dataset_relative
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        let key = format!("proximity:{ns_name}:{idx_name}:state");
+        let path = if rel_str.is_empty() {
+            format!("prolly_config_{key}")
+        } else {
+            format!("{rel_str}/prolly_config_{key}")
+        };
+
+        match self.inner.metadata.read_file_at_commit(commit_id, &path) {
+            Ok(bytes) => {
+                let state =
+                    crate::proximity::deserialize_persisted_state::<N>(&bytes).map_err(|e| {
+                        GitKvError::GitObjectError(format!(
+                            "Failed to deserialize proximity state at commit: {e}"
+                        ))
+                    })?;
+                Ok(Some(state.entries))
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     /// Migrate a V1 (flat) store to V2 (namespaced) format.
@@ -1691,6 +1885,12 @@ impl<const N: usize> ThreadSafeNamespacedKvStore<N, GitNodeStorage<N>, GitMetada
 // ---------------------------------------------------------------------------
 // Proximity (vector) sub-index integration — PR 3a
 // ---------------------------------------------------------------------------
+
+/// Canonical `(id → vector)` entry set for a proximity sub-index.
+/// Used during load + namespaced merge.
+#[cfg(feature = "proximity")]
+type ProximityEntrySet = std::collections::BTreeMap<Vec<u8>, Vec<f32>>;
+
 //
 // A namespace can own zero or more named proximity sub-indexes. Each lives in
 // its own [`ProximityIndex<N, S>`] cached in

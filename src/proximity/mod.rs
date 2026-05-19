@@ -37,12 +37,21 @@ limitations under the License.
 mod distance;
 mod index;
 mod level;
+pub mod merge;
 mod node;
 mod storage;
 
 pub use distance::{Distance, Metric};
-pub use index::{ProximityConfig, ProximityError, ProximityIndex, ProximityIndexEntry};
+pub use index::{
+    deserialize_persisted_state, PersistedProximityState, ProximityConfig, ProximityError,
+    ProximityIndex, ProximityIndexEntry,
+};
 pub use level::vector_level;
+pub use merge::{
+    merge_proximity_index_sets, LatestVectorResolver, MeanVectorResolver, MeanVectorResolverError,
+    MergeFailure, MergedProximitySet, ProximityConflict, ProximityConflictResolver,
+    ProximityResolution, TakeDestinationProximityResolver, TakeSourceProximityResolver,
+};
 pub use node::ProximityNode;
 
 // `ProximityNamespaceHandle` lives in the namespace machinery — namespaces are
