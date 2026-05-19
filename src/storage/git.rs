@@ -272,6 +272,26 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 
         None
     }
+
+    /// Flush the in-memory `prolly_hash → git_object_id` mapping to
+    /// `dataset_dir/prolly_hash_mappings` in the same sorted format
+    /// `load_hash_mappings` expects. Idempotent; safe to call repeatedly.
+    fn sync(&self) -> Result<(), StorageError> {
+        let path = self.dataset_dir.join("prolly_hash_mappings");
+        let mappings = self.hash_to_object_id.lock();
+        let mut lines: Vec<String> = mappings
+            .iter()
+            .map(|(hash, oid)| format!("{hash:x}:{oid}"))
+            .collect();
+        // Sorted output keeps the file diff-stable across runs and matches
+        // the canonical writer used by the higher-level commit machinery.
+        lines.sort();
+        let mut content = lines.join("\n");
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        std::fs::write(&path, content).map_err(StorageError::Io)
+    }
 }
 
 impl<const N: usize> GitNodeStorage<N> {

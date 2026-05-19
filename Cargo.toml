@@ -63,6 +63,7 @@ git = ["dep:gix", "dep:clap", "dep:lru", "dep:hex", "dep:chrono", "dep:uuid"]
 sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures", "dep:tokio"]
 python = ["dep:pyo3"]
 rocksdb_storage = ["dep:rocksdb", "dep:lru"]
+proximity = []
 
 [[bin]]
 name = "git-prolly"

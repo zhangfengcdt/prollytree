@@ -106,6 +106,21 @@ pub trait NodeStorage<const N: usize>: Send + Sync + Clone {
 
     /// Retrieves a configuration value.
     fn get_config(&self, key: &str) -> Option<Vec<u8>>;
+
+    /// Flush any in-memory bookkeeping that backends need on disk for a fresh
+    /// handle to read what this handle wrote.
+    ///
+    /// Default: no-op. Most backends (in-memory, file, rocksdb) place every
+    /// write durably on `insert_node` / `save_config` already. `GitNodeStorage`
+    /// is the exception: it persists each node as a git blob immediately, but
+    /// its `prolly_hash → git_object_id` mapping lives only in memory until
+    /// the higher-level commit machinery writes the canonical
+    /// `prolly_hash_mappings` snapshot. Callers that intend a fresh process
+    /// to reload the data they just wrote (e.g. an explicit `persist()` on
+    /// a higher-level index) should call this after they finish writing.
+    fn sync(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
 }
 
 impl<const N: usize> Display for ValueDigest<N> {
