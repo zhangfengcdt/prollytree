@@ -131,6 +131,18 @@ struct SavedProximityState<const N: usize> {
     root: Option<ValueDigest<N>>,
 }
 
+/// Registry entry for a proximity sub-index inside a namespace registry.
+///
+/// Holds just what's needed for the namespace registry: the persisted root
+/// hash + config. The entries `BTreeMap` (the canonical source of truth) is
+/// stored separately via [`NodeStorage::save_config`] under the same per-index
+/// key as standalone [`ProximityIndex::persist`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProximityIndexEntry<const N: usize> {
+    pub root_hash: Option<ValueDigest<N>>,
+    pub config: ProximityConfig,
+}
+
 impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
     /// Build a new, empty index backed by `storage`.
     pub fn new(storage: S, config: ProximityConfig) -> Self {

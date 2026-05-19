@@ -52,6 +52,9 @@ use crate::storage::FileNodeStorage;
 #[cfg(feature = "rocksdb_storage")]
 use crate::storage::RocksDBNodeStorage;
 
+#[cfg(feature = "proximity")]
+use crate::proximity::{ProximityConfig, ProximityError, ProximityIndex, ProximityIndexEntry};
+
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
@@ -120,6 +123,13 @@ pub struct NamespacedKvStore<
     pub(crate) dirty_namespaces: HashSet<String>,
     /// Store format version (V1 = flat/legacy, V2 = namespaced).
     pub(crate) format_version: StoreFormatVersion,
+    /// Lazily loaded per-namespace proximity (vector) indexes, keyed by
+    /// `(namespace_name, index_name)`. See [`crate::proximity`].
+    #[cfg(feature = "proximity")]
+    pub(crate) proximity_indexes: HashMap<(String, String), ProximityIndex<N, S>>,
+    /// Tracks which proximity indexes are dirty since last commit.
+    #[cfg(feature = "proximity")]
+    pub(crate) dirty_proximity_indexes: HashSet<(String, String)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -540,10 +550,17 @@ where
             );
         }
 
-        // 3. Write namespace registry + version to dataset dir
+        // 3. Flush any dirty proximity sub-indexes through ProximityIndex::persist,
+        //    which writes their canonical entries + root hash via NodeStorage::save_config.
+        //    Each persist also calls NodeStorage::sync() so backends with deferred
+        //    bookkeeping flush their mapping snapshots in time for the inner commit.
+        #[cfg(feature = "proximity")]
+        self.flush_dirty_proximity_indexes()?;
+
+        // 4. Write namespace registry + version to dataset dir
         self.save_namespace_registry()?;
 
-        // 4. Delegate to inner for the git commit
+        // 5. Delegate to inner for the git commit
         // (inner.commit drains its own empty staging, persists its placeholder tree,
         //  writes prolly_config_tree_config, stages ALL dataset_dir files via git add,
         //  creates the git commit, updates refs)
@@ -617,13 +634,18 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             );
         }
 
-        // 3. Write namespace files
+        // 3. Flush any dirty proximity sub-indexes (writes their canonical
+        //    entries + tree nodes via ProximityIndex::persist).
+        #[cfg(feature = "proximity")]
+        self.flush_dirty_proximity_indexes()?;
+
+        // 4. Write namespace files
         self.save_namespace_registry()?;
 
-        // 4. Merge namespace hash mappings into inner storage
+        // 5. Merge namespace hash mappings into inner storage
         self.merge_ns_hash_mappings_to_inner_git();
 
-        // 5. Delegate to inner for git commit
+        // 6. Delegate to inner for git commit
         self.inner.commit(message)
     }
 
@@ -640,6 +662,10 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: StoreFormatVersion::V2,
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
         };
 
         // Create the default namespace with an empty tree
@@ -672,6 +698,10 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: format_version.clone(),
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
         };
 
         match format_version {
@@ -1375,6 +1405,10 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: StoreFormatVersion::V2,
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
         };
 
         let default_tree = ProllyTree::new(store.inner.tree.storage.clone(), TreeConfig::default());
@@ -1404,6 +1438,10 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: format_version.clone(),
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
         };
 
         match format_version {
@@ -1445,6 +1483,10 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: StoreFormatVersion::V2,
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
         };
 
         let default_tree = ProllyTree::new(store.inner.tree.storage.clone(), TreeConfig::default());
@@ -1474,6 +1516,10 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: format_version.clone(),
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
         };
 
         match format_version {
@@ -1639,5 +1685,265 @@ impl<const N: usize> ThreadSafeNamespacedKvStore<N, GitNodeStorage<N>, GitMetada
         self.inner
             .lock()
             .namespace_changed(prefix, commit_a, commit_b)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proximity (vector) sub-index integration — PR 3a
+// ---------------------------------------------------------------------------
+//
+// A namespace can own zero or more named proximity sub-indexes. Each lives in
+// its own [`ProximityIndex<N, S>`] cached in
+// [`NamespacedKvStore::proximity_indexes`] (keyed by `(namespace, index_name)`).
+// Mutations mark the pair as dirty; [`NamespacedKvStore::commit_impl`] flushes
+// every dirty index by calling [`ProximityIndex::persist`] under a namespaced
+// key — that writes the tree's root node and saves the canonical entries
+// `BTreeMap` (the source of truth for rebuilds) via
+// [`crate::storage::NodeStorage::save_config`].
+//
+// On reopen, [`NamespaceHandle::proximity_index`] calls
+// [`ProximityIndex::load`] with the same namespaced key to restore both the
+// entries map and the root hash, and then resumes mutation.
+//
+// PR 3b (next) will add per-namespace 3-way merge for proximity sub-indexes.
+
+#[cfg(feature = "proximity")]
+fn proximity_save_name(ns_name: &str, idx_name: &str) -> String {
+    format!("{ns_name}:{idx_name}")
+}
+
+/// Short-lived mutable handle on a proximity sub-index within a namespace.
+///
+/// Returned by [`NamespaceHandle::proximity_index`]. Holds a re-borrow of the
+/// parent [`NamespacedKvStore`] and the keys identifying which index this
+/// handle operates on.
+#[cfg(feature = "proximity")]
+pub struct ProximityNamespaceHandle<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> {
+    store: &'a mut NamespacedKvStore<N, S, M>,
+    ns_name: String,
+    idx_name: String,
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> std::fmt::Debug
+    for ProximityNamespaceHandle<'a, N, S, M>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProximityNamespaceHandle")
+            .field("ns_name", &self.ns_name)
+            .field("idx_name", &self.idx_name)
+            .finish()
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend>
+    ProximityNamespaceHandle<'a, N, S, M>
+{
+    fn key(&self) -> (String, String) {
+        (self.ns_name.clone(), self.idx_name.clone())
+    }
+
+    /// Insert or update `(id, vector)`.
+    pub fn insert(&mut self, id: Vec<u8>, vector: Vec<f32>) -> Result<(), ProximityError> {
+        let key = self.key();
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&key)
+            .expect("proximity index must be loaded by NamespaceHandle::proximity_index");
+        idx.insert(id, vector)?;
+        self.store.dirty_proximity_indexes.insert(key);
+        Ok(())
+    }
+
+    /// Remove an id. Returns `true` if an entry was removed.
+    pub fn remove(&mut self, id: &[u8]) -> bool {
+        let key = self.key();
+        let idx = match self.store.proximity_indexes.get_mut(&key) {
+            Some(i) => i,
+            None => return false,
+        };
+        let removed = idx.remove(id);
+        if removed {
+            self.store.dirty_proximity_indexes.insert(key);
+        }
+        removed
+    }
+
+    /// k-nearest-neighbour query. Triggers a rebuild if any mutation happened
+    /// since the last query.
+    pub fn knn(
+        &mut self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+    ) -> Result<Vec<(Vec<u8>, f32)>, ProximityError> {
+        let key = self.key();
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&key)
+            .expect("proximity index must be loaded");
+        idx.knn(query, k, ef)
+    }
+
+    /// Number of distinct ids in this index.
+    pub fn len(&self) -> usize {
+        self.store
+            .proximity_indexes
+            .get(&self.key())
+            .map_or(0, |i| i.len())
+    }
+
+    /// True when the index holds no entries.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Root hash of the materialised proximity tree. Triggers a rebuild if dirty.
+    pub fn root_hash(&mut self) -> Result<Option<ValueDigest<N>>, ProximityError> {
+        let key = self.key();
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&key)
+            .expect("proximity index must be loaded");
+        idx.root_hash().map(|opt| opt.cloned())
+    }
+
+    /// Read-only configuration view.
+    pub fn config(&self) -> ProximityConfig {
+        self.store
+            .proximity_indexes
+            .get(&self.key())
+            .expect("proximity index must be loaded")
+            .config()
+            .clone()
+    }
+
+    /// Index name (within its namespace).
+    pub fn name(&self) -> &str {
+        &self.idx_name
+    }
+
+    /// Namespace name.
+    pub fn namespace(&self) -> &str {
+        &self.ns_name
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<'a, N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Open or create a named proximity (vector) sub-index inside this
+    /// namespace.
+    ///
+    /// On first call for a given `(namespace, idx_name)` pair this either
+    /// loads the persisted state (if a prior commit recorded one) or creates
+    /// a fresh empty index using `config`.
+    ///
+    /// When loading, the supplied `config.dim` must match the persisted
+    /// dimension. Mismatch returns [`ProximityError::DimensionMismatch`].
+    pub fn proximity_index<'b>(
+        &'b mut self,
+        idx_name: &str,
+        config: ProximityConfig,
+    ) -> Result<ProximityNamespaceHandle<'b, N, S, M>, ProximityError>
+    where
+        'a: 'b,
+    {
+        let key = (self.ns_name.clone(), idx_name.to_string());
+
+        if !self.store.proximity_indexes.contains_key(&key) {
+            let save_name = proximity_save_name(&self.ns_name, idx_name);
+            let storage = self.store.inner.tree.storage.clone();
+
+            let idx = match ProximityIndex::load(storage.clone(), &save_name) {
+                Ok(loaded) => {
+                    if loaded.config().dim != config.dim {
+                        return Err(ProximityError::DimensionMismatch {
+                            expected: loaded.config().dim,
+                            got: config.dim,
+                        });
+                    }
+                    loaded
+                }
+                Err(ProximityError::NotFound(_)) => ProximityIndex::new(storage, config),
+                Err(e) => return Err(e),
+            };
+            self.store.proximity_indexes.insert(key.clone(), idx);
+        }
+
+        Ok(ProximityNamespaceHandle {
+            store: &mut *self.store,
+            ns_name: self.ns_name.clone(),
+            idx_name: idx_name.to_string(),
+        })
+    }
+
+    /// Drop a proximity sub-index. Returns whether an index was found and
+    /// dropped from the in-memory cache.
+    ///
+    /// The persisted state (entries + tree nodes) is **not** eagerly deleted —
+    /// content-addressed nodes become unreachable and are reclaimed by the
+    /// backend's own GC. Future calls to `proximity_index` with the same name
+    /// would create a fresh empty index.
+    pub fn drop_proximity_index(&mut self, idx_name: &str) -> bool {
+        let key = (self.ns_name.clone(), idx_name.to_string());
+        self.store.dirty_proximity_indexes.remove(&key);
+        self.store.proximity_indexes.remove(&key).is_some()
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespacedKvStore<N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Build a registry of `(namespace → {index_name → entry})` from the
+    /// in-memory proximity-index state. Used by tests and PR 3b's merge logic.
+    pub fn proximity_registry_snapshot(
+        &mut self,
+    ) -> Result<HashMap<String, HashMap<String, ProximityIndexEntry<N>>>, ProximityError> {
+        let mut out: HashMap<String, HashMap<String, ProximityIndexEntry<N>>> = HashMap::new();
+        let keys: Vec<(String, String)> = self.proximity_indexes.keys().cloned().collect();
+        for (ns, idx_name) in keys {
+            let entry = {
+                let idx = self
+                    .proximity_indexes
+                    .get_mut(&(ns.clone(), idx_name.clone()))
+                    .unwrap();
+                ProximityIndexEntry {
+                    root_hash: idx.root_hash()?.cloned(),
+                    config: idx.config().clone(),
+                }
+            };
+            out.entry(ns).or_default().insert(idx_name, entry);
+        }
+        Ok(out)
+    }
+
+    /// Flush every dirty proximity sub-index by calling
+    /// [`ProximityIndex::persist`] with a namespaced save key. Called from
+    /// [`Self::commit_impl`] before the inner commit.
+    pub(crate) fn flush_dirty_proximity_indexes(&mut self) -> Result<(), GitKvError> {
+        let dirty: Vec<(String, String)> = self.dirty_proximity_indexes.drain().collect();
+        for (ns_name, idx_name) in dirty {
+            let save_name = proximity_save_name(&ns_name, &idx_name);
+            if let Some(idx) = self
+                .proximity_indexes
+                .get_mut(&(ns_name.clone(), idx_name.clone()))
+            {
+                idx.persist(&save_name).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Failed to persist proximity index {ns_name}:{idx_name}: {e}"
+                    ))
+                })?;
+            }
+        }
+        Ok(())
     }
 }

@@ -224,6 +224,9 @@ pub use namespaced::{
     ThreadSafeNamespacedKvStore, DEFAULT_NAMESPACE,
 };
 
+#[cfg(feature = "proximity")]
+pub use namespaced::ProximityNamespaceHandle;
+
 #[cfg(feature = "rocksdb_storage")]
 pub use namespaced::RocksDBNamespacedKvStore;
 

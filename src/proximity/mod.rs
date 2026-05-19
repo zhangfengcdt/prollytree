@@ -41,6 +41,12 @@ mod node;
 mod storage;
 
 pub use distance::{Distance, Metric};
-pub use index::{ProximityConfig, ProximityError, ProximityIndex};
+pub use index::{ProximityConfig, ProximityError, ProximityIndex, ProximityIndexEntry};
 pub use level::vector_level;
 pub use node::ProximityNode;
+
+// `ProximityNamespaceHandle` lives in the namespace machinery — namespaces are
+// the layer that owns multi-index lifecycle. Re-exported from here so callers
+// only need `use prollytree::proximity::*;`.
+#[cfg(feature = "git")]
+pub use crate::git::versioned_store::ProximityNamespaceHandle;
