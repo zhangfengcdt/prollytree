@@ -95,6 +95,12 @@ pub struct MigrationReport {
 /// The default namespace name used for backward-compatible flat API calls.
 pub const DEFAULT_NAMESPACE: &str = "default";
 
+/// Type alias for the per-target value transformer closure used by cascade.
+/// Takes the raw primary-tree value bytes and returns `Some(text)` to embed,
+/// or `None` to opt this id out of cascade for this index.
+#[cfg(feature = "proximity")]
+pub type ValueTransformer = Arc<dyn Fn(&[u8]) -> Option<String> + Send + Sync>;
+
 // ---------------------------------------------------------------------------
 // NamespacedKvStore
 // ---------------------------------------------------------------------------
@@ -150,6 +156,14 @@ pub struct NamespacedKvStore<
     /// are silently skipped — drift can be detected via `audit_text_index`.
     #[cfg(feature = "proximity")]
     pub(crate) cascade_lists: HashMap<String, Vec<String>>,
+    /// Per-target value transformers consulted during cascade. When
+    /// `(ns, idx_name)` is keyed here, the closure runs on the raw value
+    /// bytes to produce the text that will be embedded. Returning `None`
+    /// opts the id out of cascade for this index — useful for "this row
+    /// isn't text-indexable" decisions on structured payloads. Absence of
+    /// a transformer falls back to UTF-8 interpretation.
+    #[cfg(feature = "proximity")]
+    pub(crate) text_transformers: HashMap<(String, String), ValueTransformer>,
     /// Threshold (in bytes) above which inserted values are externalised as
     /// separate blobs via [`crate::storage::NodeStorage::insert_blob`].
     /// `None` (default) disables externalisation. Runtime config only —
@@ -293,26 +307,43 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     }
 
     /// Cascade an insert to every configured text sub-index for this
-    /// namespace. Silent no-op for namespaces without a cascade list, for
-    /// non-UTF-8 values, and for targets whose embedder/proximity-index
-    /// isn't currently loaded.
+    /// namespace. Per target the text to embed comes from:
+    ///
+    /// 1. A registered `ValueTransformer` (PR 4d follow-up) if one exists —
+    ///    its `Option<String>` return value determines whether this id
+    ///    participates (`None` opts out for this index).
+    /// 2. Otherwise UTF-8 interpretation of the bytes (silent skip on
+    ///    non-UTF-8).
+    ///
+    /// Silent no-op cases otherwise: no cascade list configured, target
+    /// whose embedder/proximity-index isn't currently loaded, or the
+    /// embedder itself returns an error.
     #[cfg(feature = "proximity")]
     fn cascade_insert(&mut self, key: &[u8], value: &[u8]) {
         let Some(cascade_list) = self.store.cascade_lists.get(&self.ns_name).cloned() else {
             return;
         };
-        let Ok(text) = std::str::from_utf8(value) else {
-            return;
-        };
         for idx_name in cascade_list {
-            let embedder_key = (self.ns_name.clone(), idx_name.clone());
+            let target_key = (self.ns_name.clone(), idx_name.clone());
             let prox_key = (self.ns_name.clone(), text_inner_proximity_name(&idx_name));
 
-            // Resolve the embedder first (immutable borrow ends with the clone).
-            let Some(embedder) = self.store.text_embedders.get(&embedder_key).cloned() else {
+            // 1. Determine the text to embed.
+            let text: String = match self.store.text_transformers.get(&target_key).cloned() {
+                Some(transformer) => match transformer(value) {
+                    Some(t) => t,
+                    None => continue, // transformer explicitly opted out
+                },
+                None => match std::str::from_utf8(value) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => continue, // non-UTF-8 + no transformer
+                },
+            };
+
+            // 2. Resolve the embedder (immutable borrow ends with the clone).
+            let Some(embedder) = self.store.text_embedders.get(&target_key).cloned() else {
                 continue;
             };
-            let Ok(vec) = embedder.embed(text) else {
+            let Ok(vec) = embedder.embed(&text) else {
                 continue;
             };
             if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
@@ -934,6 +965,8 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             text_embedders: HashMap::new(),
             #[cfg(feature = "proximity")]
             cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -975,6 +1008,8 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             text_embedders: HashMap::new(),
             #[cfg(feature = "proximity")]
             cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1862,6 +1897,8 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             text_embedders: HashMap::new(),
             #[cfg(feature = "proximity")]
             cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1900,6 +1937,8 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             text_embedders: HashMap::new(),
             #[cfg(feature = "proximity")]
             cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1950,6 +1989,8 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             text_embedders: HashMap::new(),
             #[cfg(feature = "proximity")]
             cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1988,6 +2029,8 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             text_embedders: HashMap::new(),
             #[cfg(feature = "proximity")]
             cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -2661,6 +2704,7 @@ where
         let embedder_key = (self.ns_name.clone(), idx_name.to_string());
         self.store.dirty_proximity_indexes.remove(&inner_idx_key);
         self.store.text_embedders.remove(&embedder_key);
+        self.store.text_transformers.remove(&embedder_key);
         self.store
             .proximity_indexes
             .remove(&inner_idx_key)
@@ -2706,6 +2750,45 @@ where
     /// Current cascade list for a namespace, if any.
     pub fn cascade_for_namespace(&self, ns_name: &str) -> Option<&[String]> {
         self.cascade_lists.get(ns_name).map(|v| v.as_slice())
+    }
+
+    /// Register a value transformer for a `(namespace, text_index)` target.
+    ///
+    /// During cascade, the transformer runs on the raw primary-tree value
+    /// bytes for each id. It returns either:
+    ///
+    /// - `Some(text)` — the text to embed and upsert into this index.
+    /// - `None` — opt this id out of cascade for this index. The primary
+    ///   tree still gets the bytes; only the named text index is skipped.
+    ///
+    /// Without a registered transformer, cascade falls back to interpreting
+    /// the bytes as UTF-8 (and silently skips non-UTF-8 values).
+    ///
+    /// Runtime configuration only — not persisted; users register their
+    /// transformers each process. Typical use: extract a field from a JSON
+    /// payload, or stringify a Protobuf message.
+    pub fn set_value_transformer<F>(&mut self, ns_name: &str, idx_name: &str, transformer: F)
+    where
+        F: Fn(&[u8]) -> Option<String> + Send + Sync + 'static,
+    {
+        self.text_transformers.insert(
+            (ns_name.to_string(), idx_name.to_string()),
+            Arc::new(transformer),
+        );
+    }
+
+    /// Remove the value transformer for a `(namespace, text_index)` target.
+    /// Returns whether one was registered.
+    pub fn clear_value_transformer(&mut self, ns_name: &str, idx_name: &str) -> bool {
+        self.text_transformers
+            .remove(&(ns_name.to_string(), idx_name.to_string()))
+            .is_some()
+    }
+
+    /// True when a value transformer is registered for the given target.
+    pub fn has_value_transformer(&self, ns_name: &str, idx_name: &str) -> bool {
+        self.text_transformers
+            .contains_key(&(ns_name.to_string(), idx_name.to_string()))
     }
 }
 
