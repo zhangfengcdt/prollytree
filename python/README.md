@@ -134,6 +134,11 @@ documents into vectors via a configurable embedder and gives you top-k
 similarity search that is versioned alongside the primary tree — branching and
 merging cover both the primary tree and every sub-index atomically.
 
+**The primary KV tree is the source of truth**; the text index stores only
+`(id, vector)` pairs. Always write the document body into the primary tree too
+— either explicitly or by enabling cascade — so you can resolve search hits
+back to text and reindex if the embedder ever changes.
+
 ```python
 from prollytree import NamespacedKvStore, MiniLmEmbedder
 
@@ -144,12 +149,20 @@ emb = MiniLmEmbedder()                       # bundled Candle + all-MiniLM-L6-v2
 # are persisted; opening with a mismatched embedder raises a clear error.
 store.text_index_open("docs", "by_body", emb)
 
-store.text_index_insert("docs", "by_body", b"doc:1", "the quick brown fox")
-store.text_index_insert("docs", "by_body", b"doc:2", "lazy dog asleep on the mat")
-store.commit("seed text index")
+# Dual write: primary tree (source of truth) + text index (pointer).
+docs = {
+    b"doc:1": "the quick brown fox",
+    b"doc:2": "lazy dog asleep on the mat",
+}
+for doc_id, text in docs.items():
+    store.ns_insert("docs", doc_id, text.encode())
+    store.text_index_insert("docs", "by_body", doc_id, text)
+store.commit("seed corpus")
 
-hits = store.text_index_search("docs", "by_body", "vulpine animal", k=5)
-# -> [(b"doc:1", 0.31), (b"doc:2", 0.74)]    # (id_bytes, distance)
+# Search returns (id_bytes, distance); resolve back to text via the primary.
+for doc_id, score in store.text_index_search("docs", "by_body", "vulpine animal", k=5):
+    body = store.ns_get("docs", doc_id).decode()
+    print(f"{doc_id} (d={score:.3f}): {body}")
 ```
 
 Three embedder options are bundled:
@@ -167,12 +180,16 @@ CallableEmbedder(                            # wrap any Python function
 )
 ```
 
-Cascade mode mirrors primary writes into a text index automatically:
+Cascade mode replaces the dual-write with a single `ns_insert` — the registered
+text indexes auto-mirror every primary write (and primary delete):
 
 ```python
-store.set_cascade("docs", ["by_body"])
+store.text_index_open("docs", "by_body", emb)
+store.set_cascade("docs", ["by_body"])       # opt-in, per namespace
+
+# One call now writes to both the primary tree AND the text index.
 store.ns_insert("docs", b"doc:3", b"branching is a first-class operation")
-store.commit("cascade-driven indexing")      # text index updated implicitly
+store.commit("cascade-driven indexing")
 ```
 
 Other knobs:

@@ -60,8 +60,8 @@ def setup_example_repo():
 
 
 def demo_basic_text_index():
-    """Open an index, insert a few docs, search."""
-    print("\nDemo 1: Open + insert + search")
+    """Dual-write pattern: primary tree (source of truth) + text index (pointer)."""
+    print("\nDemo 1: Open + dual-write + search (with primary-tree lookup)")
     print("=" * 60)
 
     tmpdir, dataset_dir = setup_example_repo()
@@ -74,6 +74,10 @@ def demo_basic_text_index():
         # cached on the Python wrapper for the rest of the process.
         store.text_index_open("personal", "docs", embedder)
 
+        # IMPORTANT: the proximity index stores (id, vector) pairs only — the
+        # original text is NOT recoverable from it. Always write the body into
+        # the primary tree too, so search hits can be resolved back to text
+        # and the corpus can be reindexed if the embedder ever changes.
         docs = {
             b"doc:1": "the quick brown fox jumps over the lazy dog",
             b"doc:2": "rust is a systems programming language",
@@ -81,16 +85,20 @@ def demo_basic_text_index():
             b"doc:4": "the fox and the hound are forest friends",
         }
         for doc_id, text in docs.items():
-            store.text_index_insert("personal", "docs", doc_id, text)
-        store.commit("seed text index")
+            store.ns_insert("personal", doc_id, text.encode())       # primary tree
+            store.text_index_insert("personal", "docs", doc_id, text)  # text index
+        store.commit("seed corpus + index")
 
-        print(f"Index now holds {store.text_index_len('personal', 'docs')} documents")
+        print(f"Primary holds {len(store.ns_list_keys('personal'))} documents")
+        print(f"Index holds {store.text_index_len('personal', 'docs')} documents")
 
-        # Top-k search returns (doc_id_bytes, distance) tuples. Lower = closer.
+        # Search returns (doc_id_bytes, distance). Resolve each id back to its
+        # body via the primary tree — the canonical two-step read pattern.
         hits = store.text_index_search("personal", "docs", "the quick brown fox", k=2)
         print(f"\nQuery: 'the quick brown fox' -> top {len(hits)}")
         for doc_id, score in hits:
-            print(f"  {doc_id!r}  distance={score:.4f}")
+            body = store.ns_get("personal", doc_id).decode()
+            print(f"  {doc_id!r}  distance={score:.4f}  body={body!r}")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -133,7 +141,12 @@ def demo_cascade_mode():
 
 
 def demo_multi_chunk_with_line_chunker():
-    """One document, many chunks — search dedups back to the document id."""
+    """One document, many chunks — search dedups back to the document id.
+
+    This demo focuses on chunker mechanics, so it skips the primary-tree
+    write for brevity; see demo 1 (or enable cascade as in demo 2) for the
+    full dual-write pattern.
+    """
     print("\nDemo 3: Multi-chunk indexing via LineChunker")
     print("=" * 60)
 
@@ -204,7 +217,11 @@ def demo_audit_drift():
 
 
 def demo_callable_embedder():
-    """Use a plain Python function as the embedder."""
+    """Use a plain Python function as the embedder.
+
+    Focuses on the embedder API; for the full primary+index dual write see
+    demo 1 (or enable cascade as in demo 2).
+    """
     print("\nDemo 5: CallableEmbedder — bring your own embedding function")
     print("=" * 60)
 
@@ -304,8 +321,10 @@ def main():
         demo_minilm_embedder()
         print("\nAll demos completed successfully.")
         print("\nKey takeaways:")
+        print("- Primary KV tree is the source of truth; text index stores only")
+        print("  (id, vector) pairs. Write document bodies to BOTH (demo 1) or")
+        print("  use set_cascade to auto-mirror primary writes into the index (demo 2).")
         print("- text_index_open(ns, idx, embedder, chunker) creates or re-opens.")
-        print("- set_cascade(ns, [idx, ...]) makes ns_insert/delete auto-mirror.")
         print("- chunker='line' splits one document into many chunks; search dedups.")
         print("- audit_text_index + purge_text_index_orphans repair drift.")
         print("- HashEmbedder for tests; CallableEmbedder for any Python function;")
