@@ -137,6 +137,11 @@ pub struct NamespacedKvStore<
     /// Tracks which proximity indexes are dirty since last commit.
     #[cfg(feature = "proximity")]
     pub(crate) dirty_proximity_indexes: HashSet<(String, String)>,
+    /// Threshold (in bytes) above which inserted values are externalised as
+    /// separate blobs via [`crate::storage::NodeStorage::insert_blob`].
+    /// `None` (default) disables externalisation. Runtime config only —
+    /// not persisted in the namespace registry; users set it per process.
+    pub(crate) externalize_threshold: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -198,21 +203,31 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     /// Get a value by key within this namespace.
     ///
     /// Checks the namespace's staging area first, then the committed tree.
+    /// Tree-side values are unwrapped through
+    /// [`crate::storage::externalize::unwrap_value`], so externalised values
+    /// transparently look like normal inline values to callers.
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        // Check namespace staging area first
+        // Check namespace staging area first. Staged values are always
+        // inline user bytes — externalisation only applies when staging
+        // is drained into the tree on commit, so no unwrap needed here.
         if let Some(staging) = self.store.namespace_staging.get(&self.ns_name) {
             if let Some(staged_value) = staging.get(key) {
                 return staged_value.clone();
             }
         }
 
-        // Check committed tree
+        // Check committed tree. Raw bytes from the leaf may be an externalised
+        // envelope; unwrap_value handles both cases (inline pass-through plus
+        // graceful fallback when an envelope-shaped value's hash doesn't
+        // resolve to a real blob).
         if let Some(tree) = self.store.namespaces.get(&self.ns_name) {
             return tree.find(key).and_then(|node| {
-                node.keys
-                    .iter()
-                    .position(|k| k == key)
-                    .map(|idx| node.values[idx].clone())
+                node.keys.iter().position(|k| k == key).map(|idx| {
+                    crate::storage::externalize::unwrap_value::<N, _>(
+                        &node.values[idx],
+                        &self.store.inner.tree.storage,
+                    )
+                })
             });
         }
 
@@ -503,6 +518,36 @@ where
         StoreFormatVersion::V1
     }
 
+    // -- Externalisation config (PR 0b) -------------------------------------
+
+    /// Set the threshold (in bytes) above which inserted values are stored
+    /// as separate content-addressed blobs via
+    /// [`crate::storage::NodeStorage::insert_blob`] instead of inline in the
+    /// leaf node.
+    ///
+    /// Passing `None` (the default) disables externalisation entirely —
+    /// values are stored inline regardless of size.
+    ///
+    /// Runtime configuration only. Not persisted in the namespace registry,
+    /// so callers must set this each time they open a store. The setting
+    /// affects future inserts; previously-stored externalised values are
+    /// always unwrapped transparently on read.
+    pub fn set_externalize_threshold(&mut self, threshold: Option<usize>) {
+        self.externalize_threshold = threshold;
+    }
+
+    /// Current externalisation threshold, if any.
+    pub fn externalize_threshold(&self) -> Option<usize> {
+        self.externalize_threshold
+    }
+
+    /// Borrow the inner content-addressed storage. Useful for integration
+    /// tests that want to verify externalised values landed as blobs, and
+    /// for advanced callers building on top of the blob API.
+    pub fn inner_storage(&self) -> &S {
+        &self.inner.tree.storage
+    }
+
     // -- Commit -------------------------------------------------------------
 
     /// Core commit logic shared by all backends.
@@ -534,7 +579,35 @@ where
                     for (key, value) in staging.drain() {
                         match value {
                             Some(v) => {
-                                tree.insert(key, v);
+                                // Apply externalisation threshold: values longer
+                                // than `externalize_threshold` are stored as
+                                // separate blobs via `insert_blob`, with the
+                                // in-tree value replaced by a 44-byte envelope
+                                // (magic + content hash + original size). Smaller
+                                // values stay inline, byte-for-byte unchanged.
+                                let stored = match self.externalize_threshold {
+                                    Some(threshold) if v.len() > threshold => {
+                                        let hash = ValueDigest::<N>::new(&v);
+                                        // Write the blob through the inner
+                                        // storage (the shared backing) so a
+                                        // fresh handle to the same path sees it.
+                                        self.inner
+                                            .tree
+                                            .storage
+                                            .insert_blob(hash.clone(), &v)
+                                            .map_err(|e| {
+                                                GitKvError::GitObjectError(format!(
+                                                    "externalise insert_blob: {e}"
+                                                ))
+                                            })?;
+                                        crate::storage::externalize::make_envelope::<N>(
+                                            &hash,
+                                            v.len() as u64,
+                                        )
+                                    }
+                                    _ => v,
+                                };
+                                tree.insert(key, stored);
                             }
                             None => {
                                 tree.delete(&key);
@@ -632,7 +705,28 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
                 if let Some(tree) = self.namespaces.get_mut(ns_name) {
                     for (key, value) in staging.drain() {
                         match value {
-                            Some(v) => tree.insert(key, v),
+                            Some(v) => {
+                                let stored = match self.externalize_threshold {
+                                    Some(threshold) if v.len() > threshold => {
+                                        let hash = ValueDigest::<N>::new(&v);
+                                        self.inner
+                                            .tree
+                                            .storage
+                                            .insert_blob(hash.clone(), &v)
+                                            .map_err(|e| {
+                                                GitKvError::GitObjectError(format!(
+                                                    "externalise insert_blob: {e}"
+                                                ))
+                                            })?;
+                                        crate::storage::externalize::make_envelope::<N>(
+                                            &hash,
+                                            v.len() as u64,
+                                        )
+                                    }
+                                    _ => v,
+                                };
+                                tree.insert(key, stored);
+                            }
                             None => {
                                 tree.delete(&key);
                             }
@@ -692,6 +786,7 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            externalize_threshold: None,
         };
 
         // Create the default namespace with an empty tree
@@ -728,6 +823,7 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            externalize_threshold: None,
         };
 
         match format_version {
@@ -1610,6 +1706,7 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            externalize_threshold: None,
         };
 
         let default_tree = ProllyTree::new(store.inner.tree.storage.clone(), TreeConfig::default());
@@ -1643,6 +1740,7 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            externalize_threshold: None,
         };
 
         match format_version {
@@ -1688,6 +1786,7 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            externalize_threshold: None,
         };
 
         let default_tree = ProllyTree::new(store.inner.tree.storage.clone(), TreeConfig::default());
@@ -1721,6 +1820,7 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            externalize_threshold: None,
         };
 
         match format_version {
