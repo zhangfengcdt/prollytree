@@ -131,4 +131,3 @@ start = time.time()
 tree.insert_batch([(f"batch:{i:04d}".encode(), f"v{i}".encode()) for i in range(1000)])
 print("batch:", time.time() - start, "s")
 ```
-
