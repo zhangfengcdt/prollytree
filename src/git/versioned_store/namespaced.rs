@@ -137,6 +137,19 @@ pub struct NamespacedKvStore<
     /// Tracks which proximity indexes are dirty since last commit.
     #[cfg(feature = "proximity")]
     pub(crate) dirty_proximity_indexes: HashSet<(String, String)>,
+    /// Centrally-owned embedders for text indexes, keyed by
+    /// `(namespace, idx_name)`. Stored here (rather than in the
+    /// `TextNamespaceHandle`) so the primary-tree `NamespaceHandle::insert`
+    /// path can reach them for auto-cascade — PR 4d.
+    #[cfg(feature = "proximity")]
+    pub(crate) text_embedders: HashMap<(String, String), Arc<dyn Embedder>>,
+    /// Per-namespace cascade lists. When a namespace name is keyed here, every
+    /// `NamespaceHandle::insert` / `::delete` against that namespace also
+    /// applies the operation to each listed text sub-index. Targets that
+    /// aren't currently loaded (no `text_index<E>()` call yet this process)
+    /// are silently skipped — drift can be detected via `audit_text_index`.
+    #[cfg(feature = "proximity")]
+    pub(crate) cascade_lists: HashMap<String, Vec<String>>,
     /// Threshold (in bytes) above which inserted values are externalised as
     /// separate blobs via [`crate::storage::NodeStorage::insert_blob`].
     /// `None` (default) disables externalisation. Runtime config only —
@@ -235,8 +248,20 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     }
 
     /// Insert a key-value pair within this namespace (stages the change).
+    ///
+    /// When the namespace has been configured for auto-cascade via
+    /// `NamespacedKvStore::set_cascade`, this also embeds `value` (as UTF-8)
+    /// and upserts the resulting vector into every cascading text sub-index
+    /// that is currently loaded. Targets not loaded yet, and values that
+    /// aren't valid UTF-8, are silently skipped.
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
         crate::validation::validate_kv(&key, &value)?;
+        // Auto-cascade into text indexes, if configured. Done BEFORE staging
+        // the primary insert so an embed error surfaces before any state has
+        // been touched.
+        #[cfg(feature = "proximity")]
+        self.cascade_insert(&key, &value);
+
         self.store
             .namespace_staging
             .entry(self.ns_name.clone())
@@ -247,6 +272,10 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     }
 
     /// Delete a key within this namespace (stages the deletion).
+    ///
+    /// When the namespace has been configured for auto-cascade via
+    /// `NamespacedKvStore::set_cascade`, this also removes the id from every
+    /// cascading text sub-index that is currently loaded.
     pub fn delete(&mut self, key: &[u8]) -> Result<bool, GitKvError> {
         let exists = self.get(key).is_some();
         if exists {
@@ -256,8 +285,57 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
                 .or_default()
                 .insert(key.to_vec(), None);
             self.store.dirty_namespaces.insert(self.ns_name.clone());
+
+            #[cfg(feature = "proximity")]
+            self.cascade_delete(key);
         }
         Ok(exists)
+    }
+
+    /// Cascade an insert to every configured text sub-index for this
+    /// namespace. Silent no-op for namespaces without a cascade list, for
+    /// non-UTF-8 values, and for targets whose embedder/proximity-index
+    /// isn't currently loaded.
+    #[cfg(feature = "proximity")]
+    fn cascade_insert(&mut self, key: &[u8], value: &[u8]) {
+        let Some(cascade_list) = self.store.cascade_lists.get(&self.ns_name).cloned() else {
+            return;
+        };
+        let Ok(text) = std::str::from_utf8(value) else {
+            return;
+        };
+        for idx_name in cascade_list {
+            let embedder_key = (self.ns_name.clone(), idx_name.clone());
+            let prox_key = (self.ns_name.clone(), text_inner_proximity_name(&idx_name));
+
+            // Resolve the embedder first (immutable borrow ends with the clone).
+            let Some(embedder) = self.store.text_embedders.get(&embedder_key).cloned() else {
+                continue;
+            };
+            let Ok(vec) = embedder.embed(text) else {
+                continue;
+            };
+            if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
+                let _ = idx.insert(key.to_vec(), vec);
+                self.store.dirty_proximity_indexes.insert(prox_key);
+            }
+        }
+    }
+
+    /// Cascade a delete to every configured text sub-index for this namespace.
+    #[cfg(feature = "proximity")]
+    fn cascade_delete(&mut self, key: &[u8]) {
+        let Some(cascade_list) = self.store.cascade_lists.get(&self.ns_name).cloned() else {
+            return;
+        };
+        for idx_name in cascade_list {
+            let prox_key = (self.ns_name.clone(), text_inner_proximity_name(&idx_name));
+            if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
+                if idx.remove(key) {
+                    self.store.dirty_proximity_indexes.insert(prox_key);
+                }
+            }
+        }
     }
 
     /// List all keys within this namespace (includes staged changes).
@@ -852,6 +930,10 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -889,6 +971,10 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1772,6 +1858,10 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1806,6 +1896,10 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1852,6 +1946,10 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1886,6 +1984,10 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             proximity_indexes: HashMap::new(),
             #[cfg(feature = "proximity")]
             dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -2344,9 +2446,8 @@ fn text_index_state_key(ns_name: &str, idx_name: &str) -> String {
 /// vector index is borrowed (via re-borrow of the parent
 /// [`NamespacedKvStore`]) for each operation.
 #[cfg(feature = "proximity")]
-pub struct TextNamespaceHandle<'a, const N: usize, E, S, M>
+pub struct TextNamespaceHandle<'a, const N: usize, S, M>
 where
-    E: Embedder,
     S: NodeStorage<N>,
     M: MetadataBackend,
 {
@@ -2355,13 +2456,16 @@ where
     idx_name: String,
     /// Key into `store.proximity_indexes` — `(ns_name, "__text__<idx_name>")`.
     inner_idx_key: (String, String),
-    embedder: E,
+    /// Cheap reference into `store.text_embedders` (Arc bump only). PR 4d
+    /// changed embedder ownership from "by value on the handle" to
+    /// "centrally owned by the store", so the auto-cascade insert path
+    /// can reach the embedder.
+    embedder: Arc<dyn Embedder>,
 }
 
 #[cfg(feature = "proximity")]
-impl<'a, const N: usize, E, S, M> std::fmt::Debug for TextNamespaceHandle<'a, N, E, S, M>
+impl<'a, const N: usize, S, M> std::fmt::Debug for TextNamespaceHandle<'a, N, S, M>
 where
-    E: Embedder,
     S: NodeStorage<N>,
     M: MetadataBackend,
 {
@@ -2376,9 +2480,8 @@ where
 }
 
 #[cfg(feature = "proximity")]
-impl<'a, const N: usize, E, S, M> TextNamespaceHandle<'a, N, E, S, M>
+impl<'a, const N: usize, S, M> TextNamespaceHandle<'a, N, S, M>
 where
-    E: Embedder,
     S: NodeStorage<N>,
     M: MetadataBackend,
 {
@@ -2453,9 +2556,12 @@ where
         &self.ns_name
     }
 
-    /// Read-only access to the wrapped embedder.
-    pub fn embedder(&self) -> &E {
-        &self.embedder
+    /// Read-only access to the wrapped embedder (via dyn dispatch — the
+    /// concrete embedder type is type-erased on namespaced handles to enable
+    /// auto-cascade across multiple text indexes that may use different
+    /// embedder types).
+    pub fn embedder(&self) -> &dyn Embedder {
+        &*self.embedder
     }
 }
 
@@ -2477,11 +2583,11 @@ where
     /// state from `NodeStorage::save_config`. Mismatch returns
     /// [`TextIndexError::EmbedderMismatch`] or
     /// [`TextIndexError::DimensionMismatch`] before mutating state.
-    pub fn text_index<'b, E: Embedder>(
+    pub fn text_index<'b, E: Embedder + 'static>(
         &'b mut self,
         idx_name: &str,
         config: TextIndexConfig<E>,
-    ) -> Result<TextNamespaceHandle<'b, N, E, S, M>, TextIndexError>
+    ) -> Result<TextNamespaceHandle<'b, N, S, M>, TextIndexError>
     where
         'a: 'b,
     {
@@ -2500,6 +2606,7 @@ where
         let inner_local_name = text_inner_proximity_name(idx_name);
         let proximity_save_name_full = proximity_save_name(&self.ns_name, &inner_local_name);
         let inner_idx_key = (self.ns_name.clone(), inner_local_name);
+        let embedder_key = (self.ns_name.clone(), idx_name.to_string());
 
         if !self.store.proximity_indexes.contains_key(&inner_idx_key) {
             let prox_config = ProximityConfig {
@@ -2526,12 +2633,22 @@ where
                 .insert(inner_idx_key.clone(), inner);
         }
 
+        // Register the embedder centrally so the cascade insert path can
+        // reach it. Subsequent calls with the same `idx_name` replace the
+        // entry — by this point, identity validation has already confirmed
+        // the new embedder matches the persisted id/version, so swapping
+        // the Arc is safe.
+        let arc_embedder: Arc<dyn Embedder> = Arc::new(config.embedder);
+        self.store
+            .text_embedders
+            .insert(embedder_key, arc_embedder.clone());
+
         Ok(TextNamespaceHandle {
             store: &mut *self.store,
             ns_name: self.ns_name.clone(),
             idx_name: idx_name.to_string(),
             inner_idx_key,
-            embedder: config.embedder,
+            embedder: arc_embedder,
         })
     }
 
@@ -2541,11 +2658,54 @@ where
     /// call to `text_index` with the same name re-loads the same state.
     pub fn drop_text_index(&mut self, idx_name: &str) -> bool {
         let inner_idx_key = (self.ns_name.clone(), text_inner_proximity_name(idx_name));
+        let embedder_key = (self.ns_name.clone(), idx_name.to_string());
         self.store.dirty_proximity_indexes.remove(&inner_idx_key);
+        self.store.text_embedders.remove(&embedder_key);
         self.store
             .proximity_indexes
             .remove(&inner_idx_key)
             .is_some()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cascade configuration — PR 4d
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "proximity")]
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespacedKvStore<N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Configure auto-cascade for a namespace. Every subsequent
+    /// `NamespaceHandle::insert` against `ns_name` will additionally embed
+    /// the value (interpreted as UTF-8) and upsert into every listed text
+    /// sub-index. `NamespaceHandle::delete` cascades deletions to the same
+    /// list.
+    ///
+    /// Targets that have not been loaded (no `text_index<E>()` call yet in
+    /// this process) are silently skipped. Use
+    /// [`Self::audit_text_index`] / [`Self::purge_text_index_orphans`] to
+    /// detect and repair drift after the fact.
+    ///
+    /// Values that are not valid UTF-8 are silently skipped for cascade —
+    /// a future PR will add a `value_transformer` hook for binary-to-text
+    /// extraction.
+    ///
+    /// Runtime configuration only: not persisted in the namespace registry,
+    /// so callers must set it each time they open the store.
+    pub fn set_cascade(&mut self, ns_name: &str, text_indexes: Vec<String>) {
+        self.cascade_lists.insert(ns_name.to_string(), text_indexes);
+    }
+
+    /// Clear any cascade configuration for the given namespace.
+    pub fn clear_cascade(&mut self, ns_name: &str) {
+        self.cascade_lists.remove(ns_name);
+    }
+
+    /// Current cascade list for a namespace, if any.
+    pub fn cascade_for_namespace(&self, ns_name: &str) -> Option<&[String]> {
+        self.cascade_lists.get(ns_name).map(|v| v.as_slice())
     }
 }
 
