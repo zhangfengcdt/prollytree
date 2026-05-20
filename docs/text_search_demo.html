@@ -10,558 +10,1001 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ProllyTree — Text Indexing &amp; Vector Search Demo</title>
+  <title>ProllyTree — Versioned Vector Search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
+    :root {
+      /* Palette borrowed from memoir-ai.dev */
+      --bg-0: #0a0d12;
+      --bg-1: #10141c;
+      --bg-2: #161b26;
+      --bg-3: #1d2330;
+      --fg-0: #f3f5f9;
+      --fg-1: #a8b0bf;
+      --fg-2: #6b7384;
+      --fg-3: #4a5263;
+      --accent: #00d68f;
+      --accent-hover: #00ebaa;
+      --accent-dim: rgba(0, 214, 143, 0.15);
+      --accent-glow: rgba(0, 214, 143, 0.35);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.14);
+      --danger: #ff6b6b;
+      --warning: #ffb84d;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
+      --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+      --dur-fast: 0.12s;
+      --dur-med: 0.22s;
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "JetBrains Mono", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background: #fafafa;
-      color: #1a1a1a;
-      padding: 24px;
-      line-height: 1.5;
+      font-family: var(--font-sans);
+      background: var(--bg-0);
+      color: var(--fg-1);
+      line-height: 1.55;
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
     }
-    .container { max-width: 1100px; margin: 0 auto; }
+    .mono { font-family: var(--font-mono); }
+    code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+    code {
+      background: var(--bg-2); color: var(--fg-0);
+      padding: 1px 6px; border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); }
 
-    /* Header */
-    .header {
-      background: #fff; border-radius: 12px; padding: 28px;
-      margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-      border: 1px solid #e5e5e5;
+    /* ---------- Deck ---------- */
+    .deck {
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(circle at 20% 0%, var(--accent-dim) 0%, transparent 40%),
+        radial-gradient(circle at 90% 100%, rgba(0, 214, 143, 0.05) 0%, transparent 50%),
+        var(--bg-0);
     }
-    .header h1 { font-size: 28px; font-weight: 600; margin-bottom: 8px; }
-    .header p.tagline { color: #555; font-size: 15px; max-width: 720px; }
-    .header .links { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
-    .header .links a {
-      font-size: 13px; padding: 5px 10px; border-radius: 6px;
-      background: #f3f4f6; color: #1f2937; text-decoration: none;
-      border: 1px solid #e5e7eb;
+    .slide {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      padding: 60px 80px 100px;
+      opacity: 0; transform: translateX(40px) scale(0.99);
+      pointer-events: none; overflow-y: auto;
+      transition:
+        opacity var(--dur-med) var(--ease-out),
+        transform var(--dur-med) var(--ease-out);
     }
-    .header .links a:hover { background: #e5e7eb; }
+    .slide.active { opacity: 1; transform: none; pointer-events: auto; }
+    .slide.prev   { transform: translateX(-40px) scale(0.99); }
 
-    /* Card */
-    .card {
-      background: #fff; border-radius: 12px; padding: 24px;
-      margin-bottom: 24px; border: 1px solid #e5e5e5;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    .slide-inner {
+      max-width: 1200px; margin: 0 auto; width: 100%; flex: 1;
+      display: flex; flex-direction: column;
     }
-    .card h2 {
-      font-size: 18px; font-weight: 600; margin-bottom: 14px;
-      padding-bottom: 10px; border-bottom: 1px solid #f0f0f0;
-    }
-    .card p { color: #444; font-size: 14px; margin-bottom: 12px; }
-    .muted { color: #777; font-size: 13px; }
 
-    /* Architecture diagram */
-    .arch {
-      display: grid; grid-template-columns: 220px 1fr; gap: 16px;
-      align-items: start;
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+      color: var(--accent); letter-spacing: 0.04em;
+      text-transform: uppercase; margin-bottom: 16px;
     }
-    .arch .store-tag {
-      background: #1a1a1a; color: #fff; padding: 6px 10px; border-radius: 6px;
-      font-family: ui-monospace, 'SF Mono', Monaco, monospace;
-      font-size: 12px; text-align: center;
+    .eyebrow .dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
     }
-    .ns-box {
-      background: #f9fafb; border: 1px solid #d1d5db; border-radius: 10px;
-      padding: 12px; margin-bottom: 10px;
-    }
-    .ns-box .ns-label {
-      display: inline-block; background: #fff; color: #374151;
-      padding: 2px 8px; border-radius: 4px; border: 1px solid #d1d5db;
-      font-family: ui-monospace, monospace; font-size: 11px;
-      margin-bottom: 8px;
-    }
-    .ns-children {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px;
-    }
-    .ns-leaf {
-      background: #fff; border: 1px solid #e5e7eb; border-radius: 6px;
-      padding: 8px 10px; font-size: 12px;
-    }
-    .ns-leaf .leaf-title { font-weight: 600; margin-bottom: 2px; }
-    .ns-leaf .leaf-sub { color: #6b7280; font-family: ui-monospace, monospace; font-size: 11px; }
-    .ns-leaf.primary { border-left: 3px solid #2563eb; }
-    .ns-leaf.text-idx { border-left: 3px solid #16a34a; }
 
-    /* Demo */
-    .demo-controls {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-      margin-bottom: 16px;
+    h1.slide-title {
+      font-size: clamp(34px, 4.2vw, 56px); font-weight: 700;
+      color: var(--fg-0); letter-spacing: -0.02em; line-height: 1.1;
+      margin-bottom: 18px;
     }
-    .demo-controls label {
-      display: block; font-size: 12px; color: #555; margin-bottom: 4px;
-      font-weight: 500;
+    h2.slide-title {
+      font-size: clamp(28px, 3.2vw, 44px); font-weight: 700;
+      color: var(--fg-0); letter-spacing: -0.02em; line-height: 1.15;
+      margin-bottom: 14px;
     }
-    .demo-controls input, .demo-controls select {
-      width: 100%; padding: 8px 10px; border: 1px solid #d1d5db;
-      border-radius: 6px; font-size: 14px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    .lede {
+      font-size: 18px; color: var(--fg-1); max-width: 780px;
+      line-height: 1.6; margin-bottom: 28px;
     }
-    .demo-controls input:focus, .demo-controls select:focus {
-      outline: none; border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.12);
+    .lede strong { color: var(--fg-0); font-weight: 600; }
+
+    /* ---------- Surface ---------- */
+    .surface {
+      background: var(--bg-1); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 24px;
+      box-shadow: var(--shadow-md);
     }
-    .demo-query-row {
-      display: grid; grid-template-columns: 1fr 80px 120px; gap: 8px;
-      margin-bottom: 16px; align-items: end;
+    .surface-tight { padding: 16px; }
+    .surface.hl {
+      border-color: var(--border-strong);
+      box-shadow: var(--shadow-lg), 0 0 0 1px var(--accent-dim);
+    }
+
+    /* ---------- Title slide ---------- */
+    .title-slide {
+      justify-content: center; text-align: center; padding-top: 0;
+    }
+    .title-slide h1 {
+      font-size: clamp(48px, 6vw, 88px);
+      background: linear-gradient(135deg, var(--fg-0) 0%, var(--accent) 70%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 24px;
+    }
+    .title-slide .tagline {
+      font-size: 22px; color: var(--fg-1); max-width: 760px;
+      margin: 0 auto 36px; line-height: 1.5;
+    }
+    .title-slide .tagline strong { color: var(--fg-0); font-weight: 600; }
+    .pill-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 999px; font-size: 13px;
+      background: var(--bg-2); border: 1px solid var(--border);
+      color: var(--fg-1); font-family: var(--font-mono);
+    }
+
+    /* ---------- 2D vector space ---------- */
+    .space-wrap { position: relative; }
+    svg.space {
+      display: block; width: 100%; height: 460px;
+      background:
+        radial-gradient(circle at 50% 50%, var(--bg-2) 0%, var(--bg-1) 100%);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+    }
+    .space-axis { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 2 6; }
+    .space-axis-label {
+      fill: var(--fg-3); font-size: 11px; font-family: var(--font-mono);
+    }
+    .doc-point {
+      fill: var(--bg-3); stroke: var(--fg-2); stroke-width: 1.5;
+      transition: r var(--dur-med) var(--ease-out),
+                  fill var(--dur-med) var(--ease-out);
+      cursor: pointer;
+    }
+    .doc-point.hit { fill: var(--warning); stroke: #b88800; }
+    .doc-point.top1 {
+      fill: var(--accent); stroke: var(--accent-hover);
+      filter: drop-shadow(0 0 8px var(--accent-glow));
+    }
+    .doc-label {
+      font-size: 10px; fill: var(--fg-2); pointer-events: none;
+      font-family: var(--font-mono);
+    }
+    .doc-label.top1 { fill: var(--accent); font-weight: 600; }
+    .query-point {
+      fill: var(--danger); stroke: #ff9999; stroke-width: 2;
+      filter: drop-shadow(0 0 8px rgba(255, 107, 107, 0.5));
+    }
+    .dist-line { stroke: var(--fg-3); stroke-width: 1.5; stroke-dasharray: 3 4; opacity: 0.7; }
+    .dist-line.top1 {
+      stroke: var(--accent); opacity: 1; stroke-dasharray: none; stroke-width: 2;
+    }
+
+    .doc-tip {
+      position: absolute; pointer-events: none; z-index: 10;
+      background: var(--bg-3); color: var(--fg-0);
+      padding: 8px 12px; border-radius: var(--radius-sm);
+      font-size: 12px; max-width: 280px;
+      box-shadow: var(--shadow-md);
+      border: 1px solid var(--border-strong);
+      display: none;
+    }
+    .doc-tip strong { color: var(--accent); font-family: var(--font-mono); }
+
+    /* ---------- Query row ---------- */
+    .query-row {
+      display: grid; grid-template-columns: 1fr 100px 120px; gap: 12px;
+      align-items: end; margin-bottom: 16px;
+    }
+    .query-row label {
+      display: block; font-size: 12px; font-weight: 500;
+      color: var(--fg-2); margin-bottom: 6px;
+      font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .query-row input {
+      width: 100%; padding: 12px 14px;
+      background: var(--bg-2); border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm); color: var(--fg-0);
+      font-family: var(--font-sans); font-size: 14px;
+      transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+    }
+    .query-row input:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-dim);
     }
     button.btn {
-      padding: 8px 12px; background: #1a1a1a; color: #fff; border: none;
-      border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500;
+      padding: 12px 18px; background: var(--accent); color: var(--bg-0);
+      border: none; border-radius: var(--radius-sm); cursor: pointer;
+      font-family: var(--font-sans); font-weight: 600; font-size: 13px;
+      letter-spacing: 0.02em;
+      transition: background var(--dur-fast), transform var(--dur-fast);
     }
-    button.btn:hover { background: #333; }
-    button.btn-secondary { background: #fff; color: #1a1a1a; border: 1px solid #d1d5db; }
-    button.btn-secondary:hover { background: #f3f4f6; }
+    button.btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+    button.btn.sec {
+      background: var(--bg-2); color: var(--fg-0);
+      border: 1px solid var(--border-strong);
+    }
+    button.btn.sec:hover { background: var(--bg-3); }
 
-    /* Corpus + results */
-    .results {
-      display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px;
+    /* ---------- Hits ---------- */
+    .hits { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+    .hit {
+      display: grid; grid-template-columns: 28px 1fr 100px; gap: 12px;
+      align-items: center;
+      background: var(--bg-2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 14px;
+      transition: border-color var(--dur-fast);
     }
-    .corpus { font-size: 13px; }
-    .corpus h3 { font-size: 13px; color: #6b7280; margin-bottom: 8px; font-weight: 500; }
-    .doc {
-      background: #fff; border: 1px solid #e5e7eb; border-radius: 6px;
-      padding: 8px 10px; margin-bottom: 6px;
-      transition: background 0.2s, border-color 0.2s;
+    .hit:hover { border-color: var(--border-strong); }
+    .hit.top1 { border-color: var(--accent); background: var(--accent-dim); }
+    .hit .rk {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--bg-3); color: var(--fg-1);
+      text-align: center; font-family: var(--font-mono);
+      font-weight: 600; font-size: 11px; line-height: 24px;
     }
-    .doc.match { background: #fffbe6; border-color: #f59e0b; }
-    .doc.top { background: #ecfdf5; border-color: #16a34a; }
-    .doc .doc-id {
-      display: inline-block; font-family: ui-monospace, monospace; font-size: 11px;
-      color: #6b7280; margin-right: 6px;
+    .hit.top1 .rk { background: var(--accent); color: var(--bg-0); }
+    .hit .body { font-size: 13px; color: var(--fg-0); }
+    .hit .body .id { color: var(--fg-2); font-family: var(--font-mono); font-size: 11px; margin-right: 6px; }
+    .hit .dist {
+      text-align: right; font-family: var(--font-mono);
+      color: var(--fg-2); font-size: 11px;
     }
-    .doc .doc-rank {
-      float: right; font-family: ui-monospace, monospace; font-size: 11px;
-      background: #f3f4f6; padding: 1px 6px; border-radius: 3px;
-    }
-    .doc.top .doc-rank { background: #16a34a; color: #fff; }
-    .doc.match .doc-rank { background: #f59e0b; color: #fff; }
+    .hit.top1 .dist { color: var(--accent); }
 
-    .hits-pane h3 { font-size: 13px; color: #6b7280; margin-bottom: 8px; font-weight: 500; }
-    .hit-row {
-      background: #fff; border: 1px solid #e5e7eb; border-radius: 6px;
-      padding: 10px; margin-bottom: 6px;
+    /* ---------- Two/three col ---------- */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: stretch; }
+    .three-col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 880px) {
+      .two-col, .three-col { grid-template-columns: 1fr; }
     }
-    .hit-row .hit-rank {
-      display: inline-block; background: #1a1a1a; color: #fff;
-      width: 22px; height: 22px; border-radius: 50%; text-align: center;
-      font-size: 11px; line-height: 22px; font-weight: 600; margin-right: 8px;
-    }
-    .hit-row .hit-id {
-      font-family: ui-monospace, monospace; font-size: 12px; color: #1a1a1a;
-    }
-    .hit-row .hit-score {
-      float: right; font-family: ui-monospace, monospace; font-size: 11px;
-      color: #6b7280;
-    }
-    .hit-row .hit-body { margin-top: 4px; font-size: 12px; color: #444; }
 
-    /* Code blocks */
-    .code-tabs {
-      display: flex; gap: 4px; border-bottom: 1px solid #e5e7eb; margin-bottom: 0;
+    /* ---------- Commits timeline ---------- */
+    .commits {
+      display: flex; align-items: center; gap: 0;
+      max-width: 720px; margin: 0 auto 24px; position: relative;
     }
-    .code-tab {
-      padding: 8px 14px; cursor: pointer; font-size: 13px;
-      border: 1px solid transparent; border-bottom: none;
-      border-top-left-radius: 6px; border-top-right-radius: 6px;
-      background: transparent; color: #6b7280;
+    .commits::before {
+      content: ''; position: absolute; left: 30px; right: 30px; top: 50%;
+      height: 2px; background: var(--border-strong); z-index: 0;
     }
-    .code-tab.active {
-      background: #1e293b; color: #fff; border-color: #1e293b;
+    .commit { flex: 1; text-align: center; position: relative; z-index: 1; cursor: pointer; }
+    .commit .dot {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--bg-2); border: 2px solid var(--border-strong);
+      margin: 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-mono); font-weight: 600; color: var(--fg-2);
+      transition: all var(--dur-fast);
     }
-    .code-block {
-      background: #1e293b; color: #e2e8f0; padding: 16px;
-      border-radius: 0 6px 6px 6px; font-family: ui-monospace, 'SF Mono', Monaco, monospace;
-      font-size: 12.5px; line-height: 1.55; overflow-x: auto;
-      white-space: pre; display: none;
+    .commit:hover .dot { border-color: var(--fg-2); }
+    .commit.active .dot {
+      background: var(--accent); border-color: var(--accent-hover);
+      color: var(--bg-0);
+      box-shadow: 0 0 16px var(--accent-glow);
     }
-    .code-block.active { display: block; }
-    .code-block .k { color: #c084fc; }   /* keyword */
-    .code-block .s { color: #fde68a; }   /* string */
-    .code-block .c { color: #64748b; font-style: italic; } /* comment */
-    .code-block .n { color: #5eead4; }   /* name / identifier highlight */
-    .code-block .b { color: #fb7185; }   /* builtin / type */
+    .commit .meta {
+      margin-top: 8px; font-size: 11px; color: var(--fg-3);
+      font-family: var(--font-mono);
+    }
+    .commit .msg { margin-top: 2px; font-size: 11px; color: var(--fg-1); }
+    .commit.active .msg { color: var(--fg-0); font-weight: 500; }
 
-    /* Cascade panel */
-    .cascade-row {
-      display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
-      margin-bottom: 12px;
+    .snapshot { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .pane {
+      background: var(--bg-2); border-radius: var(--radius-md);
+      padding: 16px; border: 1px solid var(--border);
+      min-height: 220px;
     }
-    .toggle { position: relative; display: inline-block; width: 44px; height: 24px; }
-    .toggle input { opacity: 0; width: 0; height: 0; }
-    .toggle .slider {
-      position: absolute; cursor: pointer; inset: 0;
-      background: #cbd5e1; border-radius: 24px; transition: 0.2s;
+    .pane h4 {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--fg-2); margin-bottom: 12px; font-family: var(--font-mono);
+      display: flex; align-items: center; gap: 8px;
     }
-    .toggle .slider::before {
-      position: absolute; content: ""; width: 18px; height: 18px;
-      left: 3px; bottom: 3px; background: #fff; border-radius: 50%;
-      transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    .pane .pill-tag {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 10px; font-weight: 600;
     }
-    .toggle input:checked + .slider { background: #16a34a; }
-    .toggle input:checked + .slider::before { transform: translateX(20px); }
+    .pill-blue { background: rgba(96, 165, 250, 0.15); color: #93c5fd; }
+    .pill-green { background: var(--accent-dim); color: var(--accent); }
+    .pane.primary { border-top: 2px solid #60a5fa; }
+    .pane.index { border-top: 2px solid var(--accent); }
+    .pane .row {
+      font-family: var(--font-mono); font-size: 12px;
+      padding: 4px 0; color: var(--fg-0);
+      border-bottom: 1px dashed var(--border);
+    }
+    .pane .row:last-child { border-bottom: none; }
+    .pane .row .k { color: var(--fg-2); }
+    .pane.empty-state {
+      color: var(--fg-3); font-size: 12px; padding: 40px;
+      text-align: center; font-family: var(--font-mono);
+    }
+    .pane .note {
+      margin-top: 12px; padding: 10px;
+      background: rgba(255, 184, 77, 0.08); border-radius: var(--radius-sm);
+      font-size: 11px; color: var(--warning); font-family: var(--font-sans);
+      border: 1px solid rgba(255, 184, 77, 0.2);
+    }
 
-    .timeline {
-      margin-top: 12px; font-family: ui-monospace, monospace; font-size: 12px;
-      background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;
-      padding: 12px; max-height: 220px; overflow-y: auto;
+    /* ---------- Branch diagram ---------- */
+    .branch-info { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+    .branch-card {
+      padding: 16px; border-radius: var(--radius-md);
+      background: var(--bg-2); font-size: 13px; color: var(--fg-1);
     }
-    .timeline .event {
-      padding: 4px 0; border-bottom: 1px solid #f0f0f0;
+    .branch-card.main { border-left: 3px solid #60a5fa; }
+    .branch-card.exp  { border-left: 3px solid var(--accent); }
+    .branch-card strong {
+      display: block; margin-bottom: 6px; font-size: 12px;
+      color: var(--fg-0); font-family: var(--font-mono);
+      text-transform: uppercase; letter-spacing: 0.06em;
     }
-    .timeline .event:last-child { border-bottom: none; }
-    .timeline .ev-time { color: #6b7280; margin-right: 8px; }
-    .timeline .ev-tag {
-      display: inline-block; padding: 1px 6px; border-radius: 3px;
-      font-size: 10px; margin-right: 6px; font-weight: 600;
-    }
-    .ev-primary { background: #dbeafe; color: #1e40af; }
-    .ev-index   { background: #dcfce7; color: #166534; }
-    .ev-commit  { background: #fef3c7; color: #92400e; }
-    .ev-skip    { background: #f3f4f6; color: #6b7280; }
 
-    /* Footer */
-    .footer {
-      text-align: center; font-size: 12px; color: #6b7280; padding: 16px 0;
+    /* ---------- Use cases ---------- */
+    .uc {
+      padding: 22px; background: var(--bg-1);
+      border: 1px solid var(--border); border-radius: var(--radius-md);
+      transition: border-color var(--dur-fast), transform var(--dur-fast);
     }
-    .footer a { color: #2563eb; text-decoration: none; }
+    .uc:hover {
+      border-color: var(--border-strong); transform: translateY(-2px);
+    }
+    .uc .icon {
+      width: 38px; height: 38px; border-radius: var(--radius-sm);
+      background: var(--accent-dim); color: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; margin-bottom: 12px;
+      font-family: var(--font-mono); font-weight: 600;
+    }
+    .uc h3 { font-size: 15px; color: var(--fg-0); margin-bottom: 6px; font-weight: 600; }
+    .uc p { font-size: 13px; color: var(--fg-1); line-height: 1.55; }
+
+    /* ---------- Compare cards (without/with) ---------- */
+    .compare-card {
+      padding: 20px; border-radius: var(--radius-md);
+    }
+    .compare-card.without {
+      background: rgba(255, 107, 107, 0.05);
+      border: 1px solid rgba(255, 107, 107, 0.2);
+    }
+    .compare-card.with {
+      background: var(--accent-dim);
+      border: 1px solid rgba(0, 214, 143, 0.3);
+    }
+    .compare-card h3 {
+      font-size: 14px; color: var(--fg-0); margin-bottom: 14px;
+      font-family: var(--font-mono); display: flex; align-items: center; gap: 8px;
+    }
+    .compare-card.without h3 .label-pill {
+      background: rgba(255, 107, 107, 0.15); color: var(--danger);
+    }
+    .compare-card.with h3 .label-pill {
+      background: var(--accent-dim); color: var(--accent);
+    }
+    .label-pill {
+      padding: 3px 8px; border-radius: 4px; font-size: 10px;
+      font-weight: 600; text-transform: uppercase;
+    }
+
+    /* ---------- CTA ---------- */
+    .cta-slide { justify-content: center; text-align: center; }
+    .cta-snippet {
+      display: inline-block; text-align: left; margin: 28px auto;
+      background: var(--bg-2); padding: 22px 28px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-strong);
+      font-family: var(--font-mono); font-size: 14px; color: var(--fg-1);
+      line-height: 1.7; box-shadow: var(--shadow-md);
+    }
+    .cta-snippet .k { color: var(--fg-2); }
+    .cta-snippet .s { color: var(--accent); }
+    .cta-snippet .n { color: #60a5fa; }
+    .cta-snippet .y { color: var(--warning); }
+    .cta-btns {
+      display: flex; justify-content: center; gap: 12px; margin-top: 12px; flex-wrap: wrap;
+    }
+    .cta-btn {
+      display: inline-block; padding: 12px 22px;
+      border-radius: var(--radius-sm); font-weight: 600; font-size: 14px;
+      transition: transform var(--dur-fast);
+    }
+    .cta-btn:hover { transform: translateY(-1px); }
+    .cta-btn.primary {
+      background: var(--accent); color: var(--bg-0);
+    }
+    .cta-btn.primary:hover { background: var(--accent-hover); color: var(--bg-0); }
+    .cta-btn.secondary {
+      background: var(--bg-2); color: var(--fg-0);
+      border: 1px solid var(--border-strong);
+    }
+    .cta-btn.secondary:hover { background: var(--bg-3); color: var(--fg-0); }
+
+    /* ---------- Deck chrome (nav, counter) ---------- */
+    .deck-nav {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 12px; z-index: 100;
+      background: var(--bg-1); border: 1px solid var(--border-strong);
+      padding: 8px 14px; border-radius: 999px; box-shadow: var(--shadow-md);
+    }
+    .deck-nav button {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: transparent; color: var(--fg-1); border: none;
+      cursor: pointer; font-size: 16px; line-height: 1;
+      transition: background var(--dur-fast), color var(--dur-fast);
+    }
+    .deck-nav button:hover:not(:disabled) {
+      background: var(--bg-3); color: var(--fg-0);
+    }
+    .deck-nav button:disabled { opacity: 0.3; cursor: default; }
+    .deck-nav .counter {
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--fg-2); padding: 0 6px;
+    }
+    .deck-nav .counter .cur { color: var(--accent); font-weight: 600; }
+
+    .deck-dots {
+      position: fixed; top: 50%; right: 24px; transform: translateY(-50%);
+      display: flex; flex-direction: column; gap: 8px; z-index: 100;
+    }
+    .deck-dots .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--bg-3); border: 1px solid var(--border-strong);
+      cursor: pointer; transition: all var(--dur-fast);
+    }
+    .deck-dots .dot:hover { background: var(--fg-3); }
+    .deck-dots .dot.active {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent-glow);
+      transform: scale(1.3);
+    }
+
+    .deck-hint {
+      position: fixed; bottom: 24px; left: 24px; z-index: 100;
+      font-family: var(--font-mono); font-size: 11px; color: var(--fg-3);
+    }
+    .deck-hint kbd {
+      display: inline-block; padding: 2px 6px;
+      background: var(--bg-2); border: 1px solid var(--border-strong);
+      border-radius: 4px; color: var(--fg-1); font-family: var(--font-mono);
+      font-size: 10px;
+    }
+
+    .brand {
+      position: fixed; top: 24px; left: 24px; z-index: 100;
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--fg-2); display: flex; align-items: center; gap: 8px;
+    }
+    .brand .logo-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
+    }
+
+    /* ---------- Inline SVG helpers for "Concept 4" cards ---------- */
+    .compare-svg { width: 100%; height: 180px; margin-top: 8px; }
+    .compare-svg text { fill: var(--fg-1); }
+
+    @media (max-width: 760px) {
+      .slide { padding: 56px 24px 100px; }
+      .deck-dots { display: none; }
+      .query-row { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <div class="container">
 
-    <!-- Hero -->
-    <div class="header">
-      <h1>Text Indexing &amp; Vector Search</h1>
-      <p class="tagline">
-        ProllyTree's <code>NamespacedKvStore</code> can host versioned approximate-nearest-neighbour
-        indexes inside any namespace, alongside the primary key-value tree.
-        Commits, branches, and three-way merges atomically cover both the data and every owned sub-index.
-        This page is a self-contained illustration of the user-facing surface — no install required.
-      </p>
-      <div class="links">
-        <a href="https://zhangfengcdt.github.io/prollytree/text_search/">User Guide</a>
-        <a href="https://zhangfengcdt.github.io/prollytree/examples/text_search/">Runnable Examples</a>
-        <a href="https://zhangfengcdt.github.io/prollytree/api/python/#namespacedkvstore">Python API</a>
-        <a href="https://github.com/zhangfengcdt/prollytree">GitHub</a>
-        <a href="https://pypi.org/project/prollytree/">PyPI</a>
+  <div class="brand">
+    <span class="logo-dot"></span>
+    <span>ProllyTree · text&nbsp;search demo</span>
+  </div>
+
+  <div class="deck" id="deck">
+
+    <!-- ============== Slide 1: Title ============== -->
+    <section class="slide title-slide" data-slide>
+      <div class="slide-inner" style="justify-content: center;">
+        <h1>Vector search,<br/>versioned like code.</h1>
+        <p class="tagline">
+          ProllyTree lets you do top-k semantic search over text — and then
+          <strong>rewind it, branch it, diff it, and merge it</strong> the way Git lets you do those
+          things to code. Eight slides; takes about a minute.
+        </p>
+        <div class="pill-row">
+          <span class="pill">pip install prollytree</span>
+          <span class="pill">Rust + Python</span>
+          <span class="pill">Merkle under the hood</span>
+          <span class="pill">Built with agents in mind</span>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Architecture diagram -->
-    <div class="card">
-      <h2>How it fits together</h2>
-      <p>
-        A <code>NamespacedKvStore</code> holds many independent prolly trees, one per namespace,
-        plus zero or more <em>text sub-indexes</em> per namespace.
-        The primary tree is the source of truth (doc&nbsp;id → body bytes); each text index stores
-        only <code>(id, vector)</code> pairs and gives you top-<em>k</em> similarity search.
-      </p>
-      <div class="arch">
-        <div class="store-tag">NamespacedKvStore<br/>./store</div>
-        <div>
-          <div class="ns-box">
-            <span class="ns-label">namespace: <strong>docs</strong></span>
-            <div class="ns-children">
-              <div class="ns-leaf primary"><div class="leaf-title">primary tree</div><div class="leaf-sub">doc_id → body bytes</div></div>
-              <div class="ns-leaf text-idx"><div class="leaf-title">text index: by_body</div><div class="leaf-sub">(id, vector) pairs</div></div>
-              <div class="ns-leaf text-idx"><div class="leaf-title">text index: by_title</div><div class="leaf-sub">(id, vector) pairs</div></div>
+    <!-- ============== Slide 2: Coordinates ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 1 · 2 of 8</div>
+        <h2 class="slide-title">Words become coordinates.</h2>
+        <p class="lede">
+          An <strong>embedder</strong> turns each piece of text into a list of numbers — its vector.
+          Texts that mean similar things land at similar coordinates. Search is then just
+          "what's nearest?" The real index uses 384 dimensions; we're showing 2D so it's legible.
+        </p>
+
+        <div class="space-wrap">
+          <svg viewBox="0 0 800 460" class="space" id="space-static"></svg>
+          <div class="doc-tip" id="tip-static"></div>
+        </div>
+        <p style="margin-top: 14px; color: var(--fg-2); font-size: 13px;">
+          Hover any point to read its text. <span class="mono" style="color: var(--accent);">→ press ▶ or right-arrow to continue</span>
+        </p>
+      </div>
+    </section>
+
+    <!-- ============== Slide 3: Search ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 2 · 3 of 8</div>
+        <h2 class="slide-title">Search is "what's nearest?"</h2>
+        <p class="lede">
+          Your query becomes a point in the same space. Top-<em>k</em> sorts every document
+          by distance and returns the closest ones. <strong>Try a query</strong> — watch where it lands.
+        </p>
+
+        <div class="surface">
+          <div class="query-row">
+            <div>
+              <label for="q">Your query</label>
+              <input id="q" type="text" value="how do I deploy a database safely" />
+            </div>
+            <div>
+              <label for="k">k</label>
+              <input id="k" type="number" value="3" min="1" max="6" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button class="btn" onclick="runSearch()">Search</button>
             </div>
           </div>
-          <div class="ns-box">
-            <span class="ns-label">namespace: <strong>logs</strong></span>
-            <div class="ns-children">
-              <div class="ns-leaf primary"><div class="leaf-title">primary tree</div><div class="leaf-sub">log_id → body bytes</div></div>
-              <div class="ns-leaf text-idx"><div class="leaf-title">text index: by_line</div><div class="leaf-sub">multi-chunk per doc</div></div>
+
+          <div class="space-wrap">
+            <svg viewBox="0 0 800 460" class="space" id="space-live"></svg>
+            <div class="doc-tip" id="tip-live"></div>
+          </div>
+
+          <div class="hits" id="hits"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== Slide 4: Versioning ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 3 · 4 of 8</div>
+        <h2 class="slide-title">Now version it.</h2>
+        <p class="lede">
+          Every write — to the primary tree <em>and</em> to the index — lands in a real Git commit.
+          <strong>Click any commit</strong> below to time-travel back; both panes change together because
+          they're stored together.
+        </p>
+
+        <div class="surface">
+          <div class="commits" id="commits"></div>
+          <div class="snapshot">
+            <div class="pane primary">
+              <h4><span class="pill-tag pill-blue">primary</span> docs namespace</h4>
+              <div id="pane-primary"></div>
+            </div>
+            <div class="pane index">
+              <h4><span class="pill-tag pill-green">index</span> by_body</h4>
+              <div id="pane-index"></div>
             </div>
           </div>
         </div>
       </div>
-      <p class="muted" style="margin-top: 14px;">
-        Every commit covers every dirty namespace + sub-index in one git commit.
-        Switching branches flips all of them together.
-      </p>
-    </div>
+    </section>
 
-    <!-- Interactive search demo -->
-    <div class="card">
-      <h2>Try a search</h2>
-      <p>
-        Static corpus indexed in your browser with a toy bag-of-bigrams embedder — illustrates
-        the dual-write &rarr; search &rarr; resolve-to-text workflow without bringing in real ML.
-        The bundled <code>MiniLmEmbedder</code> in the actual package replaces this with semantic
-        similarity from Candle + all-MiniLM-L6-v2.
-      </p>
+    <!-- ============== Slide 5: Compare ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 4 · 5 of 8</div>
+        <h2 class="slide-title">Two trees, one commit.</h2>
+        <p class="lede">
+          What makes versioned vector search actually useful: the source text and the index are
+          committed atomically — never out of sync, never drifting. With a separate vector DB
+          you babysit a sync job. Here you don't.
+        </p>
 
-      <div class="demo-query-row">
-        <div>
-          <label for="q">Query</label>
-          <input type="text" id="q" placeholder="e.g. fast database write" value="fast database write" />
-        </div>
-        <div>
-          <label for="k">k</label>
-          <input type="number" id="k" value="3" min="1" max="8" />
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <button class="btn" onclick="runSearch()">Search</button>
-        </div>
-      </div>
+        <div class="two-col">
+          <div class="compare-card without">
+            <h3><span class="label-pill">without</span> two systems, eventual consistency</h3>
+            <svg viewBox="0 0 360 180" class="compare-svg">
+              <rect x="20"  y="40" width="120" height="60" fill="rgba(255, 107, 107, 0.08)" stroke="#ff6b6b" stroke-width="2" rx="8"/>
+              <rect x="220" y="40" width="120" height="60" fill="rgba(255, 107, 107, 0.08)" stroke="#ff6b6b" stroke-width="2" rx="8"/>
+              <text x="80"  y="70" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#ff6b6b" font-weight="600">Your DB</text>
+              <text x="80"  y="88" text-anchor="middle" font-size="10" fill="#a8b0bf">documents</text>
+              <text x="280" y="70" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#ff6b6b" font-weight="600">Vector DB</text>
+              <text x="280" y="88" text-anchor="middle" font-size="10" fill="#a8b0bf">embeddings</text>
+              <path d="M140,70 Q180,130 220,70" stroke="#ff6b6b" stroke-width="2" fill="none" stroke-dasharray="4 4"/>
+              <text x="180" y="135" text-anchor="middle" font-size="11" fill="#ff6b6b" font-weight="600">sync job</text>
+              <text x="180" y="160" text-anchor="middle" font-size="10" fill="#a8b0bf">drift, stale vectors, race conditions</text>
+            </svg>
+          </div>
 
-      <div class="results">
-        <div class="corpus">
-          <h3>Corpus (8 docs) — primary tree contents</h3>
-          <div id="corpus-list"></div>
-        </div>
-        <div class="hits-pane">
-          <h3>Top-k hits — resolved back to body</h3>
-          <div id="hits-list"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Cascade demo -->
-    <div class="card">
-      <h2>Cascade: one write, both trees</h2>
-      <p>
-        Toggle cascade on, then "insert" a new document. With cascade <strong>on</strong>,
-        a single <code>ns_insert</code> writes to both the primary tree and every registered
-        text index inside the same commit. With cascade <strong>off</strong> the index doesn't
-        see the write — drift accumulates, surfaceable later via <code>audit_text_index</code>.
-      </p>
-
-      <div class="cascade-row">
-        <div>
-          <strong>Cascade for namespace <code>docs</code></strong>
-          <div class="muted">Mirrors primary writes into <code>by_body</code> automatically.</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="cascade-toggle" checked />
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="demo-query-row">
-        <div>
-          <label for="new-id">Doc id</label>
-          <input type="text" id="new-id" value="doc:9" />
-        </div>
-        <div style="grid-column: span 2;">
-          <label for="new-text">Body</label>
-          <input type="text" id="new-text" value="prolly trees converge to the same root hash regardless of insertion order" />
+          <div class="compare-card with">
+            <h3><span class="label-pill">with prollytree</span> one transaction</h3>
+            <svg viewBox="0 0 360 180" class="compare-svg">
+              <rect x="80" y="20" width="200" height="46" fill="var(--accent-dim)" stroke="var(--accent)" stroke-width="2" rx="8"/>
+              <text x="180" y="40" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="var(--accent)" font-weight="600">ns_insert("docs", id, text)</text>
+              <text x="180" y="56" text-anchor="middle" font-size="9" fill="#a8b0bf">cascade enabled</text>
+              <path d="M180,70 L120,105" stroke="var(--accent)" stroke-width="2" fill="none"/>
+              <path d="M180,70 L240,105" stroke="var(--accent)" stroke-width="2" fill="none"/>
+              <rect x="55"  y="108" width="120" height="46" fill="rgba(96,165,250,0.1)" stroke="#60a5fa" stroke-width="2" rx="8"/>
+              <rect x="185" y="108" width="120" height="46" fill="var(--accent-dim)" stroke="var(--accent)" stroke-width="2" rx="8"/>
+              <text x="115" y="135" text-anchor="middle" font-family="JetBrains Mono" font-size="11" font-weight="600" fill="#60a5fa">primary</text>
+              <text x="245" y="135" text-anchor="middle" font-family="JetBrains Mono" font-size="11" font-weight="600" fill="var(--accent)">index</text>
+              <text x="180" y="175" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="var(--accent)" font-weight="600">same git commit ✓</text>
+            </svg>
+          </div>
         </div>
       </div>
-      <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-        <button class="btn" onclick="cascadeInsert()">ns_insert + commit</button>
-        <button class="btn btn-secondary" onclick="cascadeReset()">Reset</button>
+    </section>
+
+    <!-- ============== Slide 6: Branching ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 5 · 6 of 8</div>
+        <h2 class="slide-title">Branch your knowledge.</h2>
+        <p class="lede">
+          Fork the store, try something — re-embed with a new model, re-chunk for tighter recall,
+          index a speculative document an agent might be hallucinating. Discard if it doesn't help,
+          merge back if it does. Just <code>store.branch("experiment")</code>.
+        </p>
+
+        <div class="surface">
+          <svg viewBox="0 0 800 220" style="width: 100%; height: 220px;">
+            <!-- Main timeline -->
+            <path d="M40,120 L240,120" stroke="#60a5fa" stroke-width="3" fill="none"/>
+            <path d="M240,120 Q300,120 320,80 L520,80" stroke="var(--accent)" stroke-width="3" fill="none"/>
+            <path d="M240,120 L760,120" stroke="#60a5fa" stroke-width="3" fill="none"/>
+            <path d="M520,80 Q580,80 600,120" stroke="var(--accent)" stroke-width="3" fill="none" stroke-dasharray="6 4"/>
+
+            <circle cx="80"  cy="120" r="13" fill="#60a5fa"/>
+            <circle cx="160" cy="120" r="13" fill="#60a5fa"/>
+            <circle cx="240" cy="120" r="13" fill="#60a5fa"/>
+            <circle cx="600" cy="120" r="15" fill="var(--bg-2)" stroke="var(--accent)" stroke-width="3"/>
+            <circle cx="720" cy="120" r="13" fill="#60a5fa"/>
+            <text x="600" y="125" text-anchor="middle" font-family="JetBrains Mono" font-size="10" font-weight="700" fill="var(--accent)">M</text>
+
+            <circle cx="380" cy="80" r="13" fill="var(--accent)"/>
+            <circle cx="460" cy="80" r="13" fill="var(--accent)"/>
+            <circle cx="520" cy="80" r="13" fill="var(--accent)"/>
+
+            <text x="80"  y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#60a5fa">seed</text>
+            <text x="160" y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#60a5fa">obs:1</text>
+            <text x="240" y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#60a5fa">obs:2</text>
+            <text x="720" y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#60a5fa">obs:3</text>
+            <text x="380" y="55"  text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="var(--accent)">try new chunker</text>
+            <text x="460" y="55"  text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="var(--accent)">re-embed</text>
+            <text x="520" y="55"  text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="var(--accent)">test recall</text>
+
+            <text x="600" y="148" text-anchor="middle" font-family="JetBrains Mono" font-size="11" font-weight="700" fill="var(--accent)">merge</text>
+
+            <text x="40"  y="195" font-family="JetBrains Mono" font-size="11" fill="#60a5fa" font-weight="600">main</text>
+            <text x="380" y="30"  font-family="JetBrains Mono" font-size="11" fill="var(--accent)" font-weight="600">experiment</text>
+          </svg>
+          <div class="branch-info">
+            <div class="branch-card main">
+              <strong>main</strong>
+              Live store. Agent reads + writes here. Search returns whatever was last committed on main.
+            </div>
+            <div class="branch-card exp">
+              <strong>experiment</strong>
+              Isolated copy. Same data; different embedder, chunker, or scratch documents. Three-way merge when ready.
+            </div>
+          </div>
+        </div>
       </div>
+    </section>
 
-      <div id="timeline" class="timeline">
-        <div class="event"><span class="ev-time">--:--:--</span><span class="ev-tag ev-skip">init</span>4 documents seeded into primary and by_body</div>
+    <!-- ============== Slide 7: Why ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Why this matters · 7 of 8</div>
+        <h2 class="slide-title">What versioned vector search unlocks.</h2>
+        <p class="lede">
+          Most vector databases give you "the latest state, whatever it happens to be." ProllyTree
+          treats your embeddings the way you'd treat your code: a typed, reviewable, recoverable artifact.
+        </p>
+
+        <div class="three-col">
+          <div class="uc"><div class="icon">↶</div><h3>Rewind a poisoned corpus</h3><p>An agent ingested a bad batch. Roll back to the last good commit; the search index travels with the data. No reindex.</p></div>
+          <div class="uc"><div class="icon">⑂</div><h3>A/B test embedders</h3><p>Branch, swap MiniLM for an OpenAI model via <code>CallableEmbedder</code>, re-embed, compare recall. Discard the loser.</p></div>
+          <div class="uc"><div class="icon">🔍</div><h3>Audit what an agent learned</h3><p>Diff two commits and see exactly which memories were added, removed, or rewritten between yesterday and today.</p></div>
+          <div class="uc"><div class="icon">👥</div><h3>Isolate multiple agents</h3><p>One store, many namespaces. Each agent gets its own primary tree + index. One commit covers all of them.</p></div>
+          <div class="uc"><div class="icon">📐</div><h3>Cryptographic proofs</h3><p>Inherited from the Merkle tree underneath. Every value carries an inclusion proof you can hand to a verifier.</p></div>
+          <div class="uc"><div class="icon">🚫</div><h3>No separate vector DB</h3><p>Embeddings and source text share one transaction. No sync job, no consistency window, no drift.</p></div>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Code -->
-    <div class="card">
-      <h2>The Python API</h2>
-      <p>Real code — copy/paste runnable once you've <code>pip install prollytree</code>.</p>
-      <div class="code-tabs">
-        <button class="code-tab active" onclick="showCode('open')">open</button>
-        <button class="code-tab" onclick="showCode('dual')">dual-write</button>
-        <button class="code-tab" onclick="showCode('cascade')">cascade</button>
-        <button class="code-tab" onclick="showCode('search')">search</button>
-        <button class="code-tab" onclick="showCode('chunk')">chunker</button>
-        <button class="code-tab" onclick="showCode('custom')">custom embedder</button>
+    <!-- ============== Slide 8: CTA ============== -->
+    <section class="slide cta-slide" data-slide>
+      <div class="slide-inner" style="justify-content: center;">
+        <div class="eyebrow" style="justify-content: center;"><span class="dot"></span>8 of 8</div>
+        <h2 class="slide-title" style="text-align: center;">Three lines from a working text index.</h2>
+        <div class="cta-snippet">
+<span class="y">pip install</span> prollytree
+<span class="k">from</span> prollytree <span class="k">import</span> NamespacedKvStore, MiniLmEmbedder
+store.<span class="n">text_index_open</span>(<span class="s">"docs"</span>, <span class="s">"by_body"</span>, <span class="n">MiniLmEmbedder</span>())
+        </div>
+        <div class="cta-btns">
+          <a class="cta-btn primary" href="https://zhangfengcdt.github.io/prollytree/text_search/">User Guide</a>
+          <a class="cta-btn secondary" href="https://zhangfengcdt.github.io/prollytree/examples/text_search/">Runnable Examples</a>
+          <a class="cta-btn secondary" href="https://github.com/zhangfengcdt/prollytree">GitHub</a>
+        </div>
       </div>
+    </section>
 
-      <pre class="code-block active" id="code-open"><span class="k">from</span> prollytree <span class="k">import</span> NamespacedKvStore, MiniLmEmbedder
+  </div>
 
-store = <span class="n">NamespacedKvStore</span>(<span class="s">"./store"</span>)
-emb   = <span class="n">MiniLmEmbedder</span>()                  <span class="c"># bundled Candle + all-MiniLM-L6-v2</span>
-
-<span class="c"># Creates the index on first call; on reopen, validates that the supplied</span>
-<span class="c"># embedder's id + version match what's persisted on disk.</span>
-store.<span class="n">text_index_open</span>(<span class="s">"docs"</span>, <span class="s">"by_body"</span>, emb)</pre>
-
-      <pre class="code-block" id="code-dual"><span class="c"># Primary tree carries the source bytes; the index carries the vectors.</span>
-<span class="c"># Without the primary write, search hits can't be resolved back to text.</span>
-docs = {
-    <span class="b">b</span><span class="s">"doc:1"</span>: <span class="s">"the quick brown fox"</span>,
-    <span class="b">b</span><span class="s">"doc:2"</span>: <span class="s">"lazy dog asleep on the mat"</span>,
-}
-<span class="k">for</span> doc_id, text <span class="k">in</span> docs.<span class="n">items</span>():
-    store.<span class="n">ns_insert</span>(<span class="s">"docs"</span>, doc_id, text.<span class="n">encode</span>())                <span class="c"># primary</span>
-    store.<span class="n">text_index_insert</span>(<span class="s">"docs"</span>, <span class="s">"by_body"</span>, doc_id, text)  <span class="c"># index</span>
-store.<span class="n">commit</span>(<span class="s">"seed corpus + index"</span>)</pre>
-
-      <pre class="code-block" id="code-cascade"><span class="c"># Opt in once — then `ns_insert` and `ns_delete` auto-mirror into the listed</span>
-<span class="c"># indexes. Runtime-only, not persisted.</span>
-store.<span class="n">set_cascade</span>(<span class="s">"docs"</span>, [<span class="s">"by_body"</span>])
-
-store.<span class="n">ns_insert</span>(<span class="s">"docs"</span>, <span class="b">b</span><span class="s">"doc:3"</span>, <span class="b">b</span><span class="s">"prolly trees are great"</span>)
-store.<span class="n">commit</span>(<span class="s">"cascade-driven indexing"</span>)        <span class="c"># index updated too</span>
-
-store.<span class="n">cascade_for_namespace</span>(<span class="s">"docs"</span>)        <span class="c"># -> ['by_body']</span>
-store.<span class="n">clear_cascade</span>(<span class="s">"docs"</span>)                  <span class="c"># opt out</span></pre>
-
-      <pre class="code-block" id="code-search"><span class="c"># Returns (id_bytes, distance) tuples. Lower distance = closer.</span>
-hits = store.<span class="n">text_index_search</span>(<span class="s">"docs"</span>, <span class="s">"by_body"</span>, <span class="s">"vulpine animal"</span>, k=<span class="b">5</span>)
-
-<span class="k">for</span> doc_id, score <span class="k">in</span> hits:
-    body = store.<span class="n">ns_get</span>(<span class="s">"docs"</span>, doc_id).<span class="n">decode</span>()     <span class="c"># resolve back</span>
-    <span class="n">print</span>(<span class="b">f</span><span class="s">"{doc_id} (d={score:.3f}): {body}"</span>)</pre>
-
-      <pre class="code-block" id="code-chunk"><span class="c"># Split each document into many chunks at indexing time. Search dedups</span>
-<span class="c"># results back to documents at their best chunk's score.</span>
-store.<span class="n">text_index_open</span>(<span class="s">"logs"</span>, <span class="s">"by_line"</span>, emb, chunker=<span class="s">"line"</span>)
-store.<span class="n">text_index_insert</span>(<span class="s">"logs"</span>, <span class="s">"by_line"</span>, <span class="b">b</span><span class="s">"log:42"</span>,
-                        <span class="s">"alpha\nbeta\ngamma"</span>)              <span class="c"># 3 chunks</span>
-
-store.<span class="n">text_index_len</span>(<span class="s">"logs"</span>, <span class="s">"by_line"</span>)            <span class="c"># 1 doc</span>
-store.<span class="n">text_index_chunk_count</span>(<span class="s">"logs"</span>, <span class="s">"by_line"</span>)    <span class="c"># 3 chunks</span></pre>
-
-      <pre class="code-block" id="code-custom"><span class="c"># Wrap any Python embedding function as an Embedder — OpenAI, Cohere,</span>
-<span class="c"># sentence-transformers, your own pipeline.</span>
-<span class="k">from</span> prollytree <span class="k">import</span> CallableEmbedder
-<span class="k">from</span> openai <span class="k">import</span> OpenAI
-
-client = <span class="n">OpenAI</span>()
-<span class="k">def</span> <span class="n">openai_embed</span>(text):
-    <span class="k">return</span> client.embeddings.<span class="n">create</span>(
-        input=text, model=<span class="s">"text-embedding-3-small"</span>
-    ).data[<span class="b">0</span>].embedding
-
-emb = <span class="n">CallableEmbedder</span>(
-    id=<span class="s">"openai:text-embedding-3-small"</span>,
-    version=<span class="s">"2024-01"</span>,
-    dim=<span class="b">1536</span>,
-    embed_fn=openai_embed,
-)</pre>
-    </div>
-
-    <div class="footer">
-      Static HTML demo · <a href="https://github.com/zhangfengcdt/prollytree/blob/main/docs/text_search_demo.html">source on GitHub</a> ·
-      runs entirely in your browser — no network, no install.
-    </div>
+  <!-- ---------- Deck chrome ---------- -->
+  <div class="deck-hint">
+    <kbd>←</kbd> <kbd>→</kbd> or <kbd>space</kbd> to navigate
+  </div>
+  <div class="deck-dots" id="deck-dots"></div>
+  <div class="deck-nav">
+    <button id="prev" aria-label="Previous slide">◀</button>
+    <span class="counter"><span class="cur" id="cur">1</span> / <span id="total">8</span></span>
+    <button id="next" aria-label="Next slide">▶</button>
   </div>
 
   <script>
-    // ---------- Static corpus ----------
+    // ============================================================
+    // Corpus — hand-positioned in a 2D space; nearer = more similar.
+    // ============================================================
     const CORPUS = [
-      { id: "doc:1", body: "the quick brown fox jumps over the lazy dog" },
-      { id: "doc:2", body: "rust is a fast systems programming language" },
-      { id: "doc:3", body: "merkle trees enable verifiable data structures" },
-      { id: "doc:4", body: "rocksdb provides fast key-value storage" },
-      { id: "doc:5", body: "approximate nearest neighbour search in high dimensions" },
-      { id: "doc:6", body: "git tracks commits, branches and merges" },
-      { id: "doc:7", body: "probabilistic data structures balance speed and memory" },
-      { id: "doc:8", body: "a fox and a hound walk through the forest" },
+      { id: "doc:1", x: 150, y: 360, body: "the quick brown fox jumps over the lazy dog",
+        tags: ["fox", "dog", "lazy", "quick", "brown", "jumps"] },
+      { id: "doc:2", x: 580, y: 380, body: "rust is a fast systems programming language",
+        tags: ["rust", "fast", "programming", "language", "systems"] },
+      { id: "doc:3", x: 620, y: 130, body: "merkle trees enable verifiable data structures",
+        tags: ["merkle", "trees", "data", "structures", "verifiable"] },
+      { id: "doc:4", x: 540, y: 320, body: "rocksdb is a fast embedded key-value database",
+        tags: ["rocksdb", "fast", "database", "key", "value", "embedded"] },
+      { id: "doc:5", x: 700, y: 180, body: "approximate nearest neighbour search in high dimensions",
+        tags: ["search", "nearest", "neighbour", "dimensions", "high"] },
+      { id: "doc:6", x: 460, y: 260, body: "git tracks commits, branches and merges across time",
+        tags: ["git", "commits", "branches", "merges", "time", "version"] },
+      { id: "doc:7", x: 680, y: 100, body: "probabilistic data structures balance speed and memory",
+        tags: ["probabilistic", "data", "structures", "speed", "memory", "balance"] },
+      { id: "doc:8", x: 110, y: 290, body: "a fox and a hound walk through the forest at dusk",
+        tags: ["fox", "hound", "forest", "walk", "dusk"] },
     ];
 
-    // ---------- Toy embedder: char-bigram bag, cosine similarity ----------
-    function bigrams(text) {
-      const t = " " + text.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ") + " ";
-      const m = new Map();
-      for (let i = 0; i < t.length - 1; i++) {
-        const g = t.slice(i, i + 2);
-        m.set(g, (m.get(g) || 0) + 1);
-      }
-      return m;
-    }
-    function cosineDistance(a, b) {
-      let dot = 0, na = 0, nb = 0;
-      for (const [k, v] of a) na += v * v;
-      for (const [k, v] of b) {
-        nb += v * v;
-        if (a.has(k)) dot += v * a.get(k);
-      }
-      if (na === 0 || nb === 0) return 1;
-      return 1 - dot / Math.sqrt(na * nb);
+    function ce(tag, attrs, parent) {
+      const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]);
+      if (parent) parent.appendChild(e);
+      return e;
     }
 
-    // ---------- Render corpus ----------
-    function renderCorpus(matches = new Set(), top = null) {
-      const list = document.getElementById("corpus-list");
-      list.innerHTML = "";
-      CORPUS.forEach((d, i) => {
-        const isTop = top && d.id === top;
-        const isMatch = matches.has(d.id);
-        const cls = isTop ? "doc top" : (isMatch ? "doc match" : "doc");
-        const rank = isMatch ? `<span class="doc-rank">#${[...matches].indexOf(d.id) + 1}</span>` : "";
-        list.innerHTML += `<div class="${cls}"><span class="doc-id">${d.id}</span>${d.body}${rank}</div>`;
+    function drawShell(svg) {
+      ce("line", { class: "space-axis", x1: 40,  y1: 230, x2: 760, y2: 230 }, svg);
+      ce("line", { class: "space-axis", x1: 400, y1: 20,  x2: 400, y2: 440 }, svg);
+      ce("text", { class: "space-axis-label", x: 50, y: 222 }, svg).textContent = "← animals / natural";
+      const t2 = ce("text", { class: "space-axis-label", x: 750, y: 222, "text-anchor": "end" }, svg);
+      t2.textContent = "tech / data →";
+      ce("text", { class: "space-axis-label", x: 408, y: 30 }, svg).textContent = "↑ structure";
+      ce("text", { class: "space-axis-label", x: 408, y: 435 }, svg).textContent = "↓ workflow";
+    }
+
+    function drawDocs(svg, tipEl, opts = {}) {
+      const { highlights = new Map(), top1 = null } = opts;
+      CORPUS.forEach(d => {
+        const rank = highlights.get(d.id);
+        const isTop = top1 === d.id;
+        const cls = isTop ? "doc-point top1" : (rank !== undefined ? "doc-point hit" : "doc-point");
+        const r = isTop ? 11 : (rank !== undefined ? 9 : 6);
+        const pt = ce("circle", { class: cls, cx: d.x, cy: d.y, r }, svg);
+        pt.addEventListener("mouseenter", (e) => {
+          tipEl.style.display = "block";
+          tipEl.style.left = (e.pageX + 14) + "px";
+          tipEl.style.top  = (e.pageY + 14) + "px";
+          tipEl.innerHTML = `<strong>${d.id}</strong><br/>${d.body}`;
+        });
+        pt.addEventListener("mousemove", (e) => {
+          tipEl.style.left = (e.pageX + 14) + "px";
+          tipEl.style.top  = (e.pageY + 14) + "px";
+        });
+        pt.addEventListener("mouseleave", () => { tipEl.style.display = "none"; });
+
+        const lblCls = isTop ? "doc-label top1" : "doc-label";
+        const lbl = ce("text", { class: lblCls, x: d.x + 11, y: d.y + 4 }, svg);
+        lbl.textContent = d.id + (rank !== undefined ? `  #${rank + 1}` : "");
       });
     }
 
-    // ---------- Search ----------
+    // Static space on slide 2
+    {
+      const svg = document.getElementById("space-static");
+      drawShell(svg);
+      drawDocs(svg, document.getElementById("tip-static"));
+    }
+
+    // ---------- Toy "embedder": tag overlap + bigram Jaccard ----------
+    function tokenize(t) { return t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean); }
+    function tagOverlap(qt, dt) { let n = 0; for (const t of qt) if (dt.includes(t)) n++; return n; }
+    function bigrams(t) {
+      const s = " " + t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ") + " ";
+      const out = new Set();
+      for (let i = 0; i < s.length - 1; i++) out.add(s.slice(i, i + 2));
+      return out;
+    }
+    function jaccard(a, b) {
+      let inter = 0;
+      for (const x of a) if (b.has(x)) inter++;
+      return inter / Math.max(1, a.size + b.size - inter);
+    }
+    function score(q, d) {
+      return -(tagOverlap(tokenize(q), d.tags) * 1.0 + jaccard(bigrams(q), bigrams(d.body)) * 0.6);
+    }
+    function locateQuery(q) {
+      const ranked = CORPUS.map(d => ({ d, s: score(q, d) })).sort((a, b) => a.s - b.s);
+      const top3 = ranked.slice(0, 3);
+      let wx = 0, wy = 0, w = 0;
+      top3.forEach(({ d }, i) => { const k = 3 - i; wx += d.x * k; wy += d.y * k; w += k; });
+      return { x: wx / w, y: wy / w, ranking: ranked.map(r => r.d) };
+    }
+
     function runSearch() {
-      const q = document.getElementById("q").value.trim();
-      const k = parseInt(document.getElementById("k").value || "3", 10);
-      if (!q) return;
-      const qv = bigrams(q);
-      const scored = CORPUS.map(d => ({ id: d.id, body: d.body, score: cosineDistance(qv, bigrams(d.body)) }));
-      scored.sort((a, b) => a.score - b.score);
-      const top = scored.slice(0, k);
-      // Render corpus with the matched ids highlighted in rank order.
-      const matchSet = new Set(top.map(h => h.id));
-      // The Set above loses order — use an ordered Set-equivalent for ranking.
-      const ordered = new Set(top.map(h => h.id));
-      renderCorpus(ordered, top[0].id);
-      // Render hits.
-      const hits = document.getElementById("hits-list");
-      hits.innerHTML = top.map((h, i) => `
-        <div class="hit-row">
-          <span class="hit-rank">${i + 1}</span>
-          <span class="hit-id">${h.id}</span>
-          <span class="hit-score">d=${h.score.toFixed(4)}</span>
-          <div class="hit-body">${h.body}</div>
-        </div>
-      `).join("");
-    }
+      const svg = document.getElementById("space-live");
+      svg.innerHTML = "";
+      drawShell(svg);
+      const q = document.getElementById("q").value || "";
+      const k = Math.max(1, Math.min(6, parseInt(document.getElementById("k").value || "3", 10)));
+      const { x: qx, y: qy, ranking } = locateQuery(q);
+      const highlights = new Map();
+      ranking.slice(0, k).forEach((d, i) => highlights.set(d.id, i));
+      const top1 = ranking[0].id;
+      ranking.slice(0, k).forEach((d, i) => {
+        ce("line", { class: i === 0 ? "dist-line top1" : "dist-line",
+                     x1: qx, y1: qy, x2: d.x, y2: d.y }, svg);
+      });
+      drawDocs(svg, document.getElementById("tip-live"), { highlights, top1 });
+      ce("circle", { class: "query-point", cx: qx, cy: qy, r: 9 }, svg);
+      const lbl = ce("text", {
+        x: qx + 14, y: qy - 8, fill: "#ff9999", "font-size": 11,
+        "font-weight": 700, "font-family": "JetBrains Mono",
+      }, svg);
+      lbl.textContent = "your query";
 
-    // ---------- Cascade demo ----------
-    const STATE = { primary: 4, indexed: 4, timeline: [] };
-    function ts() {
-      const d = new Date();
-      return d.toTimeString().slice(0, 8);
+      const hits = document.getElementById("hits");
+      hits.innerHTML = ranking.slice(0, k).map((d, i) => {
+        const dist = Math.sqrt((qx - d.x) ** 2 + (qy - d.y) ** 2);
+        return `<div class="hit ${i === 0 ? "top1" : ""}">
+          <div class="rk">${i + 1}</div>
+          <div class="body"><span class="id">${d.id}</span>${d.body}</div>
+          <div class="dist">d=${dist.toFixed(1)}</div>
+        </div>`;
+      }).join("");
     }
-    function pushEvent(tag, tagClass, msg) {
-      STATE.timeline.push({ time: ts(), tag, tagClass, msg });
-      if (STATE.timeline.length > 40) STATE.timeline.shift();
-      const tl = document.getElementById("timeline");
-      tl.innerHTML = STATE.timeline.map(e =>
-        `<div class="event"><span class="ev-time">${e.time}</span><span class="ev-tag ${e.tagClass}">${e.tag}</span>${e.msg}</div>`
-      ).join("");
-      tl.scrollTop = tl.scrollHeight;
-    }
-    function cascadeInsert() {
-      const id = document.getElementById("new-id").value.trim() || "doc:?";
-      const text = document.getElementById("new-text").value.trim() || "(empty)";
-      const cascadeOn = document.getElementById("cascade-toggle").checked;
-      STATE.primary++;
-      pushEvent("primary", "ev-primary", `ns_insert("docs", ${id}, "${text.slice(0, 40)}${text.length > 40 ? "…" : ""}")`);
-      if (cascadeOn) {
-        STATE.indexed++;
-        pushEvent("index", "ev-index", `cascade -> text_index_insert("docs", "by_body", ${id}, ...)`);
-      } else {
-        pushEvent("skip", "ev-skip", `cascade off — by_body NOT updated (drift +1)`);
-      }
-      pushEvent("commit", "ev-commit", `commit() — primary=${STATE.primary}, by_body=${STATE.indexed}`);
-    }
-    function cascadeReset() {
-      STATE.primary = 4; STATE.indexed = 4; STATE.timeline = [];
-      pushEvent("init", "ev-skip", "reset — primary=4, by_body=4");
-    }
-
-    // ---------- Code tabs ----------
-    function showCode(name) {
-      document.querySelectorAll(".code-tab").forEach(t => t.classList.remove("active"));
-      document.querySelectorAll(".code-block").forEach(b => b.classList.remove("active"));
-      event.currentTarget.classList.add("active");
-      document.getElementById("code-" + name).classList.add("active");
-    }
-
-    // ---------- Initial render ----------
-    renderCorpus();
+    document.getElementById("q").addEventListener("keypress", (e) => {
+      if (e.key === "Enter") runSearch();
+    });
     runSearch();
+
+    // ---------- Commit timeline ----------
+    const COMMITS = [
+      { id: "c0", short: "0", msg: "init", primary: [], index: [] },
+      {
+        id: "c1", short: "1", msg: "seed",
+        primary: [["obs:1", "user prefers dark mode interfaces"],
+                  ["obs:2", "user is learning ML with Python"]],
+        index:   [["obs:1", "[0.21, 0.83, -0.04, …]"],
+                  ["obs:2", "[0.55, -0.12, 0.61, …]"]],
+      },
+      {
+        id: "c2", short: "2", msg: "add obs:3",
+        primary: [["obs:1", "user prefers dark mode interfaces"],
+                  ["obs:2", "user is learning ML with Python"],
+                  ["obs:3", "user works best in the morning"]],
+        index:   [["obs:1", "[0.21, 0.83, -0.04, …]"],
+                  ["obs:2", "[0.55, -0.12, 0.61, …]"],
+                  ["obs:3", "[0.32, 0.41, 0.18, …]"]],
+      },
+      {
+        id: "c3", short: "3", msg: "rollback",
+        primary: [["obs:1", "user prefers dark mode interfaces"],
+                  ["obs:2", "user is learning ML with Python"]],
+        index:   [["obs:1", "[0.21, 0.83, -0.04, …]"],
+                  ["obs:2", "[0.55, -0.12, 0.61, …]"]],
+        note: "obs:3 was noise — rewind keeps both trees aligned",
+      },
+    ];
+    function renderCommits(idx) {
+      document.getElementById("commits").innerHTML = COMMITS.map((cm, i) =>
+        `<div class="commit ${i === idx ? "active" : ""}" onclick="renderCommits(${i})">
+          <div class="dot">${cm.short}</div>
+          <div class="meta">commit ${i}</div>
+          <div class="msg">${cm.msg}</div>
+        </div>`
+      ).join("");
+      const cm = COMMITS[idx];
+      const p = document.getElementById("pane-primary");
+      const x = document.getElementById("pane-index");
+      p.innerHTML = cm.primary.length === 0
+        ? '<div class="empty-state">empty</div>'
+        : cm.primary.map(([k, v]) => `<div class="row"><span class="k">${k}</span> → ${v}</div>`).join("");
+      x.innerHTML = cm.index.length === 0
+        ? '<div class="empty-state">empty</div>'
+        : cm.index.map(([k, v]) => `<div class="row"><span class="k">${k}</span> → ${v}</div>`).join("");
+      if (cm.note) x.innerHTML += `<div class="note">${cm.note}</div>`;
+    }
+    renderCommits(2);
+
+    // ============================================================
+    // Deck navigation
+    // ============================================================
+    const slides = Array.from(document.querySelectorAll("[data-slide]"));
+    const dotsHost = document.getElementById("deck-dots");
+    let current = 0;
+
+    function setSlide(i) {
+      i = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach((s, k) => {
+        s.classList.toggle("active", k === i);
+        s.classList.toggle("prev", k < i);
+      });
+      dotsHost.querySelectorAll(".dot").forEach((d, k) => d.classList.toggle("active", k === i));
+      document.getElementById("cur").textContent = i + 1;
+      document.getElementById("prev").disabled = i === 0;
+      document.getElementById("next").disabled = i === slides.length - 1;
+      current = i;
+    }
+
+    slides.forEach((_, k) => {
+      const d = document.createElement("div");
+      d.className = "dot";
+      d.title = `Slide ${k + 1}`;
+      d.addEventListener("click", () => setSlide(k));
+      dotsHost.appendChild(d);
+    });
+    document.getElementById("total").textContent = slides.length;
+    document.getElementById("prev").addEventListener("click", () => setSlide(current - 1));
+    document.getElementById("next").addEventListener("click", () => setSlide(current + 1));
+
+    document.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT" && e.key !== "Escape") return;
+      if (["ArrowRight", "PageDown", " "].includes(e.key)) { setSlide(current + 1); e.preventDefault(); }
+      else if (["ArrowLeft", "PageUp"].includes(e.key)) { setSlide(current - 1); e.preventDefault(); }
+      else if (e.key === "Home") setSlide(0);
+      else if (e.key === "End") setSlide(slides.length - 1);
+    });
+
+    // Touch swipe
+    let touchX = null;
+    document.addEventListener("touchstart", (e) => { touchX = e.changedTouches[0].screenX; });
+    document.addEventListener("touchend", (e) => {
+      if (touchX === null) return;
+      const dx = e.changedTouches[0].screenX - touchX;
+      if (Math.abs(dx) > 50) setSlide(current + (dx < 0 ? 1 : -1));
+      touchX = null;
+    });
+
+    setSlide(0);
   </script>
 </body>
 </html>

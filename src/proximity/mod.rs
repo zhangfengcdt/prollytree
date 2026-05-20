@@ -21,18 +21,32 @@ limitations under the License.
 //! insertion order or history. The resulting Merkle tree is shared across
 //! versions for free.
 //!
-//! # Current scope (PR 1)
+//! # What ships here
 //!
-//! This first slice ships:
+//! - [`ProximityNode`] — content-addressed vector-bucket node type, stored
+//!   via [`crate::storage::NodeStorage`] alongside `ProllyNode`s.
+//! - [`Distance`] / [`Metric`] — pluggable distance functions with three
+//!   built-in metrics (L2, Cosine, InnerProduct).
+//! - [`vector_level`] — the leading-zero-bits level-assignment hash that
+//!   gives the tree its history-independent shape.
+//! - [`ProximityIndex`] — raw vector index with insert / remove / knn over
+//!   any `NodeStorage`-backed store, plus persist / load helpers.
+//! - [`TextIndex`] — text-search wrapper that owns an [`Embedder`] and a
+//!   [`Chunker`], with multi-chunk plumbing (chunk-id encoding, prefix-scan
+//!   delete, search dedup back to documents).
+//! - Embedders — deterministic [`HashEmbedder`] (ML-free, for tests) and,
+//!   under the `proximity_text` feature, [`MiniLmEmbedder`] (Candle +
+//!   all-MiniLM-L6-v2).
+//! - Chunkers — [`IdentityChunker`] (default) and [`LineChunker`].
+//! - Three-way merge — [`merge_proximity_index_sets`] plus built-in
+//!   resolvers (`LatestVectorResolver`, `MeanVectorResolver`,
+//!   take-source / take-destination).
 //!
-//! - [`ProximityNode`] — the node type stored under content-addressed hashes.
-//! - [`Distance`] / [`Metric`] — pluggable distance with three built-in metrics.
-//! - [`vector_level`] — the level-assignment hash function.
-//! - [`ProximityIndex`] — `insert` / `knn` against an in-memory store.
-//!
-//! Persistence across `NodeStorage` backends, sub-index integration with
-//! namespaces, version-controlled merge, and the text-search wrapper are
-//! follow-on PRs.
+//! Namespace-level integration — multi-index lifecycle, cascade, audit, and
+//! the Git-backed atomic commit path — lives in
+//! [`crate::git::versioned_store::NamespacedKvStore`] and re-exports
+//! [`ProximityNamespaceHandle`] back here so callers can stay in the
+//! `prollytree::proximity::*` namespace.
 
 mod chunker;
 mod distance;

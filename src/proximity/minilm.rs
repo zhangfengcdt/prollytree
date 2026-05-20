@@ -42,8 +42,14 @@ use tokenizers::Tokenizer;
 
 /// Default HuggingFace model id.
 pub const DEFAULT_MODEL_ID: &str = "sentence-transformers/all-MiniLM-L6-v2";
-/// Default revision pinned for stability.
-pub const DEFAULT_REVISION: &str = "main";
+/// Default revision — pinned to an immutable HuggingFace commit SHA so the
+/// persisted version string (`"{model_id}@{revision}"`) cannot silently
+/// accept reopens after upstream republishes `main`. Update this constant
+/// (and bump the persisted version) only when intentionally moving to a new
+/// model build. The SHA below corresponds to the snapshot used to bring up
+/// this integration; to refresh, fetch the latest commit on the model's
+/// `main` branch and pin its hash.
+pub const DEFAULT_REVISION: &str = "8b3219a92973c328a8e22fadcfa821b5dc75636a";
 /// MiniLM-L6-v2 produces 384-d embeddings.
 pub const MINILM_DIM: u16 = 384;
 
@@ -187,9 +193,35 @@ fn embedder_cache_dir(
             .join("prollytree")
             .join("embedders")
     };
-    // The model_id may contain `/` (e.g. `sentence-transformers/all-MiniLM-L6-v2`);
-    // we just nest those as subdirectories.
-    Ok(base.join(model_id).join(revision))
+    // `model_id` and `revision` come from the public `MiniLmEmbedder::new`
+    // constructor — so they're user-controlled. Reject absolute paths or
+    // `..` segments outright, and sanitise other separators, to make sure the
+    // resulting cache path stays under `base` rather than escaping it (which
+    // `PathBuf::join` would silently allow for an absolute argument).
+    Ok(base
+        .join(sanitise_cache_component(model_id)?)
+        .join(sanitise_cache_component(revision)?))
+}
+
+/// Validate a path component that came from user-controlled input. The
+/// component is rejected if it would let the join escape its base, and
+/// otherwise has its forward/backslashes replaced with `_` so the result is
+/// always a single safe directory name.
+fn sanitise_cache_component(s: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    if s.is_empty() {
+        return Err("embedder cache component must not be empty".into());
+    }
+    if std::path::Path::new(s).is_absolute() {
+        return Err(format!("embedder cache component must not be absolute: {s:?}").into());
+    }
+    if s.split(['/', '\\']).any(|seg| seg == ".." || seg == ".") {
+        return Err(format!("embedder cache component must not contain `..` or `.`: {s:?}").into());
+    }
+    // Replace path separators with `_` so a name like
+    // `sentence-transformers/all-MiniLM-L6-v2` becomes a single directory
+    // rather than two nested levels (keeps the layout predictable across
+    // platforms where one separator might be more privileged than another).
+    Ok(s.replace(['/', '\\'], "_"))
 }
 
 /// Fetch a single file from HuggingFace into the cache directory, returning

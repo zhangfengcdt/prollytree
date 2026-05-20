@@ -17,9 +17,25 @@ use crate::node::ProllyNode;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::{NodeStorage, StorageError};
+
+/// Process-local monotonic counter used as part of the partial-write filename
+/// so concurrent `insert_blob` callers in the same process can't collide on
+/// the temp path. Combined with pid + nanoseconds this gives a globally
+/// unique suffix without pulling in `rand`.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn unique_suffix() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{}-{}", std::process::id(), nanos, n)
+}
 
 #[derive(Clone, Debug)]
 pub struct FileNodeStorage<const N: usize> {
@@ -113,17 +129,34 @@ impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
             // Content-addressed: same hash ⇒ same bytes; nothing to do.
             return Ok(());
         }
-        // Write to a temp path then rename so a partial write never leaves a
-        // corrupted blob behind.
-        let tmp_path = blobs_dir.join(format!("{hash:x}.partial"));
+        // Write to a UNIQUE temp path (pid + nanoseconds + atomic counter) then
+        // rename. Two concurrent writers of the same blob each get their own
+        // temp file; whoever loses the rename race sees the final path already
+        // exist, which is fine — content-addressed storage guarantees the
+        // winner wrote bytes identical to ours. Treat that case as success so
+        // `insert_blob` stays idempotent across processes.
+        let tmp_path = blobs_dir.join(format!("{:x}.partial.{}", hash, unique_suffix()));
         let mut file = File::create(&tmp_path)?;
         file.write_all(bytes)?;
         // Ensure the bytes are flushed before rename so a crash mid-write
         // doesn't leave the rename target pointing at unfinished data.
         file.sync_all()?;
         drop(file);
-        fs::rename(&tmp_path, &path)?;
-        Ok(())
+        match fs::rename(&tmp_path, &path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Another writer landed first. Verify the target exists
+                // (proving the race lost, not some unrelated failure) and
+                // clean up our own temp file before returning success.
+                if path.exists() {
+                    let _ = fs::remove_file(&tmp_path);
+                    Ok(())
+                } else {
+                    let _ = fs::remove_file(&tmp_path);
+                    Err(StorageError::Io(e))
+                }
+            }
+        }
     }
 
     fn get_blob(&self, hash: &ValueDigest<N>) -> Option<Vec<u8>> {

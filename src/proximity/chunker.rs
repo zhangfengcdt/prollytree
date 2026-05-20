@@ -14,18 +14,24 @@ limitations under the License.
 
 //! Document-to-chunks splitting for [`crate::proximity::TextIndex`].
 //!
-//! # PR 4c — trait definition only
+//! Ships the [`Chunker`] trait plus two built-in implementations:
 //!
-//! This module ships the [`Chunker`] trait and the [`IdentityChunker`]
-//! implementation (one chunk = the whole document). Wiring multi-chunk
-//! support into [`crate::proximity::TextIndex`] — so a single document
-//! produces multiple `(doc_id, chunk_idx) → vector` entries — is deferred to
-//! a future PR alongside a real chunker (`SentenceChunker` /
-//! `RecursiveChunker`). For v1 every text index implicitly uses
-//! [`IdentityChunker`] semantics: one vector per document.
+//! - [`IdentityChunker`] — one chunk per document (default; matches the
+//!   pre-multi-chunk behaviour, used when [`crate::proximity::TextIndexConfig`]
+//!   doesn't explicitly opt into something else).
+//! - [`LineChunker`] — one chunk per non-empty line. Useful for log-style
+//!   ingestion where line granularity is what the consumer searches over.
 //!
-//! The trait is in place so that future chunker types can land in the
-//! `Embedder`/`Chunker` slot without an API break on [`TextIndexConfig`].
+//! Multi-chunk plumbing is wired through [`crate::proximity::TextIndex`]:
+//! a single document under a non-identity chunker produces multiple
+//! `(doc_id, chunk_idx) → vector` entries, all sharing a prefix in the chunk
+//! id so [`crate::proximity::TextIndex::delete`] can prefix-scan-remove every
+//! chunk for a doc, and search dedups results back to the document at its
+//! best chunk's distance.
+//!
+//! Future chunkers (`SentenceChunker`, `RecursiveChunker`, …) plug into the
+//! same `Embedder`/`Chunker` slot on
+//! [`crate::proximity::TextIndexConfig`] without an API break.
 
 /// Splits a document into one or more chunks. Each chunk will receive its
 /// own embedding when the consumer ([`crate::proximity::TextIndex`]) routes
