@@ -14,246 +14,219 @@ limitations under the License.
 
 //! Multi-Agent Worktree Integration Example
 //!
-//! This example demonstrates how to use the Git worktree-like functionality
-//! for multi-agent systems with versioned key-value storage and intelligent merging.
+//! Demonstrates the parts of the `WorktreeManager` API that are exposed for
+//! multi-agent coordination:
+//!   - Creating multiple isolated agent workspaces inside one parent git repo.
+//!   - Listing, locking, and removing worktrees via `WorktreeManager`.
+//!   - Each agent owns an independent `GitVersionedKvStore` for its work.
+//!   - Bringing changes back together by writing into a shared main store
+//!     with `SemanticMergeResolver` for JSON-aware reconciliation.
+//!
+//! Note: `WorktreeVersionedKvStore::from_worktree` requires a fully populated
+//! worktree checkout (a feature still in flight on the worktree adapter — see
+//! `src/git/worktree.rs`), so this example uses the supported pattern of
+//! independent per-agent stores under the worktree directory.
 
 use parking_lot::Mutex;
-use prollytree::diff::{AgentPriorityResolver, SemanticMergeResolver};
+use prollytree::diff::{ConflictResolver, MergeConflict, MergeResult, SemanticMergeResolver};
 use prollytree::git::versioned_store::GitVersionedKvStore;
-use prollytree::git::worktree::{WorktreeManager, WorktreeVersionedKvStore};
+use prollytree::git::worktree::WorktreeManager;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🤖 Multi-Agent Worktree Integration Demo");
-    println!("=========================================");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Multi-Agent Worktree Integration Demo");
+    println!("=====================================");
 
-    // Setup temporary directory for demo
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path();
 
-    // Initialize Git repository
     init_git_repo(repo_path)?;
 
-    // Create the main versioned store
-    let mut main_store = GitVersionedKvStore::<16>::init(repo_path.join("main_data"))?;
-
-    // Add some initial shared data
+    // Main shared store lives in <repo>/data
+    let mut main_store = GitVersionedKvStore::<16>::init(repo_path.join("data"))?;
     main_store.insert(
         b"shared_config".to_vec(),
         br#"{"version": 1, "mode": "production"}"#.to_vec(),
     )?;
     main_store.insert(b"global_counter".to_vec(), b"0".to_vec())?;
     main_store.commit("Initial shared data")?;
+    println!("[main] Initialized shared repository with shared_config + global_counter");
 
-    println!("✅ Initialized main repository with shared data");
+    // The WorktreeManager tracks per-agent workspaces alongside the main repo.
+    let manager_arc = Arc::new(Mutex::new(WorktreeManager::new(repo_path)?));
 
-    // Create worktree manager
-    let worktree_manager = WorktreeManager::new(repo_path)?;
-    let manager_arc = Arc::new(Mutex::new(worktree_manager));
-
-    // Simulate multiple AI agents working concurrently
     let agent_scenarios = vec![
-        ("agent1", "customer-service", "Handle customer inquiries"),
-        ("agent2", "data-analysis", "Analyze user behavior"),
-        ("agent3", "content-generation", "Generate marketing content"),
+        (
+            "agent1",
+            "customer-service",
+            br#"{"id": "cust_001", "issue": "billing", "priority": "high"}"#.as_slice(),
+        ),
+        (
+            "agent2",
+            "data-analysis",
+            br#"{"users": 1250, "sessions": 3400, "conversion": 0.045}"#.as_slice(),
+        ),
+        (
+            "agent3",
+            "content-generation",
+            br#"{"title": "Summer Sale", "body": "Get 20% off...", "target": "email"}"#.as_slice(),
+        ),
     ];
 
-    let mut agent_worktrees = Vec::new();
+    // Each agent gets its own workspace tracked by the manager + an
+    // independent prolly store living in a sibling directory. The worktree
+    // path holds the linked-worktree metadata; the prolly store sits in its
+    // own self-contained git repo so we don't tangle the two layouts.
+    let agent_data_root = temp_dir.path().join("agent_data");
+    std::fs::create_dir_all(&agent_data_root)?;
 
-    // Create isolated worktrees for each agent
-    for (agent_id, session_id, description) in &agent_scenarios {
-        let agent_path = temp_dir.path().join(format!("{}_workspace", agent_id));
+    let mut agent_stores: Vec<(String, GitVersionedKvStore<16>, String)> = Vec::new();
+    for (agent_id, session_id, _payload) in &agent_scenarios {
+        let workspace = repo_path.join(format!("{}_workspace", agent_id));
         let branch_name = format!("{}-{}", agent_id, session_id);
 
-        // Add worktree
         let worktree_info = {
             let mut manager = manager_arc.lock();
-            manager.add_worktree(&agent_path, &branch_name, true)?
+            manager.add_worktree(&workspace, &branch_name, true)?
         };
-
-        // Create WorktreeVersionedKvStore for the agent
-        let agent_store =
-            WorktreeVersionedKvStore::<16>::from_worktree(worktree_info, manager_arc.clone())?;
-
-        agent_worktrees.push((agent_id.to_string(), agent_store, description.to_string()));
-
         println!(
-            "🏗️  Created isolated workspace for {} on branch {}",
-            agent_id, branch_name
+            "[{}] Worktree id={} branch={}",
+            agent_id, worktree_info.id, worktree_info.branch
         );
+
+        // Independent prolly dataset in its own git repo (outside the
+        // linked-worktree's path, which holds incomplete worktree metadata).
+        let agent_repo = agent_data_root.join(agent_id);
+        std::fs::create_dir_all(&agent_repo)?;
+        init_git_repo(&agent_repo)?;
+        let mut agent_store = GitVersionedKvStore::<16>::init(agent_repo.join("data"))?;
+        agent_store.commit("agent workspace bootstrap")?;
+        agent_stores.push((agent_id.to_string(), agent_store, branch_name));
     }
 
-    // Simulate each agent working on their specific tasks
-    println!("\n📊 Agents performing their tasks...");
-
-    for (agent_id, worktree_store, description) in &mut agent_worktrees {
-        println!("   {} working on: {}", agent_id, description);
-
-        // Each agent modifies different aspects of the data
+    // Each agent does its work in isolation.
+    println!("\n[agents] running independent workloads...");
+    for ((agent_id, agent_store, _branch), (_, _session, payload)) in
+        agent_stores.iter_mut().zip(agent_scenarios.iter())
+    {
         match agent_id.as_str() {
             "agent1" => {
-                // Customer service agent updates customer data
-                worktree_store.store_mut().insert(
-                    b"customer:latest".to_vec(),
-                    br#"{"id": "cust_001", "issue": "billing", "priority": "high"}"#.to_vec(),
-                )?;
-                worktree_store.store_mut().insert(
+                agent_store.insert(b"customer:latest".to_vec(), payload.to_vec())?;
+                agent_store.insert(
                     b"response_templates".to_vec(),
                     br#"{"billing": "Thank you for contacting us about billing..."}"#.to_vec(),
                 )?;
-                worktree_store
-                    .store_mut()
-                    .commit("Customer service data updates")?;
+                agent_store.commit("agent1: customer-service updates")?;
             }
             "agent2" => {
-                // Data analysis agent updates analytics
-                worktree_store.store_mut().insert(
-                    b"analytics:daily".to_vec(),
-                    br#"{"users": 1250, "sessions": 3400, "conversion": 0.045}"#.to_vec(),
-                )?;
-                worktree_store
-                    .store_mut()
-                    .insert(b"global_counter".to_vec(), b"25".to_vec())?; // This will create a conflict!
-                worktree_store
-                    .store_mut()
-                    .commit("Analytics data updates")?;
+                agent_store.insert(b"analytics:daily".to_vec(), payload.to_vec())?;
+                agent_store.insert(b"global_counter".to_vec(), b"25".to_vec())?;
+                agent_store.commit("agent2: analytics updates")?;
             }
             "agent3" => {
-                // Content generation agent creates marketing content
-                worktree_store.store_mut().insert(
-                    b"content:campaign".to_vec(),
-                    br#"{"title": "Summer Sale", "body": "Get 20% off...", "target": "email"}"#
-                        .to_vec(),
-                )?;
-                worktree_store.store_mut().insert(
+                agent_store.insert(b"content:campaign".to_vec(), payload.to_vec())?;
+                agent_store.insert(
                     b"shared_config".to_vec(),
                     br#"{"version": 1, "mode": "production", "feature_flags": {"new_ui": true}}"#
                         .to_vec(),
-                )?; // Potential conflict
-                worktree_store
-                    .store_mut()
-                    .commit("Marketing content updates")?;
+                )?;
+                agent_store.commit("agent3: content updates")?;
             }
             _ => {}
         }
     }
+    println!("[agents] all completed.");
 
-    println!("✅ All agents completed their tasks");
-
-    // Now demonstrate different merge strategies
-    println!("\n🔄 Merging agent work back to main repository...");
-
-    // Strategy 1: Simple merge (ignore conflicts)
-    println!("\n1️⃣  Simple merge (ignoring conflicts):");
-    let merge_result1 = agent_worktrees[0]
-        .1
-        .merge_to_main(&mut main_store, "Merge customer service updates")?;
-    println!("   {}", merge_result1);
-
-    // Strategy 2: Semantic merge for structured data
-    println!("\n2️⃣  Semantic merge (JSON-aware):");
-    let semantic_resolver = SemanticMergeResolver::default();
-    let merge_result2 = agent_worktrees[2].1.merge_to_branch_with_resolver(
-        &mut main_store,
-        "main",
-        &semantic_resolver,
-        "Merge content generation with semantic resolution",
-    )?;
-    println!("   {}", merge_result2);
-
-    // Strategy 3: Priority-based merge
-    println!("\n3️⃣  Priority-based merge:");
-    let mut priority_resolver = AgentPriorityResolver::new();
-    priority_resolver.set_agent_priority("agent2".to_string(), 10); // High priority for data analysis
-    priority_resolver.set_agent_priority("agent1".to_string(), 5); // Medium priority
-
-    let merge_result3 = agent_worktrees[1].1.merge_to_branch_with_resolver(
-        &mut main_store,
-        "main",
-        &priority_resolver,
-        "Merge analytics with priority resolution",
-    )?;
-    println!("   {}", merge_result3);
-
-    // Verify final state
-    println!("\n📋 Final merged state:");
-    if let Some(config_value) = main_store.get(b"shared_config") {
-        let config_json: serde_json::Value = serde_json::from_slice(&config_value)?;
-        println!("   • shared_config: {}", config_json);
-    }
-
-    if let Some(counter_value) = main_store.get(b"global_counter") {
-        let counter_str = String::from_utf8_lossy(&counter_value);
-        println!("   • global_counter: {}", counter_str);
-    }
-
-    // Show conflict detection capabilities
-    println!("\n🔍 Conflict detection example:");
-    let mut temp_worktree = agent_worktrees.pop().unwrap().1;
-    temp_worktree
-        .store_mut()
-        .insert(b"global_counter".to_vec(), b"999".to_vec())?; // Create a conflicting change
-    temp_worktree.store_mut().commit("Conflicting update")?;
-
-    match temp_worktree.try_merge_to_main(&mut main_store) {
-        Ok(conflicts) => {
-            if conflicts.is_empty() {
-                println!("   ✅ No conflicts detected");
-            } else {
-                println!("   ⚠️  {} conflicts detected:", conflicts.len());
-                for conflict in &conflicts {
-                    println!("      - Key: {}", String::from_utf8_lossy(&conflict.key));
+    // Bring agent work back into main store. Each (key, value) is inserted
+    // into main with the SemanticMergeResolver applied when conflicts arise.
+    println!("\n[merge] bringing agent work into main store...");
+    let semantic = SemanticMergeResolver::default();
+    for (agent_id, agent_store, _branch) in agent_stores.iter() {
+        for key in agent_store.list_keys() {
+            let value = agent_store.get(&key).expect("agent value");
+            let merged = match main_store.get(&key) {
+                Some(existing) if existing != value => {
+                    let conflict = MergeConflict {
+                        key: key.clone(),
+                        base_value: None,
+                        source_value: Some(value.clone()),
+                        destination_value: Some(existing.clone()),
+                    };
+                    match semantic.resolve_conflict(&conflict) {
+                        Some(MergeResult::Modified(_, merged_value))
+                        | Some(MergeResult::Added(_, merged_value)) => merged_value,
+                        _ => value.clone(),
+                    }
                 }
-            }
+                Some(_) => value.clone(),
+                None => value.clone(),
+            };
+            main_store.insert(key.clone(), merged)?;
         }
-        Err(e) => println!("   Error checking conflicts: {}", e),
+        main_store.commit(&format!("merge {}'s work into main", agent_id))?;
+    }
+    println!("[merge] done.");
+
+    // Inspect the converged state.
+    println!("\n[main] converged state:");
+    for key in main_store.list_keys() {
+        let value = main_store.get(&key).expect("key present");
+        let key_str = String::from_utf8_lossy(&key);
+        let val_str = String::from_utf8_lossy(&value);
+        println!("  {} -> {}", key_str, val_str);
     }
 
-    println!("\n🎉 Multi-agent worktree integration demo completed!");
-    println!("\n💡 Key capabilities demonstrated:");
-    println!("   • Isolated workspaces for concurrent agents");
-    println!("   • Git-like branching and merging for AI agent data");
-    println!("   • Intelligent conflict resolution strategies");
-    println!("   • Semantic merging for structured JSON data");
-    println!("   • Priority-based agent coordination");
-    println!("   • Conflict detection and prevention");
+    // Demonstrate WorktreeManager housekeeping: list, lock, remove.
+    println!("\n[manager] worktree housekeeping...");
+    {
+        let manager = manager_arc.lock();
+        let listed = manager.list_worktrees();
+        println!("  {} worktrees registered", listed.len());
+        for info in &listed {
+            println!("    - id={} branch={}", info.id, info.branch);
+        }
+    }
+    {
+        let mut manager = manager_arc.lock();
+        let first_id = manager
+            .list_worktrees()
+            .first()
+            .map(|w| w.id.clone())
+            .expect("at least one worktree");
+        manager.lock_worktree(&first_id, "demo: hold for a long-running job")?;
+        println!("  locked worktree {}: {}", first_id, manager.is_locked(&first_id));
+        manager.unlock_worktree(&first_id)?;
+        println!("  unlocked worktree {}: {}", first_id, manager.is_locked(&first_id));
+    }
 
+    println!("\nDemo complete.");
     Ok(())
 }
 
 fn init_git_repo(repo_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     use std::process::Command;
 
-    // Initialize Git repository
     Command::new("git")
-        .args(&["init"])
+        .args(["init"])
         .current_dir(repo_path)
         .output()?;
-
-    // Configure Git user
     Command::new("git")
-        .args(&["config", "user.name", "Multi-Agent Demo"])
+        .args(["config", "user.name", "Multi-Agent Demo"])
         .current_dir(repo_path)
         .output()?;
-
     Command::new("git")
-        .args(&["config", "user.email", "demo@multiagent.ai"])
+        .args(["config", "user.email", "demo@multiagent.ai"])
         .current_dir(repo_path)
         .output()?;
-
-    // Create initial commit
     std::fs::write(repo_path.join("README.md"), "# Multi-Agent Repository")?;
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()?;
-
     Command::new("git")
-        .args(&["commit", "-m", "Initial repository setup"])
+        .args(["commit", "-m", "Initial repository setup"])
         .current_dir(repo_path)
         .output()?;
-
     Ok(())
 }

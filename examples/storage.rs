@@ -13,7 +13,7 @@ limitations under the License.
 */
 
 use prollytree::config::TreeConfig;
-use prollytree::storage::RocksDBNodeStorage;
+use prollytree::storage::{NodeStorage, RocksDBNodeStorage};
 use prollytree::tree::{ProllyTree, Tree};
 use tempfile::TempDir;
 
@@ -59,13 +59,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root_hash = tree.get_root_hash();
     println!("\nTree root hash: {:?}", root_hash);
 
+    // Persist the root node + the tree config (with root_hash) into RocksDB
+    // so the next process can locate the root on reopen.
+    tree.persist_root();
+
     // Demonstrate persistence by creating a new tree with the same storage
     drop(tree);
     println!("\nCreating new tree with same storage...");
 
-    // Re-open the storage
+    // Re-open the storage and read back the persisted config.
     let storage2 = RocksDBNodeStorage::<32>::new(temp_dir.path().join("prolly_rocksdb"))?;
-    let config2 = TreeConfig::<32>::default();
+    let config_bytes = storage2
+        .get_config("tree_config")
+        .expect("tree config should be persisted in storage");
+    let config2: TreeConfig<32> = serde_json::from_slice(&config_bytes)?;
     let tree2 =
         ProllyTree::load_from_storage(storage2, config2).expect("Failed to load tree from storage");
 
