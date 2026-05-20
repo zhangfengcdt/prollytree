@@ -41,6 +41,8 @@ The full documentation includes:
 - **Multiple Storage Backends** - Choose from Git, File, InMemory, or RocksDB storage
 - **Cryptographic Verification** - Merkle proofs for data integrity across trees and versioned storage
 - **SQL Queries** - Query your data using SQL syntax
+- **Namespaced Storage** - Multiple isolated KV trees in one versioned store
+- **Vector / Text Search** - Versioned ANN index with optional bundled MiniLM embedder
 
 ## Key Use Cases
 
@@ -93,6 +95,108 @@ for diff in diffs:
 proof = store.generate_proof(b"config")
 is_valid = store.verify_proof(proof, b"config", b"production_settings")
 ```
+
+### Namespaced Storage
+
+`NamespacedKvStore` is the multi-tree counterpart of `VersionedKvStore`. Each
+namespace owns its own prolly tree, but every namespace shares a single git
+history — `commit`, `branch`, and `checkout` move every namespace together.
+
+```python
+from prollytree import NamespacedKvStore
+
+store = NamespacedKvStore("./data")
+
+# Per-namespace primary KV writes. Each namespace owns its own key space —
+# the same key in two namespaces resolves independently.
+store.ns_insert("users",    b"u:alice", b"Alice")
+store.ns_insert("settings", b"theme",   b"dark")
+store.commit("seed users + settings")        # one commit, both namespaces
+
+store.branch("experiment")                   # create + switch
+store.ns_insert("settings", b"theme", b"light")
+store.commit("flip theme on experiment")
+
+store.checkout("main")
+store.ns_get("settings", b"theme")           # b"dark" again
+store.list_namespaces()                      # ['users', 'settings', ...]
+```
+
+Migrating from `VersionedKvStore` is mostly mechanical — `store.insert(k, v)`
+becomes `store.ns_insert(namespace, k, v)`. The branching API is `store.branch`
++ `store.checkout` (note: `current_branch` is a property, not a method). See
+`python/examples/namespaced_example.py` for a complete walkthrough.
+
+### Vector / Text Search
+
+Any namespace can own zero or more text sub-indexes. A text index turns
+documents into vectors via a configurable embedder and gives you top-k
+similarity search that is versioned alongside the primary tree — branching and
+merging cover both the primary tree and every sub-index atomically.
+
+```python
+from prollytree import NamespacedKvStore, MiniLmEmbedder
+
+store = NamespacedKvStore("./data")
+emb = MiniLmEmbedder()                       # bundled Candle + all-MiniLM-L6-v2
+
+# text_index_open creates or re-opens the index. The embedder's id + version
+# are persisted; opening with a mismatched embedder raises a clear error.
+store.text_index_open("docs", "by_body", emb)
+
+store.text_index_insert("docs", "by_body", b"doc:1", "the quick brown fox")
+store.text_index_insert("docs", "by_body", b"doc:2", "lazy dog asleep on the mat")
+store.commit("seed text index")
+
+hits = store.text_index_search("docs", "by_body", "vulpine animal", k=5)
+# -> [(b"doc:1", 0.31), (b"doc:2", 0.74)]    # (id_bytes, distance)
+```
+
+Three embedder options are bundled:
+
+```python
+from prollytree import HashEmbedder, MiniLmEmbedder, CallableEmbedder
+
+HashEmbedder(dim=384, seed=0)                # deterministic, ML-free; tests / demos
+MiniLmEmbedder()                             # bundled Candle + MiniLM-L6-v2 (semantic)
+CallableEmbedder(                            # wrap any Python function
+    id="openai:text-embedding-3-small",
+    version="2024-01",
+    dim=1536,
+    embed_fn=my_openai_embed,
+)
+```
+
+Cascade mode mirrors primary writes into a text index automatically:
+
+```python
+store.set_cascade("docs", ["by_body"])
+store.ns_insert("docs", b"doc:3", b"branching is a first-class operation")
+store.commit("cascade-driven indexing")      # text index updated implicitly
+```
+
+Other knobs:
+- `chunker="line"` splits each document on `\n` and indexes per-line; search
+  dedups results back to the document id.
+- `audit_text_index(ns, idx)` returns `{orphans_in_index, missing_from_index,
+  is_in_sync}` to detect drift; `purge_text_index_orphans(ns, idx)` repairs it.
+- `set_externalize_threshold(n)` + `gc_blobs()` push large values into a blob
+  store and garbage-collect unreferenced blobs (File / RocksDB backends).
+
+Feature-availability flags let callers fall back gracefully:
+
+```python
+import prollytree as p
+if p.proximity_text_available:
+    emb = p.MiniLmEmbedder()
+elif p.proximity_available:
+    emb = p.HashEmbedder(384, 0)
+else:
+    raise RuntimeError("wheel built without proximity features")
+```
+
+See `python/examples/text_index_example.py` for a runnable walkthrough covering
+cascade, multi-chunk indexing, drift repair, and every embedder.
 
 ### SQL Queries
 ```python

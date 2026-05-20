@@ -13,6 +13,8 @@ get_example_file() {
         "langgraph") echo "langgraph_example.py" ;;
         "merge") echo "merge_example.py" ;;
         "langmem") echo "langmem_example.py" ;;
+        "namespaced") echo "namespaced_example.py" ;;
+        "text_index") echo "text_index_example.py" ;;
         *) echo "" ;;
     esac
 }
@@ -30,6 +32,8 @@ show_usage() {
     echo "  langgraph     - LangGraph memory example"
     echo "  merge         - Branch merging with conflict resolution example"
     echo "  langmem       - LangMem integration with ProllyTree backend"
+    echo "  namespaced    - Multi-namespace KV store example"
+    echo "  text_index    - Text indexing + vector search on NamespacedKvStore"
     echo ""
     echo "If no example name is provided, all examples will be run."
 }
@@ -93,6 +97,8 @@ if ./python/build_python.sh --all-features --install; then
         run_example "LangGraph memory" "langgraph_example.py"
         run_example "merge with conflict resolution" "merge_example.py"
         run_example "LangMem integration" "langmem_example.py"
+        run_example "namespaced KV store" "namespaced_example.py"
+        run_example "text indexing + search" "text_index_example.py"
     else
         # Run only the requested example
         EXAMPLE_FILE=$(get_example_file "$REQUESTED_EXAMPLE")
