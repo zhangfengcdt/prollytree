@@ -230,6 +230,29 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
             .delete(&db_key)
             .map_err(|e| StorageError::Other(e.to_string()))
     }
+
+    fn list_blobs(&self) -> Result<Vec<ValueDigest<N>>, StorageError> {
+        let mut out = Vec::new();
+        let iter = self.db.iterator(rocksdb::IteratorMode::From(
+            BLOB_PREFIX,
+            rocksdb::Direction::Forward,
+        ));
+        for item in iter {
+            let (key, _) = item.map_err(|e| StorageError::Other(e.to_string()))?;
+            // Keys are returned in sorted byte order. Once we see a key that
+            // doesn't start with our prefix, we've walked past the blob range.
+            if !key.starts_with(BLOB_PREFIX) {
+                break;
+            }
+            let suffix = &key[BLOB_PREFIX.len()..];
+            if suffix.len() == N {
+                let mut arr = [0u8; N];
+                arr.copy_from_slice(suffix);
+                out.push(ValueDigest(arr));
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// Batch operations for RocksDBNodeStorage

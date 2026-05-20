@@ -253,6 +253,199 @@ fn upsert_changes_externalised_value() {
     assert_eq!(personal.get(b"k"), Some(v2));
 }
 
+// ---------------------------------------------------------------------------
+// PR 0c — gc_blobs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gc_blobs_empty_store_is_noop() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    let report = store.gc_blobs().unwrap();
+    assert_eq!(report.total, 0);
+    assert_eq!(report.referenced, 0);
+    assert_eq!(report.removed, 0);
+    assert!(report.errors.is_empty());
+}
+
+#[test]
+fn gc_blobs_keeps_referenced_blobs() {
+    // Insert two externalised values, both referenced. GC should keep them.
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    store.set_externalize_threshold(Some(64));
+
+    let p1: Vec<u8> = vec![0xAA; 200];
+    let p2: Vec<u8> = vec![0xBB; 300];
+    let h1 = ValueDigest::<N>::new(&p1);
+    let h2 = ValueDigest::<N>::new(&p2);
+
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"a".to_vec(), p1).unwrap();
+        personal.insert(b"b".to_vec(), p2).unwrap();
+    }
+    store.commit("two").unwrap();
+
+    let report = store.gc_blobs().unwrap();
+    assert_eq!(report.total, 2);
+    assert_eq!(report.referenced, 2);
+    assert_eq!(report.removed, 0);
+
+    // Both blobs are still readable.
+    assert!(store.inner_storage().get_blob(&h1).is_some());
+    assert!(store.inner_storage().get_blob(&h2).is_some());
+}
+
+#[test]
+fn gc_blobs_removes_orphans_from_upsert() {
+    // Inserting v1 then v2 at the same key leaves v1's blob as an orphan.
+    // GC should remove it.
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    store.set_externalize_threshold(Some(64));
+
+    let v1 = vec![0xAA; 200];
+    let v2 = vec![0xBB; 300];
+    let h1 = ValueDigest::<N>::new(&v1);
+    let h2 = ValueDigest::<N>::new(&v2);
+
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"k".to_vec(), v1).unwrap();
+    }
+    store.commit("v1").unwrap();
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"k".to_vec(), v2.clone()).unwrap();
+    }
+    store.commit("v2").unwrap();
+
+    // Pre-GC: both blobs are still around.
+    assert!(store.inner_storage().get_blob(&h1).is_some());
+    assert!(store.inner_storage().get_blob(&h2).is_some());
+
+    let report = store.gc_blobs().unwrap();
+    assert_eq!(report.total, 2);
+    assert_eq!(report.referenced, 1);
+    assert_eq!(report.removed, 1);
+    assert_eq!(report.remaining(), 1);
+
+    // The current value's blob survives; the orphan is gone.
+    assert!(store.inner_storage().get_blob(&h1).is_none());
+    assert!(store.inner_storage().get_blob(&h2).is_some());
+
+    // The user still reads the latest value normally.
+    let personal = store.namespace("personal");
+    assert_eq!(personal.get(b"k"), Some(v2));
+}
+
+#[test]
+fn gc_blobs_removes_orphans_from_delete() {
+    // Deleting a key doesn't eagerly delete the referenced blob; gc_blobs does.
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    store.set_externalize_threshold(Some(64));
+
+    let payload = vec![0xCC; 500];
+    let hash = ValueDigest::<N>::new(&payload);
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"k".to_vec(), payload).unwrap();
+    }
+    store.commit("insert").unwrap();
+    assert!(store.inner_storage().get_blob(&hash).is_some());
+
+    {
+        let mut personal = store.namespace("personal");
+        assert!(personal.delete(b"k").unwrap());
+    }
+    store.commit("delete").unwrap();
+
+    // Blob still around after delete commit — that's PR 0b behaviour.
+    assert!(store.inner_storage().get_blob(&hash).is_some());
+
+    let report = store.gc_blobs().unwrap();
+    assert_eq!(report.total, 1);
+    assert_eq!(report.referenced, 0);
+    assert_eq!(report.removed, 1);
+
+    // Blob is gone.
+    assert!(store.inner_storage().get_blob(&hash).is_none());
+}
+
+#[test]
+fn gc_blobs_keeps_blobs_across_namespaces() {
+    // Blobs referenced from one namespace must not be deleted just because
+    // another namespace also references them — but more importantly, blobs
+    // unique to namespace B must not be deleted when GC runs after the user
+    // only touched namespace A.
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    store.set_externalize_threshold(Some(64));
+
+    let pa = vec![0xAA; 200];
+    let pb = vec![0xBB; 300];
+    let ha = ValueDigest::<N>::new(&pa);
+    let hb = ValueDigest::<N>::new(&pb);
+
+    {
+        let mut a = store.namespace("ns_a");
+        a.insert(b"x".to_vec(), pa).unwrap();
+    }
+    {
+        let mut b = store.namespace("ns_b");
+        b.insert(b"y".to_vec(), pb).unwrap();
+    }
+    store.commit("both").unwrap();
+
+    // Drop and reopen so neither namespace is in the in-memory cache
+    // initially. gc_blobs MUST load all namespaces from the registry,
+    // not just operate on the in-memory ones, or it'd delete `hb`.
+    drop(store);
+    let mut store = FileNamespacedKvStore::<N>::open(&dataset).unwrap();
+
+    let report = store.gc_blobs().unwrap();
+    assert_eq!(report.total, 2);
+    assert_eq!(
+        report.referenced, 2,
+        "gc must load all namespaces from registry"
+    );
+    assert_eq!(report.removed, 0);
+
+    assert!(store.inner_storage().get_blob(&ha).is_some());
+    assert!(store.inner_storage().get_blob(&hb).is_some());
+}
+
+#[test]
+fn gc_blobs_idempotent() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    store.set_externalize_threshold(Some(64));
+
+    let v1 = vec![0xAA; 200];
+    let v2 = vec![0xBB; 300];
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"k".to_vec(), v1).unwrap();
+    }
+    store.commit("v1").unwrap();
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"k".to_vec(), v2).unwrap();
+    }
+    store.commit("v2").unwrap();
+
+    let first = store.gc_blobs().unwrap();
+    assert_eq!(first.removed, 1);
+
+    // Second GC has nothing to do.
+    let second = store.gc_blobs().unwrap();
+    assert_eq!(second.total, 1);
+    assert_eq!(second.referenced, 1);
+    assert_eq!(second.removed, 0);
+}
+
 #[test]
 fn same_large_value_under_two_keys_writes_blob_once() {
     // Content-addressed storage means two keys pointing at identical payload

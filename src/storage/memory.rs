@@ -109,6 +109,10 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
         self.blobs.write().remove(hash);
         Ok(())
     }
+
+    fn list_blobs(&self) -> Result<Vec<ValueDigest<N>>, StorageError> {
+        Ok(self.blobs.read().keys().cloned().collect())
+    }
 }
 
 #[cfg(test)]

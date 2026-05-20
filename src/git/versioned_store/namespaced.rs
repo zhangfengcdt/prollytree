@@ -548,6 +548,72 @@ where
         &self.inner.tree.storage
     }
 
+    /// Walk every loaded namespace, collect all blob hashes referenced by
+    /// envelope-shaped leaf values, and delete every blob in storage that
+    /// isn't on that list.
+    ///
+    /// Loads every namespace listed in the registry first, so blobs
+    /// referenced by namespaces the user hasn't explicitly opened are still
+    /// preserved.
+    ///
+    /// **Scope caveat:** GC walks only the current HEAD state. Blobs
+    /// referenced by older commits but not by HEAD are deleted, so checking
+    /// out an old commit after GC may fail to retrieve those values.
+    /// History-aware GC (walking all reachable commits) is a future PR.
+    pub fn gc_blobs(&mut self) -> Result<BlobGcReport, GitKvError> {
+        // 1. Ensure every namespace from the registry is loaded in memory.
+        let ns_names = self.list_namespaces();
+        for name in &ns_names {
+            let _ = self.namespace(name);
+        }
+
+        // 2. Walk every loaded namespace tree, collect referenced blob hashes.
+        let mut referenced: HashSet<ValueDigest<N>> = HashSet::new();
+        for tree in self.namespaces.values() {
+            for key in tree.collect_keys() {
+                let raw = tree.find(&key).and_then(|node| {
+                    node.keys
+                        .iter()
+                        .position(|k| k == &key)
+                        .map(|i| node.values[i].clone())
+                });
+                if let Some(bytes) = raw {
+                    if let Some((hash, _size)) =
+                        crate::storage::externalize::parse_envelope::<N>(&bytes)
+                    {
+                        referenced.insert(hash);
+                    }
+                }
+            }
+        }
+
+        // 3. List every blob currently in storage.
+        let all_blobs = self
+            .inner
+            .tree
+            .storage
+            .list_blobs()
+            .map_err(|e| GitKvError::GitObjectError(format!("list_blobs: {e}")))?;
+
+        // 4. Delete orphans.
+        let mut report = BlobGcReport {
+            total: all_blobs.len(),
+            referenced: referenced.len(),
+            removed: 0,
+            errors: Vec::new(),
+        };
+        for h in all_blobs {
+            if referenced.contains(&h) {
+                continue;
+            }
+            match self.inner.tree.storage.delete_blob(&h) {
+                Ok(()) => report.removed += 1,
+                Err(e) => report.errors.push(format!("{h}: {e}")),
+            }
+        }
+        Ok(report)
+    }
+
     // -- Commit -------------------------------------------------------------
 
     /// Core commit logic shared by all backends.
@@ -2486,6 +2552,27 @@ where
 // ---------------------------------------------------------------------------
 // Drift management — PR 4c
 // ---------------------------------------------------------------------------
+
+/// Report returned by [`NamespacedKvStore::gc_blobs`] (PR 0c).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlobGcReport {
+    /// Total blobs found in storage before GC.
+    pub total: usize,
+    /// Blobs found to be referenced by at least one envelope in some loaded
+    /// namespace tree.
+    pub referenced: usize,
+    /// Blobs successfully deleted as orphans.
+    pub removed: usize,
+    /// Per-blob delete errors, formatted as `"hex_hash: error_message"`.
+    pub errors: Vec<String>,
+}
+
+impl BlobGcReport {
+    /// Convenience: count of blobs left after GC (`total - removed`).
+    pub fn remaining(&self) -> usize {
+        self.total - self.removed
+    }
+}
 
 /// Report returned by [`NamespacedKvStore::audit_text_index`].
 ///

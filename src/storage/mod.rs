@@ -164,6 +164,17 @@ pub trait NodeStorage<const N: usize>: Send + Sync + Clone {
             "blob storage not supported by this backend".into(),
         ))
     }
+
+    /// Enumerate every blob currently stored. Used by
+    /// [`crate::git::versioned_store::NamespacedKvStore::gc_blobs`] to
+    /// identify orphans (blobs no longer referenced by any namespace tree).
+    ///
+    /// Default returns an empty list — appropriate for backends that don't
+    /// support blob storage. Backends that implement `insert_blob` / `get_blob`
+    /// / `delete_blob` must also implement this for GC to work.
+    fn list_blobs(&self) -> Result<Vec<ValueDigest<N>>, StorageError> {
+        Ok(Vec::new())
+    }
 }
 
 impl<const N: usize> Display for ValueDigest<N> {

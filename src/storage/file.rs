@@ -144,4 +144,43 @@ impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
         }
         Ok(())
     }
+
+    fn list_blobs(&self) -> Result<Vec<ValueDigest<N>>, StorageError> {
+        let blobs_dir = self.blobs_dir();
+        if !blobs_dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in fs::read_dir(blobs_dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name_str) = name.to_str() else {
+                continue;
+            };
+            // Skip atomic-rename temp files left by interrupted writes.
+            if name_str.ends_with(".partial") {
+                continue;
+            }
+            if name_str.len() != N * 2 {
+                continue;
+            }
+            // Parse the hex-encoded filename back into the digest bytes.
+            let mut arr = [0u8; N];
+            let mut ok = true;
+            for i in 0..N {
+                let byte_str = &name_str[i * 2..i * 2 + 2];
+                match u8::from_str_radix(byte_str, 16) {
+                    Ok(b) => arr[i] = b,
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                out.push(ValueDigest(arr));
+            }
+        }
+        Ok(out)
+    }
 }

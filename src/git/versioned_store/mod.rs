@@ -218,8 +218,8 @@ pub type ThreadSafeRocksDBVersionedKvStore<const N: usize> =
 // ---------------------------------------------------------------------------
 
 pub use namespaced::{
-    FileNamespacedKvStore, GitNamespacedKvStore, InMemoryNamespacedKvStore, MigrationReport,
-    NamespaceEntry, NamespaceHandle, NamespacedKvStore, StoreFormatVersion,
+    BlobGcReport, FileNamespacedKvStore, GitNamespacedKvStore, InMemoryNamespacedKvStore,
+    MigrationReport, NamespaceEntry, NamespaceHandle, NamespacedKvStore, StoreFormatVersion,
     ThreadSafeGitNamespacedKvStore, ThreadSafeInMemoryNamespacedKvStore,
     ThreadSafeNamespacedKvStore, DEFAULT_NAMESPACE,
 };
