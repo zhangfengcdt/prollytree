@@ -2382,3 +2382,112 @@ where
             .is_some()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Drift management — PR 4c
+// ---------------------------------------------------------------------------
+
+/// Report returned by [`NamespacedKvStore::audit_text_index`].
+///
+/// `orphans` and `missing` are ordered for stable iteration and for
+/// deterministic test assertions.
+#[cfg(feature = "proximity")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextIndexAudit {
+    /// Ids present in the text index but **not** in the primary KV tree.
+    /// Result of (a) a delete that didn't cascade, (b) a manual primary-tree
+    /// removal, or (c) the index was loaded from disk with stale state.
+    pub orphans_in_index: Vec<Vec<u8>>,
+    /// Ids present in the primary KV tree but **not** in the text index.
+    /// Result of (a) primary inserts that weren't mirrored into the index,
+    /// or (b) an index that was created after some primary writes already
+    /// happened.
+    pub missing_from_index: Vec<Vec<u8>>,
+}
+
+#[cfg(feature = "proximity")]
+impl TextIndexAudit {
+    /// True when the index is in perfect sync with the primary tree.
+    pub fn is_in_sync(&self) -> bool {
+        self.orphans_in_index.is_empty() && self.missing_from_index.is_empty()
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespacedKvStore<N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Compare the id set of a named text sub-index against the primary KV
+    /// tree of the same namespace and report orphans + missing entries.
+    ///
+    /// Both namespace and index must already be loaded into memory (i.e. the
+    /// user has called `namespace(ns)` and `text_index(idx, ...)` earlier in
+    /// this process). Returns an error if either is missing.
+    pub fn audit_text_index(
+        &mut self,
+        ns_name: &str,
+        idx_name: &str,
+    ) -> Result<TextIndexAudit, TextIndexError> {
+        let inner_idx_key = (ns_name.to_string(), text_inner_proximity_name(idx_name));
+        if !self.proximity_indexes.contains_key(&inner_idx_key) {
+            return Err(TextIndexError::NotFound(format!("{ns_name}:{idx_name}")));
+        }
+        // Snapshot id sets from both sides.
+        let index_ids: std::collections::BTreeSet<Vec<u8>> = self
+            .proximity_indexes
+            .get(&inner_idx_key)
+            .unwrap()
+            .entries_snapshot()
+            .keys()
+            .cloned()
+            .collect();
+
+        // Ensure the primary tree is loaded so we can list its keys.
+        let handle = self.namespace(ns_name);
+        let primary_ids: std::collections::BTreeSet<Vec<u8>> =
+            handle.list_keys().into_iter().collect();
+        // `handle` borrows `self`; drop before continuing.
+        drop(handle);
+
+        let mut orphans: Vec<Vec<u8>> = index_ids.difference(&primary_ids).cloned().collect();
+        let mut missing: Vec<Vec<u8>> = primary_ids.difference(&index_ids).cloned().collect();
+        orphans.sort();
+        missing.sort();
+
+        Ok(TextIndexAudit {
+            orphans_in_index: orphans,
+            missing_from_index: missing,
+        })
+    }
+
+    /// Remove every text-index id that is not present in the primary KV tree
+    /// of the same namespace. Returns the number of ids purged.
+    ///
+    /// Equivalent to "delete all `audit_text_index(...).orphans_in_index`
+    /// entries from the text index" but does the audit + delete in one
+    /// shot. Marks the underlying proximity index dirty so the deletions
+    /// land on the next `commit()`.
+    pub fn purge_text_index_orphans(
+        &mut self,
+        ns_name: &str,
+        idx_name: &str,
+    ) -> Result<usize, TextIndexError> {
+        let report = self.audit_text_index(ns_name, idx_name)?;
+        if report.orphans_in_index.is_empty() {
+            return Ok(0);
+        }
+
+        let inner_idx_key = (ns_name.to_string(), text_inner_proximity_name(idx_name));
+        let count = report.orphans_in_index.len();
+        let idx = self
+            .proximity_indexes
+            .get_mut(&inner_idx_key)
+            .expect("loaded by audit_text_index");
+        for orphan in &report.orphans_in_index {
+            idx.remove(orphan);
+        }
+        self.dirty_proximity_indexes.insert(inner_idx_key);
+        Ok(count)
+    }
+}

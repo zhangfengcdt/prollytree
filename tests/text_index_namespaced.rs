@@ -237,6 +237,134 @@ fn drop_text_index_removes_in_memory_cache() {
     assert!(!personal.drop_text_index("docs"));
 }
 
+// ---------------------------------------------------------------------------
+// PR 4c — Drift management (audit + purge_orphans)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn audit_in_sync_index_returns_empty_report() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+
+    {
+        let mut personal = store.namespace("personal");
+        personal
+            .insert(b"a".to_vec(), b"content a".to_vec())
+            .unwrap();
+        personal
+            .insert(b"b".to_vec(), b"content b".to_vec())
+            .unwrap();
+        let mut docs = personal.text_index("docs", cfg(8, 0)).unwrap();
+        docs.insert(b"a", "content a").unwrap();
+        docs.insert(b"b", "content b").unwrap();
+    }
+
+    let report = store.audit_text_index("personal", "docs").unwrap();
+    assert!(report.is_in_sync(), "expected in-sync, got {report:?}");
+}
+
+#[test]
+fn audit_detects_orphan_ids_in_index() {
+    // Index has more ids than the primary tree → those extras are orphans.
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"a".to_vec(), b"x".to_vec()).unwrap();
+        // Index contains 'a' AND 'orphan' — 'orphan' isn't in primary.
+        let mut docs = personal.text_index("docs", cfg(8, 0)).unwrap();
+        docs.insert(b"a", "x").unwrap();
+        docs.insert(b"orphan", "ghost").unwrap();
+    }
+
+    let report = store.audit_text_index("personal", "docs").unwrap();
+    assert_eq!(report.orphans_in_index, vec![b"orphan".to_vec()]);
+    assert!(report.missing_from_index.is_empty());
+    assert!(!report.is_in_sync());
+}
+
+#[test]
+fn audit_detects_missing_ids_in_index() {
+    // Primary tree has more ids than the index → those are missing.
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"a".to_vec(), b"x".to_vec()).unwrap();
+        personal.insert(b"b".to_vec(), b"y".to_vec()).unwrap();
+        let mut docs = personal.text_index("docs", cfg(8, 0)).unwrap();
+        docs.insert(b"a", "x").unwrap();
+        // 'b' not added to the index.
+    }
+
+    let report = store.audit_text_index("personal", "docs").unwrap();
+    assert!(report.orphans_in_index.is_empty());
+    assert_eq!(report.missing_from_index, vec![b"b".to_vec()]);
+}
+
+#[test]
+fn audit_returns_not_found_for_unknown_index() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    {
+        // Touch the namespace so it exists; no index opened.
+        let _ = store.namespace("personal");
+    }
+    let err = store
+        .audit_text_index("personal", "never_opened")
+        .unwrap_err();
+    assert!(matches!(err, TextIndexError::NotFound(_)));
+}
+
+#[test]
+fn purge_orphans_removes_them_from_index() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"a".to_vec(), b"x".to_vec()).unwrap();
+        personal.insert(b"b".to_vec(), b"y".to_vec()).unwrap();
+        let mut docs = personal.text_index("docs", cfg(8, 0)).unwrap();
+        docs.insert(b"a", "x").unwrap();
+        docs.insert(b"b", "y").unwrap();
+        docs.insert(b"orphan-1", "ghost").unwrap();
+        docs.insert(b"orphan-2", "another ghost").unwrap();
+    }
+
+    let purged = store.purge_text_index_orphans("personal", "docs").unwrap();
+    assert_eq!(purged, 2);
+
+    // Audit should now be in sync.
+    let report = store.audit_text_index("personal", "docs").unwrap();
+    assert!(report.is_in_sync(), "still not in sync: {report:?}");
+
+    // Confirm by counting via the handle.
+    let mut personal = store.namespace("personal");
+    let docs = personal.text_index("docs", cfg(8, 0)).unwrap();
+    assert_eq!(docs.len(), 2);
+}
+
+#[test]
+fn purge_orphans_is_zero_on_synced_index() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"a".to_vec(), b"x".to_vec()).unwrap();
+        let mut docs = personal.text_index("docs", cfg(8, 0)).unwrap();
+        docs.insert(b"a", "x").unwrap();
+    }
+    let purged = store.purge_text_index_orphans("personal", "docs").unwrap();
+    assert_eq!(purged, 0);
+}
+
+// ---------------------------------------------------------------------------
+// PR 4a — namespace isolation (existing test, kept here)
+// ---------------------------------------------------------------------------
+
 #[test]
 fn text_index_isolated_across_namespaces() {
     let (_temp, dataset) = setup_repo_and_dataset();

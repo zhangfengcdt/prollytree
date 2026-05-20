@@ -1,0 +1,111 @@
+/*
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+//! Document-to-chunks splitting for [`crate::proximity::TextIndex`].
+//!
+//! # PR 4c — trait definition only
+//!
+//! This module ships the [`Chunker`] trait and the [`IdentityChunker`]
+//! implementation (one chunk = the whole document). Wiring multi-chunk
+//! support into [`crate::proximity::TextIndex`] — so a single document
+//! produces multiple `(doc_id, chunk_idx) → vector` entries — is deferred to
+//! a future PR alongside a real chunker (`SentenceChunker` /
+//! `RecursiveChunker`). For v1 every text index implicitly uses
+//! [`IdentityChunker`] semantics: one vector per document.
+//!
+//! The trait is in place so that future chunker types can land in the
+//! `Embedder`/`Chunker` slot without an API break on [`TextIndexConfig`].
+
+/// Splits a document into one or more chunks. Each chunk will receive its
+/// own embedding when the consumer ([`crate::proximity::TextIndex`]) routes
+/// inserts through this chunker.
+///
+/// Returning an empty `Vec` means "don't index this document" — useful when
+/// a transformer determines the value isn't text (e.g. a binary blob in the
+/// primary tree).
+pub trait Chunker: Send + Sync {
+    /// Stable identifier persisted alongside the index so a re-open under a
+    /// different chunker can be detected. Examples: `"identity"`,
+    /// `"sentence/256"`, `"recursive/markdown/512:128"`.
+    fn id(&self) -> &str;
+
+    /// Split `text` into chunks. Implementations must be deterministic —
+    /// same input always yields the same chunks in the same order.
+    fn split<'t>(&self, text: &'t str) -> Vec<&'t str>;
+}
+
+/// Trivial chunker: returns the whole document as a single chunk.
+///
+/// This is the v1 default. Search recall is best when documents are
+/// reasonably short; longer documents benefit from sentence- or
+/// paragraph-level chunking, which lands in a future PR.
+#[derive(Debug, Clone, Default)]
+pub struct IdentityChunker;
+
+impl IdentityChunker {
+    pub const ID: &'static str = "identity";
+}
+
+impl Chunker for IdentityChunker {
+    fn id(&self) -> &str {
+        Self::ID
+    }
+
+    fn split<'t>(&self, text: &'t str) -> Vec<&'t str> {
+        vec![text]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_returns_the_input() {
+        let c = IdentityChunker;
+        let chunks = c.split("hello world");
+        assert_eq!(chunks, vec!["hello world"]);
+    }
+
+    #[test]
+    fn identity_empty_input_still_returns_one_chunk() {
+        // Differs from "no chunks" — the chunker doesn't decide
+        // unindexability for empty strings; the consumer can if it wants.
+        let chunks = IdentityChunker.split("");
+        assert_eq!(chunks, vec![""]);
+    }
+
+    #[test]
+    fn identity_id_is_stable() {
+        assert_eq!(IdentityChunker.id(), "identity");
+        assert_eq!(IdentityChunker::ID, "identity");
+    }
+
+    #[test]
+    fn identity_is_deterministic() {
+        let c = IdentityChunker;
+        for s in ["foo", "", "multi\nline\ntext", "with unicode 日本語"] {
+            assert_eq!(c.split(s), c.split(s));
+        }
+    }
+
+    #[test]
+    fn chunker_is_object_safe() {
+        // Trait-object usage compiles — important for future
+        // `Box<dyn Chunker>` storage if we ever need heterogeneous
+        // chunkers in one container.
+        let boxed: Box<dyn Chunker> = Box::new(IdentityChunker);
+        assert_eq!(boxed.id(), "identity");
+    }
+}

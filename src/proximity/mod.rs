@@ -34,6 +34,7 @@ limitations under the License.
 //! namespaces, version-controlled merge, and the text-search wrapper are
 //! follow-on PRs.
 
+mod chunker;
 mod distance;
 mod embedder;
 mod index;
@@ -45,6 +46,7 @@ mod node;
 mod storage;
 pub(crate) mod text_index;
 
+pub use chunker::{Chunker, IdentityChunker};
 pub use distance::{Distance, Metric};
 pub use embedder::{EmbedError, Embedder, HashEmbedder};
 pub use index::{
