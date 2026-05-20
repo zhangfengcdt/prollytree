@@ -3,9 +3,9 @@
 [![Documentation](https://img.shields.io/badge/docs-github%20pages-blue)](https://zhangfengcdt.github.io/prollytree/)
 [![PyPI](https://img.shields.io/pypi/v/prollytree)](https://pypi.org/project/prollytree/)
 
-**Versioned, namespaced, semantically-searchable storage for AI agents** — Python bindings to the Rust ProllyTree crate.
+Python bindings to the Rust ProllyTree crate — a **probabilistic B-tree with Merkle properties**: a content-addressed, Git-versioned key-value store with branching, three-way merge, cryptographic proofs, optional SQL, and an optional vector / text-search index.
 
-Give each agent (or agent role) its own namespace inside one Git-versioned store; capture observations, plans, and tool results as key-value pairs; recall by meaning with a built-in vector index that lives alongside the data. Branch the store to try a speculative reasoning path, merge it back when it works, audit what changed between two timestamps — same primitives software developers already use, applied to agent memory.
+A prolly tree's shape is a deterministic function of its contents, so two replicas holding the same key-value set converge to the same root hash regardless of insertion order. That property is what makes the rest — Git-style versioning, efficient diff/sync between replicas, verifiable subtree sharing across history — fall out for free.
 
 ## Quick Start
 
@@ -17,32 +17,48 @@ pip install prollytree
 
 PyPI wheels ship `git`, `sql`, `rocksdb_storage`, `proximity`, and `proximity_text` enabled by default — text search and the bundled MiniLM embedder are available out of the box.
 
-### Agent-memory pattern in 10 lines
-
-```python
-from prollytree import NamespacedKvStore, MiniLmEmbedder
-
-store = NamespacedKvStore("./agent_memory")
-emb = MiniLmEmbedder()
-
-store.text_index_open("agent:assistant", "by_body", emb)
-store.set_cascade("agent:assistant", ["by_body"])    # primary writes auto-index
-
-store.ns_insert("agent:assistant", b"obs:1", b"user prefers dark mode")
-store.commit("session 42 memories")
-
-hits = store.text_index_search("agent:assistant", "by_body",
-                                "what does the user prefer?", k=3)
-```
-
-### Basic tree (when you just want the raw structure)
+### Basic tree
 
 ```python
 from prollytree import ProllyTree
 
 tree = ProllyTree()
 tree.insert(b"hello", b"world")
-tree.find(b"hello")              # b"world"
+tree.find(b"hello")                            # b"world"
+
+proof = tree.generate_proof(b"hello")
+tree.verify_proof(proof, b"hello", b"world")   # True
+```
+
+### Versioned KV store (one key space)
+
+```python
+from prollytree import VersionedKvStore
+
+store = VersionedKvStore("./data")
+store.insert(b"config:theme", b"light")
+store.commit("seed config")
+
+store.create_branch("experiment")
+store.update(b"config:theme", b"dark")
+store.commit("dark mode")
+store.checkout("main")                          # back to light
+```
+
+### Namespaced KV store + optional text search
+
+```python
+from prollytree import NamespacedKvStore, MiniLmEmbedder
+
+store = NamespacedKvStore("./data")
+store.text_index_open("docs", "by_body", MiniLmEmbedder())
+store.set_cascade("docs", ["by_body"])         # primary writes auto-index
+
+store.ns_insert("docs", b"doc:1", b"the quick brown fox")
+store.commit("seed corpus")
+
+for doc_id, dist in store.text_index_search("docs", "by_body", "vulpine animal", k=3):
+    print(doc_id, dist, store.ns_get("docs", doc_id))
 ```
 
 ## Documentation
@@ -58,18 +74,22 @@ The full documentation includes:
 
 ## Features
 
-**For agents**
-- **Per-agent namespaces** — many isolated key spaces in one Git repo, atomic across namespaces
-- **Semantic recall** — vector / text index inside any namespace; bundled MiniLM, hash, and Python-callable embedders
-- **Branchable scratch spaces** — branch the store for speculative reasoning, merge or discard
-- **Auditable** — every memory mutation is a Git commit; diff, rewind, three-way merge
-
-**Underneath**
 - **Probabilistic B-tree with Merkle properties** — O(log n) ops, cryptographic inclusion proofs
-- **Multiple storage backends** — In-memory, File, RocksDB, Git-backed
-- **SQL interface** — query memory as relational tables via GlueSQL
-- **Cascade + drift management** — atomic dual-write, audit + repair APIs
+- **Git-versioned KV store** — branch / commit / diff / three-way merge on raw key-value state
+- **Namespaced KV store** — many isolated prolly trees in one Git repo, atomic across namespaces
+- **Optional text / vector search** — versioned ANN index inside any namespace; bundled MiniLM, hash, and Python-callable embedders
+- **Cascade + drift management** — atomic dual-write of primary + index, audit + repair APIs
 - **Large-value externalization** — values above a threshold land in content-addressed blobs
+- **Multiple storage backends** — In-memory, File, RocksDB, Git-backed
+- **SQL interface** — query the tree as relational tables via GlueSQL
+
+## Good fits
+
+- **Auditable application state** — config systems, feature flags, policy rules: real Git history with diff, blame, rollback, and proofs for free.
+- **Distributed / multi-replica data** — convergent root hashes + subtree sharing make peer-to-peer sync `O(changes)`.
+- **AI agent memory** — per-agent namespaces, branchable scratch spaces, semantic recall in one transaction. See the [text-search guide](https://zhangfengcdt.github.io/prollytree/text_search/).
+- **Versioned analytical datasets** — SQL over a Git-tracked KV store; checkout a historical commit and run the same query.
+- **Content-addressed indexes** — verifiable logs, proof systems, gossip-friendly indexes.
 
 ## Key Use Cases
 
