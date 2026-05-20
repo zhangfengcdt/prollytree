@@ -302,13 +302,18 @@ def demo_minilm_embedder():
 def main():
     print("Text indexing on NamespacedKvStore")
     print("=" * 60)
-    print(f"proximity_available     = {prollytree.proximity_available}")
-    print(
-        f"proximity_text_available = {getattr(prollytree, 'proximity_text_available', False)}"
-    )
+    # `getattr` keeps this example friendly to older wheels that pre-date the
+    # `proximity_available` flag — they surface a clear hint instead of an
+    # opaque AttributeError.
+    proximity_available = getattr(prollytree, "proximity_available", False)
+    proximity_text_available = getattr(prollytree, "proximity_text_available", False)
+    print(f"proximity_available      = {proximity_available}")
+    print(f"proximity_text_available = {proximity_text_available}")
 
-    if not prollytree.proximity_available:
-        print("\nThis wheel was built without the 'proximity' feature. Rebuild with")
+    if not proximity_available:
+        print("\nThe installed `prollytree` wheel was built without the 'proximity'")
+        print("feature. Rebuild and reinstall with one of:")
+        print("  ./python/build_python.sh --all-features --install")
         print("  maturin develop --features 'python git proximity proximity_text'")
         sys.exit(1)
 

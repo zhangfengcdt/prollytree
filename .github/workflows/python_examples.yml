@@ -1,0 +1,94 @@
+name: Python Examples
+
+# Builds the wheel with the full feature set (matching what PyPI ships) and
+# runs every example under `python/examples/`. No path filter — examples are
+# a user-facing contract and any PR that breaks them should fail this gate.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+  push:
+    branches:
+      - main
+
+jobs:
+  examples:
+    name: Run Python examples
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    # Cache the MiniLM-L6-v2 model weights between runs so the text_index
+    # example doesn't pay the ~90 MB download on every PR. The cache key is
+    # stable (model id + revision); restore-keys lets future schema bumps fall
+    # back to an older cache if needed.
+    - name: Cache MiniLM embedder weights
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/prollytree/embedders
+        key: minilm-l6-v2-main-v1
+        restore-keys: |
+          minilm-l6-v2-
+
+    - name: Build wheel (with all features)
+      uses: PyO3/maturin-action@v1
+      env:
+        PYO3_CROSS_PYTHON_VERSION: "3.11"
+      with:
+        target: x86_64
+        args: --release --out dist --features python,git,sql,rocksdb_storage,proximity,proximity_text --interpreter python3.11
+        sccache: 'true'
+        manylinux: 2_28
+        rust-toolchain: stable
+        before-script-linux: |
+          # librocksdb-sys needs clang for bindgen + a C++ toolchain. Mirrors
+          # the install in python.yml.
+          if command -v yum >/dev/null 2>&1; then
+            yum install -y clang gcc gcc-c++ glibc-devel
+          elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update && apt-get install -y --no-install-recommends clang g++ libc6-dev
+          fi
+
+    - name: Configure git identity
+      run: |
+        git config --global user.name  "CI Examples"
+        git config --global user.email "ci-examples@example.com"
+        git config --global init.defaultBranch main
+
+    - name: Install wheel
+      run: |
+        python -m pip install --upgrade pip
+        WHEEL=$(ls dist/prollytree-*-cp38-abi3-manylinux*_x86_64.whl | head -1)
+        echo "Installing $WHEEL"
+        python -m pip install --force-reinstall "$WHEEL"
+
+    - name: Verify install + feature flags
+      run: |
+        python -c "import prollytree as p; \
+          print('proximity_available     =', p.proximity_available); \
+          print('proximity_text_available=', p.proximity_text_available); \
+          print('sql_available           =', p.sql_available); \
+          print('git_available           =', p.git_available); \
+          print('namespaced_available    =', p.namespaced_available)"
+
+    # Run each example by file. Fail fast (`set -e`) so the first failure
+    # surfaces immediately in the PR check. text_index_example.py downloads
+    # MiniLM weights into ~/.cache/prollytree/embedders on first run; the
+    # cache step above persists them between PR runs.
+    - name: Run examples
+      run: |
+        set -e
+        # Run from /tmp so examples don't pollute the workspace and don't pick
+        # up the repo's pyproject.toml as their CWD (matches local convention).
+        cd /tmp
+        python "$GITHUB_WORKSPACE/python/examples/basic_usage.py"
+        python "$GITHUB_WORKSPACE/python/examples/sql_example.py"
+        python "$GITHUB_WORKSPACE/python/examples/merge_example.py"
+        python "$GITHUB_WORKSPACE/python/examples/namespaced_example.py"
+        python "$GITHUB_WORKSPACE/python/examples/text_index_example.py"

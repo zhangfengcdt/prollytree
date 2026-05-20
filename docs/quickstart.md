@@ -93,7 +93,7 @@ for c in store.log():
     print(c["id"][:8], c["message"])
 ```
 
-See [Examples → Python bindings](examples/python.md) for the full surface including SQL and LangMem integration.
+See [Examples → Python bindings](examples/python.md) for the full surface including SQL, namespaces, and text indexing.
 
 ## CLI: `git-prolly` as a Git-like KV store
 

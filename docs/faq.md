@@ -76,9 +76,9 @@ Yes. The published wheel is built with the `python` + `sql` features and the `gi
 
 Here, in the [Python API](api/python.md) section, and with examples in [Examples → Python bindings](examples/python.md). The old Sphinx-based docs on Read the Docs may still be reachable but are being replaced by this site.
 
-### Can I use ProllyTree as a LangGraph / LangMem backend?
+### Can I use ProllyTree as an AI agent memory backend?
 
-Yes — ProllyTree is designed with AI agent memory in mind. See the [LangMem example](examples/python.md#langmem-integration-for-ai-agent-memory) and the [Memoir project](https://github.com/zhangfengcdt/memoir), which builds a full semantic memory system on top of ProllyTree.
+Yes — ProllyTree is designed with AI agent memory in mind. The `NamespacedKvStore` plus text-indexing surface (see [Examples → Python bindings](examples/python.md)) gives you versioned, branchable storage with optional semantic search; the [Memoir project](https://github.com/zhangfengcdt/memoir) builds a full semantic memory system on top of it.
 
 ## SQL
 

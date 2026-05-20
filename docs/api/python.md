@@ -137,5 +137,5 @@ except ProllyTreeError as e:
 
 ## Pointers
 
-- [Examples → Python bindings](../examples/python.md) — worked examples for versioning, SQL, LangMem.
+- [Examples → Python bindings](../examples/python.md) — worked examples for versioning, SQL, namespaces, and text indexing.
 - [FAQ](../faq.md#python-bindings) — common Python-specific questions.

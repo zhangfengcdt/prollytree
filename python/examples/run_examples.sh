@@ -10,9 +10,7 @@ get_example_file() {
     case "$1" in
         "basic") echo "basic_usage.py" ;;
         "sql") echo "sql_example.py" ;;
-        "langgraph") echo "langgraph_example.py" ;;
         "merge") echo "merge_example.py" ;;
-        "langmem") echo "langmem_example.py" ;;
         "namespaced") echo "namespaced_example.py" ;;
         "text_index") echo "text_index_example.py" ;;
         *) echo "" ;;
@@ -29,9 +27,7 @@ show_usage() {
     echo "Available examples:"
     echo "  basic         - Basic memory usage example"
     echo "  sql           - SQL query example"
-    echo "  langgraph     - LangGraph memory example"
     echo "  merge         - Branch merging with conflict resolution example"
-    echo "  langmem       - LangMem integration with ProllyTree backend"
     echo "  namespaced    - Multi-namespace KV store example"
     echo "  text_index    - Text indexing + vector search on NamespacedKvStore"
     echo ""
@@ -71,13 +67,6 @@ if ./python/build_python.sh --all-features --install; then
     # Change back to examples directory
     cd python/examples
 
-    # Check if OPENAI_API_KEY is set
-    if [ -z "$OPENAI_API_KEY" ]; then
-        echo "⚠️  Warning: OPENAI_API_KEY is not set."
-        echo "   The example will use mock LLM responses."
-        echo "   To use real OpenAI, run: export OPENAI_API_KEY='your-key'"
-    fi
-
     # Function to run a single example
     run_example() {
         local name=$1
@@ -94,9 +83,7 @@ if ./python/build_python.sh --all-features --install; then
         echo "📚 Running all examples..."
         run_example "basic memory usage" "basic_usage.py"
         run_example "SQL" "sql_example.py"
-        run_example "LangGraph memory" "langgraph_example.py"
         run_example "merge with conflict resolution" "merge_example.py"
-        run_example "LangMem integration" "langmem_example.py"
         run_example "namespaced KV store" "namespaced_example.py"
         run_example "text indexing + search" "text_index_example.py"
     else
