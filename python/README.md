@@ -3,7 +3,9 @@
 [![Documentation](https://img.shields.io/badge/docs-github%20pages-blue)](https://zhangfengcdt.github.io/prollytree/)
 [![PyPI](https://img.shields.io/pypi/v/prollytree)](https://pypi.org/project/prollytree/)
 
-Python bindings for ProllyTree - a probabilistic tree data structure that combines B-trees and Merkle trees for efficient, verifiable data storage.
+**Versioned, namespaced, semantically-searchable storage for AI agents** — Python bindings to the Rust ProllyTree crate.
+
+Give each agent (or agent role) its own namespace inside one Git-versioned store; capture observations, plans, and tool results as key-value pairs; recall by meaning with a built-in vector index that lives alongside the data. Branch the store to try a speculative reasoning path, merge it back when it works, audit what changed between two timestamps — same primitives software developers already use, applied to agent memory.
 
 ## Quick Start
 
@@ -13,15 +15,34 @@ Python bindings for ProllyTree - a probabilistic tree data structure that combin
 pip install prollytree
 ```
 
-### Basic Usage
+PyPI wheels ship `git`, `sql`, `rocksdb_storage`, `proximity`, and `proximity_text` enabled by default — text search and the bundled MiniLM embedder are available out of the box.
+
+### Agent-memory pattern in 10 lines
+
+```python
+from prollytree import NamespacedKvStore, MiniLmEmbedder
+
+store = NamespacedKvStore("./agent_memory")
+emb = MiniLmEmbedder()
+
+store.text_index_open("agent:assistant", "by_body", emb)
+store.set_cascade("agent:assistant", ["by_body"])    # primary writes auto-index
+
+store.ns_insert("agent:assistant", b"obs:1", b"user prefers dark mode")
+store.commit("session 42 memories")
+
+hits = store.text_index_search("agent:assistant", "by_body",
+                                "what does the user prefer?", k=3)
+```
+
+### Basic tree (when you just want the raw structure)
 
 ```python
 from prollytree import ProllyTree
 
-# Create a tree and insert data
 tree = ProllyTree()
 tree.insert(b"hello", b"world")
-value = tree.find(b"hello")  # Returns b"world"
+tree.find(b"hello")              # b"world"
 ```
 
 ## Documentation
@@ -37,29 +58,20 @@ The full documentation includes:
 
 ## Features
 
-- **Probabilistic Trees** - High-performance data storage with automatic balancing
-- **Versioned Storage** - Git-like version control for key-value data
-- **Multiple Storage Backends** - Choose from Git, File, InMemory, or RocksDB storage
-- **Cryptographic Verification** - Merkle proofs for data integrity across trees and versioned storage
-- **SQL Queries** - Query your data using SQL syntax
-- **Namespaced Storage** - Multiple isolated KV trees in one versioned store
-- **Vector / Text Search** - Versioned ANN index with optional bundled MiniLM embedder
+**For agents**
+- **Per-agent namespaces** — many isolated key spaces in one Git repo, atomic across namespaces
+- **Semantic recall** — vector / text index inside any namespace; bundled MiniLM, hash, and Python-callable embedders
+- **Branchable scratch spaces** — branch the store for speculative reasoning, merge or discard
+- **Auditable** — every memory mutation is a Git commit; diff, rewind, three-way merge
+
+**Underneath**
+- **Probabilistic B-tree with Merkle properties** — O(log n) ops, cryptographic inclusion proofs
+- **Multiple storage backends** — In-memory, File, RocksDB, Git-backed
+- **SQL interface** — query memory as relational tables via GlueSQL
+- **Cascade + drift management** — atomic dual-write, audit + repair APIs
+- **Large-value externalization** — values above a threshold land in content-addressed blobs
 
 ## Key Use Cases
-
-### Probabilistic Trees
-```python
-from prollytree import ProllyTree
-
-tree = ProllyTree()
-tree.insert(b"user:123", b"Alice")
-tree.insert(b"user:456", b"Bob")
-
-# Cryptographic verification
-proof = tree.generate_proof(b"user:123")
-is_valid = tree.verify_proof(proof, b"user:123", b"Alice")
-```
-
 
 ### Versioned Storage
 ```python
@@ -224,6 +236,22 @@ sql_store = ProllySQLStore("./database")
 sql_store.execute("CREATE TABLE users (id INT, name TEXT)")
 sql_store.execute("INSERT INTO users VALUES (1, 'Alice')")
 results = sql_store.execute("SELECT * FROM users WHERE name = 'Alice'")
+```
+
+### Probabilistic Trees (raw building block)
+
+When you need the verifiable B-tree without the versioning layer.
+
+```python
+from prollytree import ProllyTree
+
+tree = ProllyTree()
+tree.insert(b"user:123", b"Alice")
+tree.insert(b"user:456", b"Bob")
+
+# Cryptographic verification
+proof = tree.generate_proof(b"user:123")
+is_valid = tree.verify_proof(proof, b"user:123", b"Alice")
 ```
 
 ## Development

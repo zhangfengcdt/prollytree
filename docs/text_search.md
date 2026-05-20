@@ -2,6 +2,9 @@
 
 ProllyTree includes a **version-controlled approximate-nearest-neighbour (ANN) index** that sits inside any namespace of a `NamespacedKvStore`. You can do semantic similarity search on the same data that the rest of the store versions, branches, and merges — without standing up a separate vector database.
 
+!!! tip "Try it in your browser"
+    Open the [interactive demo](text_search_demo.html) for a self-contained walkthrough — namespaced store + text indexes + cascade + live search, no install required.
+
 For the conceptual model see [Architecture → Proximity / text-search layer](architecture.md#7-proximity-text-search-layer). For runnable code see [Examples → Text Search](examples/text_search.md).
 
 ## When to use it

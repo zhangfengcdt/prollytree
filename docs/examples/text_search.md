@@ -4,6 +4,9 @@ Runnable Python examples for the text-index + vector-search surface on `Namespac
 
 A complete runnable script — covering every snippet on this page plus a MiniLM end-to-end demo — lives at [`python/examples/text_index_example.py`](https://github.com/zhangfengcdt/prollytree/blob/main/python/examples/text_index_example.py).
 
+!!! tip "Browser demo"
+    Want to see the workflow without installing anything? The [interactive demo](../text_search_demo.html) runs a toy search against a static corpus in your browser, and includes the same code snippets shown below.
+
 ## Setup
 
 ```python
