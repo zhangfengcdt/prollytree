@@ -156,28 +156,6 @@ version = "0.3.5-beta"
 features = ["git", "sql", "proximity", "proximity_text"]
 ```
 
-## Performance
-
-Benchmarks on Apple M3 Pro / 18 GB RAM:
-
-- Insert: ~8–21 µs (scales O(log n))
-- Lookup: ~1–3 µs (sub-linear due to caching)
-- Memory: ~100 bytes per key-value pair
-- Batch operations: ~25% faster than individual ops
-
-Run `cargo bench` to reproduce. The optional vector index uses a lazy-rebuild pattern — mutations are amortised, the first search after a mutation pays the rebuild cost.
-
-## Testing
-
-```bash
-# Rust tests
-cargo test --features "git sql proximity"
-
-# Python tests (build bindings first; --all-features includes proximity)
-./python/build_python.sh --all-features --install
-python -m pytest python/tests/
-```
-
 ## Documentation
 
 - **[User Guide](https://zhangfengcdt.github.io/prollytree/)** — mkdocs site (architecture, CLI, Python API, examples, theory)
