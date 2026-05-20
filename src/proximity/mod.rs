@@ -39,6 +39,8 @@ mod embedder;
 mod index;
 mod level;
 pub mod merge;
+#[cfg(feature = "proximity_text")]
+mod minilm;
 mod node;
 mod storage;
 pub(crate) mod text_index;
@@ -55,6 +57,8 @@ pub use merge::{
     MergeFailure, MergedProximitySet, ProximityConflict, ProximityConflictResolver,
     ProximityResolution, TakeDestinationProximityResolver, TakeSourceProximityResolver,
 };
+#[cfg(feature = "proximity_text")]
+pub use minilm::{MiniLmEmbedder, DEFAULT_MODEL_ID, DEFAULT_REVISION, MINILM_DIM};
 pub use node::ProximityNode;
 pub use text_index::{TextHit, TextIndex, TextIndexConfig, TextIndexError};
 
