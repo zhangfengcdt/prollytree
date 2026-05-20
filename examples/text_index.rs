@@ -145,10 +145,7 @@ fn demo_cascade_mode() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    println!(
-        "\nIndex holds {} document(s) after cascade",
-        idx.len()
-    );
+    println!("\nIndex holds {} document(s) after cascade", idx.len());
     Ok(())
 }
 

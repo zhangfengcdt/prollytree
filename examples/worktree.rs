@@ -195,9 +195,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|w| w.id.clone())
             .expect("at least one worktree");
         manager.lock_worktree(&first_id, "demo: hold for a long-running job")?;
-        println!("  locked worktree {}: {}", first_id, manager.is_locked(&first_id));
+        println!(
+            "  locked worktree {}: {}",
+            first_id,
+            manager.is_locked(&first_id)
+        );
         manager.unlock_worktree(&first_id)?;
-        println!("  unlocked worktree {}: {}", first_id, manager.is_locked(&first_id));
+        println!(
+            "  unlocked worktree {}: {}",
+            first_id,
+            manager.is_locked(&first_id)
+        );
     }
 
     println!("\nDemo complete.");
