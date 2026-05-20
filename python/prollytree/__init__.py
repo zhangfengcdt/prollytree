@@ -42,6 +42,30 @@ try:
 except ImportError:
     pass
 
+# Try to import NamespacedKvStore (requires the `git` feature, same as above).
+namespaced_available = False
+try:
+    from .prollytree import NamespacedKvStore
+    namespaced_available = True
+except ImportError:
+    pass
+
+# Try to import proximity / text-search bindings (feature `proximity`).
+proximity_available = False
+try:
+    from .prollytree import HashEmbedder, CallableEmbedder
+    proximity_available = True
+except ImportError:
+    pass
+
+# Try to import the Candle + MiniLM embedder (feature `proximity_text`).
+proximity_text_available = False
+try:
+    from .prollytree import MiniLmEmbedder
+    proximity_text_available = True
+except ImportError:
+    pass
+
 # Build __all__ based on available features
 __all__ = [
     "ProllyTree",
@@ -57,5 +81,14 @@ if sql_available:
 
 if git_available:
     __all__.extend(["WorktreeManager", "WorktreeVersionedKvStore"])
+
+if namespaced_available:
+    __all__.append("NamespacedKvStore")
+
+if proximity_available:
+    __all__.extend(["HashEmbedder", "CallableEmbedder"])
+
+if proximity_text_available:
+    __all__.append("MiniLmEmbedder")
 
 __version__ = "0.3.5-beta"

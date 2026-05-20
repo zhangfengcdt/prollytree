@@ -2996,14 +2996,20 @@ where
         if !self.proximity_indexes.contains_key(&inner_idx_key) {
             return Err(TextIndexError::NotFound(format!("{ns_name}:{idx_name}")));
         }
-        // Snapshot id sets from both sides.
+        // Snapshot the *document* ids on the index side — `entries_snapshot()`
+        // returns one entry per chunk under the multi-chunk plumbing, so we
+        // strip the chunk-envelope and dedup back to the doc id.
         let index_ids: std::collections::BTreeSet<Vec<u8>> = self
             .proximity_indexes
             .get(&inner_idx_key)
             .unwrap()
             .entries_snapshot()
             .keys()
-            .cloned()
+            .map(|chunk_id| {
+                crate::proximity::text_index::parse_chunk_id(chunk_id)
+                    .map(|(doc_id, _)| doc_id)
+                    .unwrap_or_else(|| chunk_id.clone())
+            })
             .collect();
 
         // Ensure the primary tree is loaded so we can list its keys.
@@ -3047,8 +3053,19 @@ where
             .proximity_indexes
             .get_mut(&inner_idx_key)
             .expect("loaded by audit_text_index");
-        for orphan in &report.orphans_in_index {
-            idx.remove(orphan);
+        // Audit returns *doc* ids — translate each into the matching chunk
+        // ids via the length-prefixed envelope and delete every chunk.
+        for orphan_doc_id in &report.orphans_in_index {
+            let prefix = crate::proximity::text_index::doc_id_prefix(orphan_doc_id);
+            let chunk_ids: Vec<Vec<u8>> = idx
+                .entries_snapshot()
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned()
+                .collect();
+            for chunk_id in chunk_ids {
+                idx.remove(&chunk_id);
+            }
         }
         self.dirty_proximity_indexes.insert(inner_idx_key);
         Ok(count)
