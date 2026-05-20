@@ -25,12 +25,97 @@ limitations under the License.
 //! (`NamespaceHandle::text_index`) layers on top in the same PR.
 
 use crate::digest::ValueDigest;
+use crate::proximity::chunker::{Chunker, IdentityChunker};
 use crate::proximity::embedder::{EmbedError, Embedder};
 use crate::proximity::index::{ProximityConfig, ProximityError, ProximityIndex};
 use crate::proximity::Metric;
 use crate::storage::{NodeStorage, StorageError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
+
+// ---------------------------------------------------------------------------
+// Chunk-id encoding (PR — multi-chunk plumbing)
+// ---------------------------------------------------------------------------
+//
+// A document-level id (what the user passes in) maps to one-or-more chunk
+// ids in the underlying ProximityIndex via a length-prefixed envelope:
+//
+// ```text
+// [ doc_id_len: 4 bytes LE ][ doc_id_bytes ][ chunk_idx: 4 bytes LE ]
+// ```
+//
+// Properties: unambiguous parse for any byte content in doc_id, all chunks
+// for a doc share the same `[doc_id_len][doc_id_bytes]` prefix (used by
+// `delete_by_doc_id` to find every chunk in one scan).
+
+/// Encode `(doc_id, chunk_idx)` into the underlying ProximityIndex's id space.
+pub(crate) fn make_chunk_id(doc_id: &[u8], chunk_idx: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + doc_id.len() + 4);
+    out.extend_from_slice(&(doc_id.len() as u32).to_le_bytes());
+    out.extend_from_slice(doc_id);
+    out.extend_from_slice(&chunk_idx.to_le_bytes());
+    out
+}
+
+/// Inverse of [`make_chunk_id`]. Returns `None` for any bytes that don't
+/// have the expected shape — primary-tree values that happen to be in the
+/// underlying proximity index without going through the chunked-insert path
+/// would parse as `None` here.
+pub fn parse_chunk_id(bytes: &[u8]) -> Option<(Vec<u8>, u32)> {
+    if bytes.len() < 8 {
+        return None;
+    }
+    let len = u32::from_le_bytes(bytes[..4].try_into().ok()?) as usize;
+    if bytes.len() != 4 + len + 4 {
+        return None;
+    }
+    let doc_id = bytes[4..4 + len].to_vec();
+    let chunk_idx = u32::from_le_bytes(bytes[4 + len..].try_into().ok()?);
+    Some((doc_id, chunk_idx))
+}
+
+/// Prefix shared by every chunk-id for a given `doc_id` — used to find and
+/// delete all chunks for a document in one prefix scan.
+pub(crate) fn doc_id_prefix(doc_id: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + doc_id.len());
+    out.extend_from_slice(&(doc_id.len() as u32).to_le_bytes());
+    out.extend_from_slice(doc_id);
+    out
+}
+
+/// Over-fetch multiplier for `search`: we ask the underlying KNN for
+/// `k * MULTIPLIER` chunks and dedup by doc-id afterwards, so that documents
+/// with many chunks don't crowd out distinct top-k results.
+pub(crate) const OVERFETCH_MULTIPLIER: usize = 4;
+
+/// Dedup a chunk-level hit list by doc-id, keeping each doc's best score, and
+/// truncate to `k`. Used by both standalone [`TextIndex::search`] and the
+/// namespaced sub-handle.
+pub(crate) fn dedup_chunk_hits_by_doc(chunk_hits: Vec<(Vec<u8>, f32)>, k: usize) -> Vec<TextHit> {
+    let mut best_per_doc: HashMap<Vec<u8>, f32> = HashMap::new();
+    for (chunk_id, score) in chunk_hits {
+        let doc_id = match parse_chunk_id(&chunk_id) {
+            Some((d, _)) => d,
+            None => chunk_id.clone(), // legacy non-chunked id; treat as its own doc
+        };
+        best_per_doc
+            .entry(doc_id)
+            .and_modify(|s| {
+                if score < *s {
+                    *s = score;
+                }
+            })
+            .or_insert(score);
+    }
+    let mut docs: Vec<(Vec<u8>, f32)> = best_per_doc.into_iter().collect();
+    docs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    docs.truncate(k);
+    docs.into_iter()
+        .map(|(id, score)| TextHit { id, score })
+        .collect()
+}
 
 /// Errors from [`TextIndex`] operations.
 #[derive(Debug, Error)]
@@ -89,24 +174,48 @@ pub struct TextHit {
 }
 
 /// Construction-time configuration for [`TextIndex`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TextIndexConfig<E: Embedder> {
     pub embedder: E,
+    /// Chunker used to split documents on insert. Defaults to
+    /// [`IdentityChunker`] (one chunk per document, behaviour identical to
+    /// pre-multi-chunk).
+    pub chunker: Arc<dyn Chunker>,
     pub metric: Metric,
     pub level_bits: u8,
     pub max_bucket_size: u16,
 }
 
+impl<E: Embedder + std::fmt::Debug> std::fmt::Debug for TextIndexConfig<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextIndexConfig")
+            .field("embedder", &self.embedder)
+            .field("chunker_id", &self.chunker.id())
+            .field("metric", &self.metric)
+            .field("level_bits", &self.level_bits)
+            .field("max_bucket_size", &self.max_bucket_size)
+            .finish()
+    }
+}
+
 impl<E: Embedder> TextIndexConfig<E> {
-    /// Build with sensible defaults: `Cosine` metric, `level_bits = 4`,
-    /// `max_bucket_size = 64`.
+    /// Build with sensible defaults: [`IdentityChunker`], `Cosine` metric,
+    /// `level_bits = 4`, `max_bucket_size = 64`.
     pub fn new(embedder: E) -> Self {
         Self {
             embedder,
+            chunker: Arc::new(IdentityChunker),
             metric: Metric::Cosine,
             level_bits: 4,
             max_bucket_size: 64,
         }
+    }
+
+    /// Builder: swap the chunker. Use this for multi-chunk indexing — for
+    /// example `.with_chunker(LineChunker)`.
+    pub fn with_chunker<C: Chunker + 'static>(mut self, chunker: C) -> Self {
+        self.chunker = Arc::new(chunker);
+        self
     }
 }
 
@@ -193,6 +302,7 @@ where
 pub struct TextIndex<const N: usize, E: Embedder, S: NodeStorage<N>> {
     inner: ProximityIndex<N, S>,
     embedder: E,
+    chunker: Arc<dyn Chunker>,
 }
 
 impl<const N: usize, E: Embedder, S: NodeStorage<N>> std::fmt::Debug for TextIndex<N, E, S> {
@@ -225,6 +335,7 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
         Self {
             inner,
             embedder: config.embedder,
+            chunker: config.chunker,
         }
     }
 
@@ -257,9 +368,25 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
         // proximity state blob, so the values we pass to
         // `validate_or_write_text_identity` above only apply when the blob is
         // missing — i.e. they don't override the real state.
+        //
+        // The chunker isn't persisted (bincode limitation — see PR notes).
+        // Reopening uses the default `IdentityChunker`; users with a custom
+        // chunker must call `with_chunker(...)` on the returned index before
+        // any chunker-dependent operation.
         let proximity_name = text_inner_proximity_name(name);
         let inner = ProximityIndex::load(storage, &proximity_name)?;
-        Ok(Self { inner, embedder })
+        Ok(Self {
+            inner,
+            embedder,
+            chunker: Arc::new(IdentityChunker),
+        })
+    }
+
+    /// Swap the chunker after the fact. Useful for `load(...)` callers whose
+    /// index was originally created with a non-identity chunker (since
+    /// chunker identity isn't persisted in the saved state blob).
+    pub fn set_chunker<C: Chunker + 'static>(&mut self, chunker: C) {
+        self.chunker = Arc::new(chunker);
     }
 
     /// Persist the index under `name`. After this call the index can be
@@ -286,35 +413,82 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
         Ok(root)
     }
 
-    /// Insert or update a document — embeds `text` and stores the resulting
-    /// vector under `id`.
+    /// Insert or update a document. The text is split via the configured
+    /// `Chunker` into one or more chunks; each chunk is embedded and stored
+    /// under its own chunk-id.
+    ///
+    /// **Re-insert semantics:** existing chunks for this `id` are removed
+    /// first, so that switching to a chunker that produces fewer chunks
+    /// doesn't leak stale ones.
     pub fn insert(&mut self, id: &[u8], text: &str) -> Result<(), TextIndexError> {
-        let vec = self.embedder.embed(text)?;
-        if vec.len() as u16 != self.embedder.dim() {
-            return Err(TextIndexError::Embed(EmbedError::DimensionMismatch {
-                expected: self.embedder.dim(),
-                got: vec.len() as u16,
-            }));
+        // Drop any previous chunks for this doc_id so the new chunk count
+        // overwrites cleanly (handles "re-chunk after switching chunkers"
+        // as well as plain upserts).
+        self.delete_chunks_for_doc(id);
+
+        let chunks = self.chunker.split(text);
+        if chunks.is_empty() {
+            // The chunker explicitly opted out (e.g. an empty document under
+            // LineChunker). Treat as "don't index" rather than as an error —
+            // matches the cascade transformer's `None` semantics.
+            return Ok(());
         }
-        self.inner.insert(id.to_vec(), vec)?;
+        for (idx, chunk_text) in chunks.iter().enumerate() {
+            let vec = self.embedder.embed(chunk_text)?;
+            if vec.len() as u16 != self.embedder.dim() {
+                return Err(TextIndexError::Embed(EmbedError::DimensionMismatch {
+                    expected: self.embedder.dim(),
+                    got: vec.len() as u16,
+                }));
+            }
+            let chunk_id = make_chunk_id(id, idx as u32);
+            self.inner.insert(chunk_id, vec)?;
+        }
         Ok(())
     }
 
-    /// Remove a document. Returns whether anything was removed.
+    /// Remove a document — removes every chunk associated with `id`.
+    /// Returns whether at least one chunk was removed.
     pub fn delete(&mut self, id: &[u8]) -> bool {
-        self.inner.remove(id)
+        self.delete_chunks_for_doc(id)
     }
 
-    /// k-nearest-neighbour search. Embeds `query` and runs the KNN under
-    /// the configured metric.
+    /// k-nearest-neighbour search. Embeds `query`, over-fetches chunks from
+    /// the underlying KNN, then dedups by doc-id (keeping each doc's best
+    /// chunk score). Returns top-k **documents**.
     pub fn search(&mut self, query: &str, k: usize) -> Result<Vec<TextHit>, TextIndexError> {
+        if k == 0 {
+            return Ok(Vec::new());
+        }
         let q = self.embedder.embed(query)?;
-        let ef = (k * 4).max(32);
-        let hits = self.inner.knn(&q, k, ef)?;
-        Ok(hits
-            .into_iter()
-            .map(|(id, score)| TextHit { id, score })
-            .collect())
+        // Over-fetch chunks so the dedup-by-doc step still yields `k` docs
+        // even when there are several chunks per doc. The 4× multiplier is
+        // a reasonable middle ground.
+        let raw_k = (k * OVERFETCH_MULTIPLIER).max(k);
+        let ef = (raw_k * 4).max(32);
+        let chunk_hits = self.inner.knn(&q, raw_k, ef)?;
+        Ok(dedup_chunk_hits_by_doc(chunk_hits, k))
+    }
+
+    /// Internal: remove every chunk for `doc_id`. Returns whether any were
+    /// removed. Uses an in-memory scan of the `ProximityIndex`'s entry set;
+    /// a future optimisation can switch to a range-based BTreeMap query.
+    fn delete_chunks_for_doc(&mut self, doc_id: &[u8]) -> bool {
+        let prefix = doc_id_prefix(doc_id);
+        let to_remove: Vec<Vec<u8>> = self
+            .inner
+            .entries_snapshot()
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let mut any = false;
+        for cid in to_remove {
+            if self.inner.remove(&cid) {
+                any = true;
+            }
+        }
+        any
     }
 
     /// Re-embed every entry currently in the index using the current
@@ -330,20 +504,43 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
     where
         I: IntoIterator<Item = (Vec<u8>, String)>,
     {
-        // Drop all existing entries first.
+        // Drop every chunk in the index. Cheaper than per-doc deletion since
+        // we're rebuilding from scratch anyway.
         let ids: Vec<Vec<u8>> = self.inner.entries_snapshot().keys().cloned().collect();
         for id in ids {
             self.inner.remove(&id);
         }
+        // Re-insert each doc through the chunker.
         for (id, text) in texts {
-            let vec = self.embedder.embed(&text)?;
-            self.inner.insert(id, vec)?;
+            self.insert(&id, &text)?;
         }
         Ok(())
     }
 
-    /// Number of stored documents.
+    /// Number of stored **documents** (deduplicated across chunks).
+    ///
+    /// Under [`IdentityChunker`] (the default) chunks and docs are 1:1, so
+    /// this is the same as `chunk_count`. Under a multi-chunk chunker,
+    /// docs ≤ chunks.
     pub fn len(&self) -> usize {
+        use std::collections::HashSet;
+        let mut docs: HashSet<Vec<u8>> = HashSet::new();
+        for k in self.inner.entries_snapshot().keys() {
+            match parse_chunk_id(k) {
+                Some((doc, _)) => {
+                    docs.insert(doc);
+                }
+                None => {
+                    docs.insert(k.clone());
+                }
+            }
+        }
+        docs.len()
+    }
+
+    /// Total chunk count in the underlying proximity index. Diagnostic
+    /// counterpart to `len`.
+    pub fn chunk_count(&self) -> usize {
         self.inner.len()
     }
 

@@ -67,6 +67,26 @@ impl Chunker for IdentityChunker {
     }
 }
 
+/// Line-based chunker: splits a document on `\n` boundaries, dropping empty
+/// lines. Predictable enough to write deterministic tests against and useful
+/// for line-oriented content (logs, code, structured notes).
+#[derive(Debug, Clone, Default)]
+pub struct LineChunker;
+
+impl LineChunker {
+    pub const ID: &'static str = "line";
+}
+
+impl Chunker for LineChunker {
+    fn id(&self) -> &str {
+        Self::ID
+    }
+
+    fn split<'t>(&self, text: &'t str) -> Vec<&'t str> {
+        text.split('\n').filter(|l| !l.is_empty()).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +127,36 @@ mod tests {
         // chunkers in one container.
         let boxed: Box<dyn Chunker> = Box::new(IdentityChunker);
         assert_eq!(boxed.id(), "identity");
+    }
+
+    // ---- LineChunker ----------------------------------------------------
+
+    #[test]
+    fn line_chunker_splits_on_newlines() {
+        let chunks = LineChunker.split("alpha\nbeta\ngamma");
+        assert_eq!(chunks, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn line_chunker_drops_empty_lines() {
+        let chunks = LineChunker.split("alpha\n\nbeta\n");
+        assert_eq!(chunks, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn line_chunker_single_line_returns_one_chunk() {
+        let chunks = LineChunker.split("just one line");
+        assert_eq!(chunks, vec!["just one line"]);
+    }
+
+    #[test]
+    fn line_chunker_empty_input_returns_no_chunks() {
+        assert_eq!(LineChunker.split("").len(), 0);
+    }
+
+    #[test]
+    fn line_chunker_id_is_stable() {
+        assert_eq!(LineChunker.id(), "line");
+        assert_eq!(LineChunker::ID, "line");
     }
 }

@@ -54,12 +54,13 @@ use crate::storage::RocksDBNodeStorage;
 
 #[cfg(feature = "proximity")]
 use crate::proximity::text_index::{
-    text_inner_proximity_name, text_state_key, validate_or_write_text_identity,
+    dedup_chunk_hits_by_doc, doc_id_prefix, make_chunk_id, text_inner_proximity_name,
+    text_state_key, validate_or_write_text_identity, OVERFETCH_MULTIPLIER,
 };
 #[cfg(feature = "proximity")]
 use crate::proximity::{
-    Embedder, ProximityConfig, ProximityError, ProximityIndex, ProximityIndexEntry, TextHit,
-    TextIndexConfig, TextIndexError,
+    Chunker, Embedder, IdentityChunker, ProximityConfig, ProximityError, ProximityIndex,
+    ProximityIndexEntry, TextHit, TextIndexConfig, TextIndexError,
 };
 
 // ---------------------------------------------------------------------------
@@ -149,6 +150,12 @@ pub struct NamespacedKvStore<
     /// path can reach them for auto-cascade — PR 4d.
     #[cfg(feature = "proximity")]
     pub(crate) text_embedders: HashMap<(String, String), Arc<dyn Embedder>>,
+    /// Centrally-owned chunkers for text indexes, parallel to
+    /// `text_embedders`. Insert paths use the chunker to split a document
+    /// into one or more text fragments; each fragment becomes a separate
+    /// chunk-id in the underlying proximity index.
+    #[cfg(feature = "proximity")]
+    pub(crate) text_chunkers: HashMap<(String, String), Arc<dyn Chunker>>,
     /// Per-namespace cascade lists. When a namespace name is keyed here, every
     /// `NamespaceHandle::insert` / `::delete` against that namespace also
     /// applies the operation to each listed text sub-index. Targets that
@@ -339,21 +346,42 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
                 },
             };
 
-            // 2. Resolve the embedder (immutable borrow ends with the clone).
+            // 2. Resolve the embedder + chunker (immutable borrow ends with the clones).
             let Some(embedder) = self.store.text_embedders.get(&target_key).cloned() else {
                 continue;
             };
-            let Ok(vec) = embedder.embed(&text) else {
-                continue;
-            };
-            if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
-                let _ = idx.insert(key.to_vec(), vec);
-                self.store.dirty_proximity_indexes.insert(prox_key);
+            let chunker: Arc<dyn Chunker> = self
+                .store
+                .text_chunkers
+                .get(&target_key)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(IdentityChunker));
+
+            // 3. Chunk → embed → insert. Drop any previous chunks for this
+            //    doc-id first so re-inserts with a different chunk count
+            //    don't leak stale entries.
+            //
+            //    Borrow gymnastics: each chunk's embed happens outside the
+            //    proximity-index borrow, then a fresh `get_mut` reborrows
+            //    for the insert. Slight overhead, but keeps the embedder
+            //    free to call into anything (incl. error-returning paths).
+            Self::cascade_delete_chunks_for_doc(self.store, &prox_key, key);
+            let chunks = chunker.split(&text);
+            for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
+                let Ok(vec) = embedder.embed(chunk_text) else {
+                    continue;
+                };
+                let chunk_id = make_chunk_id(key, chunk_idx as u32);
+                if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
+                    let _ = idx.insert(chunk_id, vec);
+                    self.store.dirty_proximity_indexes.insert(prox_key.clone());
+                }
             }
         }
     }
 
-    /// Cascade a delete to every configured text sub-index for this namespace.
+    /// Cascade a delete to every configured text sub-index for this
+    /// namespace. Removes every chunk for `key` from each target.
     #[cfg(feature = "proximity")]
     fn cascade_delete(&mut self, key: &[u8]) {
         let Some(cascade_list) = self.store.cascade_lists.get(&self.ns_name).cloned() else {
@@ -361,11 +389,37 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
         };
         for idx_name in cascade_list {
             let prox_key = (self.ns_name.clone(), text_inner_proximity_name(&idx_name));
-            if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
-                if idx.remove(key) {
-                    self.store.dirty_proximity_indexes.insert(prox_key);
-                }
+            Self::cascade_delete_chunks_for_doc(self.store, &prox_key, key);
+        }
+    }
+
+    /// Static helper: prefix-scan and remove every chunk for `doc_id`
+    /// from the proximity index at `prox_key`. Marks the index dirty if
+    /// anything was removed.
+    #[cfg(feature = "proximity")]
+    fn cascade_delete_chunks_for_doc(
+        store: &mut NamespacedKvStore<N, S, M>,
+        prox_key: &(String, String),
+        doc_id: &[u8],
+    ) {
+        let Some(idx) = store.proximity_indexes.get_mut(prox_key) else {
+            return;
+        };
+        let prefix = doc_id_prefix(doc_id);
+        let to_remove: Vec<Vec<u8>> = idx
+            .entries_snapshot()
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let mut any = false;
+        for cid in to_remove {
+            if idx.remove(&cid) {
+                any = true;
             }
+        }
+        if any {
+            store.dirty_proximity_indexes.insert(prox_key.clone());
         }
     }
 
@@ -967,6 +1021,8 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             cascade_lists: HashMap::new(),
             #[cfg(feature = "proximity")]
             text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1010,6 +1066,8 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             cascade_lists: HashMap::new(),
             #[cfg(feature = "proximity")]
             text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1899,6 +1957,8 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             cascade_lists: HashMap::new(),
             #[cfg(feature = "proximity")]
             text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1939,6 +1999,8 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             cascade_lists: HashMap::new(),
             #[cfg(feature = "proximity")]
             text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -1991,6 +2053,8 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             cascade_lists: HashMap::new(),
             #[cfg(feature = "proximity")]
             text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -2031,6 +2095,8 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             cascade_lists: HashMap::new(),
             #[cfg(feature = "proximity")]
             text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
             externalize_threshold: None,
         };
 
@@ -2504,6 +2570,10 @@ where
     /// "centrally owned by the store", so the auto-cascade insert path
     /// can reach the embedder.
     embedder: Arc<dyn Embedder>,
+    /// Cheap reference into `store.text_chunkers` — same rationale as the
+    /// embedder. The chunker splits documents into one-or-more chunks on
+    /// insert; the auto-cascade path uses the same chunker per target.
+    chunker: Arc<dyn Chunker>,
 }
 
 #[cfg(feature = "proximity")]
@@ -2518,6 +2588,7 @@ where
             .field("idx_name", &self.idx_name)
             .field("embedder_id", &self.embedder.id())
             .field("dim", &self.embedder.dim())
+            .field("chunker_id", &self.chunker.id())
             .finish()
     }
 }
@@ -2528,56 +2599,82 @@ where
     S: NodeStorage<N>,
     M: MetadataBackend,
 {
-    /// Insert or update `(id, text)`. The text is embedded via the handle's
-    /// embedder and the resulting vector is upserted into the underlying
-    /// proximity index.
+    /// Insert or update `(id, text)`. The text is split through the
+    /// configured chunker; each chunk is embedded and stored under its own
+    /// chunk-id. Previous chunks for this `id` are removed first so that a
+    /// re-insert with fewer chunks doesn't leak stale ones.
     pub fn insert(&mut self, id: &[u8], text: &str) -> Result<(), TextIndexError> {
-        let vec = self.embedder.embed(text)?;
+        // Drop any previous chunks for this doc_id.
+        self.delete_chunks_for_doc(id);
+
+        let chunks = self.chunker.split(text);
+        if chunks.is_empty() {
+            return Ok(());
+        }
         let idx = self
             .store
             .proximity_indexes
             .get_mut(&self.inner_idx_key)
             .expect("inner proximity index must be loaded");
-        idx.insert(id.to_vec(), vec)?;
+        for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
+            let vec = self.embedder.embed(chunk_text)?;
+            let chunk_id = make_chunk_id(id, chunk_idx as u32);
+            idx.insert(chunk_id, vec)?;
+        }
         self.store
             .dirty_proximity_indexes
             .insert(self.inner_idx_key.clone());
         Ok(())
     }
 
-    /// Remove an id. Returns whether anything was removed.
+    /// Remove every chunk associated with `id`. Returns whether anything
+    /// was removed.
     pub fn delete(&mut self, id: &[u8]) -> bool {
-        let idx = match self.store.proximity_indexes.get_mut(&self.inner_idx_key) {
-            Some(i) => i,
-            None => return false,
-        };
-        let removed = idx.remove(id);
-        if removed {
-            self.store
-                .dirty_proximity_indexes
-                .insert(self.inner_idx_key.clone());
-        }
-        removed
+        self.delete_chunks_for_doc(id)
     }
 
-    /// k-nearest-neighbour search by query text.
+    /// k-nearest-neighbour search by query text. Over-fetches chunks from
+    /// the underlying KNN, then dedups by doc-id (keeping each doc's best
+    /// chunk score). Returns top-k **documents**.
     pub fn search(&mut self, query: &str, k: usize) -> Result<Vec<TextHit>, TextIndexError> {
+        if k == 0 {
+            return Ok(Vec::new());
+        }
         let q = self.embedder.embed(query)?;
-        let ef = (k * 4).max(32);
+        let raw_k = (k * OVERFETCH_MULTIPLIER).max(k);
+        let ef = (raw_k * 4).max(32);
         let idx = self
             .store
             .proximity_indexes
             .get_mut(&self.inner_idx_key)
             .expect("inner proximity index must be loaded");
-        let hits = idx.knn(&q, k, ef)?;
-        Ok(hits
-            .into_iter()
-            .map(|(id, score)| TextHit { id, score })
-            .collect())
+        let chunk_hits = idx.knn(&q, raw_k, ef)?;
+        Ok(dedup_chunk_hits_by_doc(chunk_hits, k))
     }
 
-    /// Number of stored documents.
+    /// Number of stored **documents** (deduplicated across chunks). Under
+    /// the default [`IdentityChunker`] this equals `chunk_count`.
     pub fn len(&self) -> usize {
+        let idx = match self.store.proximity_indexes.get(&self.inner_idx_key) {
+            Some(i) => i,
+            None => return 0,
+        };
+        let mut docs: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+        for k in idx.entries_snapshot().keys() {
+            match crate::proximity::text_index::parse_chunk_id(k) {
+                Some((doc, _)) => {
+                    docs.insert(doc);
+                }
+                None => {
+                    docs.insert(k.clone());
+                }
+            }
+        }
+        docs.len()
+    }
+
+    /// Total chunk count in the underlying proximity index.
+    pub fn chunk_count(&self) -> usize {
         self.store
             .proximity_indexes
             .get(&self.inner_idx_key)
@@ -2586,7 +2683,35 @@ where
 
     /// True if the index is empty.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.chunk_count() == 0
+    }
+
+    /// Internal: remove every chunk for `doc_id`. Returns whether any were
+    /// removed. Marks the underlying proximity index dirty on success.
+    fn delete_chunks_for_doc(&mut self, doc_id: &[u8]) -> bool {
+        let idx = match self.store.proximity_indexes.get_mut(&self.inner_idx_key) {
+            Some(i) => i,
+            None => return false,
+        };
+        let prefix = doc_id_prefix(doc_id);
+        let to_remove: Vec<Vec<u8>> = idx
+            .entries_snapshot()
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let mut any = false;
+        for cid in to_remove {
+            if idx.remove(&cid) {
+                any = true;
+            }
+        }
+        if any {
+            self.store
+                .dirty_proximity_indexes
+                .insert(self.inner_idx_key.clone());
+        }
+        any
     }
 
     /// Index name (within its namespace).
@@ -2684,7 +2809,13 @@ where
         let arc_embedder: Arc<dyn Embedder> = Arc::new(config.embedder);
         self.store
             .text_embedders
-            .insert(embedder_key, arc_embedder.clone());
+            .insert(embedder_key.clone(), arc_embedder.clone());
+        // Register the chunker too — used by both this handle's insert and
+        // the cascade insert path.
+        let arc_chunker: Arc<dyn Chunker> = config.chunker;
+        self.store
+            .text_chunkers
+            .insert(embedder_key, arc_chunker.clone());
 
         Ok(TextNamespaceHandle {
             store: &mut *self.store,
@@ -2692,6 +2823,7 @@ where
             idx_name: idx_name.to_string(),
             inner_idx_key,
             embedder: arc_embedder,
+            chunker: arc_chunker,
         })
     }
 
@@ -2704,6 +2836,7 @@ where
         let embedder_key = (self.ns_name.clone(), idx_name.to_string());
         self.store.dirty_proximity_indexes.remove(&inner_idx_key);
         self.store.text_embedders.remove(&embedder_key);
+        self.store.text_chunkers.remove(&embedder_key);
         self.store.text_transformers.remove(&embedder_key);
         self.store
             .proximity_indexes

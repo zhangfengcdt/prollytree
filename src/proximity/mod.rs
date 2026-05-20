@@ -46,7 +46,7 @@ mod node;
 mod storage;
 pub(crate) mod text_index;
 
-pub use chunker::{Chunker, IdentityChunker};
+pub use chunker::{Chunker, IdentityChunker, LineChunker};
 pub use distance::{Distance, Metric};
 pub use embedder::{EmbedError, Embedder, HashEmbedder};
 pub use index::{
