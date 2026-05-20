@@ -30,13 +30,29 @@ pub struct TreeConfig<const N: usize> {
 }
 
 impl<const N: usize> Default for TreeConfig<N> {
+    /// Default tuning for the probabilistic chunker.
+    ///
+    /// The chunker fires a split whenever the rolling hash matches `pattern`. With
+    /// `pattern = 0b11111111` (eight `1` bits) the probability of a split at any
+    /// given position is `1 / 2^8 = 1/256`, so the **expected** number of entries
+    /// per leaf is ~256. Smaller patterns (fewer `1` bits) give smaller, more
+    /// numerous nodes; larger patterns give fewer, larger nodes.
+    ///
+    /// `min_chunk_size` is the rolling-hash window: a node will not split until
+    /// it holds at least this many entries.
+    ///
+    /// `max_chunk_size` is a hard safety cap measured in **entries**. It is set
+    /// to ~16× the expected chunk size so it never fires on well-distributed
+    /// data, but still prevents pathological runaway nodes on low-entropy or
+    /// adversarial inputs. Note this is not a byte cap — see the documentation
+    /// on storing large values inline.
     fn default() -> Self {
         TreeConfig {
             base: 257,
             modulus: 1_000_000_007,
-            min_chunk_size: 2,
-            max_chunk_size: 16 * 1024,
-            pattern: 0b11,
+            min_chunk_size: 8,
+            max_chunk_size: 4096,
+            pattern: 0b11111111,
             root_hash: None,
             key_schema: None,
             value_schema: None,
