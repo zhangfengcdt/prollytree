@@ -5,6 +5,7 @@ End-to-end worked examples. Each one is runnable and exercises a different part 
 - **[Basic Tree](basic.md)** — in-memory tree, reads/writes, Merkle proof.
 - **[Versioned Store](versioning.md)** — branching, merging, three-way conflict resolution.
 - **[SQL Queries](sql.md)** — GlueSQL against a versioned store, including branch-scoped reads.
+- **[Text Search](text_search.md)** — versioned vector search on `NamespacedKvStore`: dual-write, cascade, multi-chunk, MiniLM + custom embedders.
 - **[Python Bindings](python.md)** — the same workflows from Python, plus namespaces and text indexing.
 
 If you're looking for something shorter, the [Quickstart](../quickstart.md) fits on one screen.

@@ -1,6 +1,6 @@
 # ProllyTree Python Bindings
 
-[![Documentation](https://img.shields.io/badge/docs-read%20the%20docs-blue)](https://prollytree.readthedocs.io/en/latest/)
+[![Documentation](https://img.shields.io/badge/docs-github%20pages-blue)](https://zhangfengcdt.github.io/prollytree/)
 [![PyPI](https://img.shields.io/pypi/v/prollytree)](https://pypi.org/project/prollytree/)
 
 Python bindings for ProllyTree - a probabilistic tree data structure that combines B-trees and Merkle trees for efficient, verifiable data storage.
@@ -26,13 +26,14 @@ value = tree.find(b"hello")  # Returns b"world"
 
 ## Documentation
 
-**[Complete Documentation](https://prollytree.readthedocs.io/en/latest/)**
+**[Complete Documentation](https://zhangfengcdt.github.io/prollytree/)**
 
 The full documentation includes:
-- [Quickstart Guide](https://prollytree.readthedocs.io/en/latest/quickstart.html)
-- [API Reference](https://prollytree.readthedocs.io/en/latest/api.html)
-- [Examples](https://prollytree.readthedocs.io/en/latest/examples.html)
-- [Advanced Usage](https://prollytree.readthedocs.io/en/latest/advanced.html)
+- [Quickstart Guide](https://zhangfengcdt.github.io/prollytree/quickstart/)
+- [Python API Reference](https://zhangfengcdt.github.io/prollytree/api/python/)
+- [Python Examples](https://zhangfengcdt.github.io/prollytree/examples/python/)
+- [Architecture](https://zhangfengcdt.github.io/prollytree/architecture/)
+- [Text Search](https://zhangfengcdt.github.io/prollytree/text_search/)
 
 ## Features
 

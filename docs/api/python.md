@@ -97,6 +97,132 @@ Value class returned by `try_merge`. Fields: `key`, `base_value`, `source_value`
 
 See [Theory → Versioning & Merge](../theory/versioning.md) for the algorithm.
 
+## `NamespacedKvStore`
+
+A multi-tree counterpart of `VersionedKvStore`. Each namespace owns its own prolly tree (and optionally one or more text sub-indexes); all namespaces share one git history, so `commit`, `branch`, `checkout`, `merge` move every namespace atomically.
+
+```python
+from prollytree import NamespacedKvStore
+
+store = NamespacedKvStore("/path/to/store")     # init or open
+
+store.ns_insert("users",    b"u:alice", b"Alice")
+store.ns_insert("settings", b"theme",   b"dark")
+store.commit("seed users + settings")
+
+store.branch("experiment")                      # create + switch
+store.ns_insert("settings", b"theme", b"light")
+store.commit("flip theme")
+store.checkout("main")                          # both namespaces snap back
+```
+
+### Core operations
+
+| Method | Notes |
+|---|---|
+| `ns_insert(ns, key, value)` / `ns_get(ns, key)` / `ns_delete(ns, key)` | Per-namespace primary KV. |
+| `ns_list_keys(ns) -> list[bytes]` | All keys in a namespace. |
+| `list_namespaces() -> list[str]` | Every namespace known to the store. |
+| `delete_namespace(prefix) -> bool` | Drop a namespace wholesale. |
+| `get_namespace_root_hash(prefix)` | Per-namespace fingerprint for change detection. |
+| `commit(message: str) -> str` | One commit covering every dirty namespace + sub-index atomically. |
+| `branch(name)` / `checkout(name)` | Create-and-switch / switch existing branch. |
+| `merge(source_branch, ...) -> str` | Per-namespace 3-way merge. |
+| `current_branch` (property) | Current branch name (not a method). |
+
+### Text indexing
+
+Each namespace can host text sub-indexes. The primary KV tree is the source of truth; the index stores `(id, vector)` pairs only. See [Text Search](../text_search.md) for the full design.
+
+| Method | Notes |
+|---|---|
+| `text_index_open(ns, idx, embedder, chunker=None)` | Create or re-open. Persists the embedder identity on first open and validates it on every reopen. `chunker` is `"identity"` (default) or `"line"`. |
+| `text_index_insert(ns, idx, id: bytes, text: str)` | Embed + chunk + insert. Same `id` upserts. |
+| `text_index_delete(ns, idx, id: bytes) -> bool` | Prefix-scans + removes every chunk for the doc. |
+| `text_index_search(ns, idx, query: str, k: int) -> list[tuple[bytes, float]]` | Top-k documents (deduped across chunks) ordered by ascending distance. |
+| `text_index_len(ns, idx)` / `text_index_chunk_count(ns, idx)` | Distinct documents vs raw chunks. |
+| `text_index_drop(ns, idx) -> bool` | Drop in-memory cache + Python-side embedder/chunker registration. |
+
+### Cascade
+
+`ns_insert` and `ns_delete` can auto-mirror into registered text indexes — no dual-write needed.
+
+| Method | Notes |
+|---|---|
+| `set_cascade(ns, [idx_name, ...])` | Opt in. Runtime-only (not persisted). |
+| `clear_cascade(ns)` | Opt out. |
+| `cascade_for_namespace(ns) -> list[str] \| None` | Inspect current cascade list. |
+
+### Drift management
+
+| Method | Notes |
+|---|---|
+| `audit_text_index(ns, idx) -> dict` | `{"orphans_in_index", "missing_from_index", "is_in_sync"}`. |
+| `purge_text_index_orphans(ns, idx) -> int` | Remove index entries that have no primary row. |
+
+### Externalisation + blob GC
+
+| Method | Notes |
+|---|---|
+| `set_externalize_threshold(bytes: int \| None)` | Values larger than `bytes` are stored as content-addressed blobs (only a 44-byte envelope inline). `None` disables. |
+| `externalize_threshold() -> int \| None` | Current threshold. |
+| `gc_blobs() -> dict` | `{"total", "referenced", "removed", "errors"}`. File / RocksDB backends only. |
+
+## Embedders
+
+Three embedder classes are exposed. All three plug into `text_index_open(...)` identically.
+
+### `HashEmbedder`
+
+Deterministic SHA-256-based, no extra deps. Not semantic — useful for tests and exact-match lookup.
+
+```python
+from prollytree import HashEmbedder
+emb = HashEmbedder(dim=384, seed=0)
+emb.id          # 'prollytree:hash-embedder/v1'
+emb.dim         # 384
+emb.embed("text")
+```
+
+### `MiniLmEmbedder`
+
+Bundled Candle + `sentence-transformers/all-MiniLM-L6-v2` (384-d). Real semantic search. First call downloads ~90 MB of weights into `$PROLLYTREE_EMBEDDER_CACHE`. Requires a wheel built with the `proximity_text` feature (default on PyPI).
+
+```python
+from prollytree import MiniLmEmbedder
+emb = MiniLmEmbedder()                                       # defaults
+emb = MiniLmEmbedder(model_id="...", revision="main")        # override either field
+```
+
+### `CallableEmbedder`
+
+Wrap any Python embedding function — OpenAI, Cohere, sentence-transformers, your own pipeline.
+
+```python
+from prollytree import CallableEmbedder
+emb = CallableEmbedder(
+    id="openai:text-embedding-3-small",       # persisted with the index
+    version="2024-01",                        # change when distribution changes
+    dim=1536,
+    embed_fn=lambda text: ...,                # returns list[float] of length `dim`
+)
+```
+
+The wrapped callable runs under the GIL. Dim mismatches surface as a clear `ValueError`.
+
+## Feature-availability flags
+
+The package exposes booleans that mirror the wheel's compiled features. Useful for fallback in libraries that want to remain importable on slim wheels:
+
+```python
+import prollytree as p
+p.sql_available              # ProllySQLStore present
+p.git_available              # WorktreeManager / WorktreeVersionedKvStore present
+p.namespaced_available       # NamespacedKvStore present
+p.proximity_available        # HashEmbedder / CallableEmbedder + text-index methods present
+p.proximity_text_available   # MiniLmEmbedder present
+```
+
 ## `ProllySQLStore`
 
 GlueSQL adapter — treat the store as relational tables.

@@ -25,7 +25,8 @@ The [Theory](theory/index.md) section walks through the construction in full, in
 - **Multiple storage backends.** In-memory, File, RocksDB, and Git-backed persistence behind a single `NodeStorage` trait.
 - **Git-backed versioning.** Branch, commit, diff, and three-way merge the key-value store with the `git-prolly` CLI or the `VersionedKvStore` API — uses real Git under the hood.
 - **SQL interface.** Query your tree as relational tables via GlueSQL integration.
-- **Python bindings.** Full API coverage via PyO3, including versioning, merging, and SQL.
+- **Vector / text search.** Versioned approximate-nearest-neighbour index ([Text Search](text_search.md)) lives inside any namespace; ships with a deterministic test embedder, a bundled Candle + MiniLM embedder, and a callable shim for bring-your-own pipelines.
+- **Python bindings.** Full API coverage via PyO3, including versioning, merging, SQL, and text search.
 
 ## Quick example (Rust)
 
