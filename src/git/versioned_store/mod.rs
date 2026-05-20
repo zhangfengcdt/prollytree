@@ -225,7 +225,7 @@ pub use namespaced::{
 };
 
 #[cfg(feature = "proximity")]
-pub use namespaced::ProximityNamespaceHandle;
+pub use namespaced::{ProximityNamespaceHandle, TextNamespaceHandle};
 
 #[cfg(feature = "rocksdb_storage")]
 pub use namespaced::RocksDBNamespacedKvStore;

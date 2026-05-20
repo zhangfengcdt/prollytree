@@ -53,7 +53,14 @@ use crate::storage::FileNodeStorage;
 use crate::storage::RocksDBNodeStorage;
 
 #[cfg(feature = "proximity")]
-use crate::proximity::{ProximityConfig, ProximityError, ProximityIndex, ProximityIndexEntry};
+use crate::proximity::text_index::{
+    text_inner_proximity_name, text_state_key, validate_or_write_text_identity,
+};
+#[cfg(feature = "proximity")]
+use crate::proximity::{
+    Embedder, ProximityConfig, ProximityError, ProximityIndex, ProximityIndexEntry, TextHit,
+    TextIndexConfig, TextIndexError,
+};
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -2145,5 +2152,233 @@ where
             }
         }
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TextIndex sub-handle — PR 4a
+// ---------------------------------------------------------------------------
+//
+// A namespaced text index reuses the existing proximity-index machinery for
+// the underlying vector storage. The text-index identity (embedder id +
+// version + dim + tuning) is persisted as a separate `text:<ns>:<idx>:state`
+// blob via `NodeStorage::save_config`. The underlying vector tree lives in
+// `proximity_indexes[(ns, "__text__<idx>")]` (the `__text__` prefix keeps it
+// out of the user-facing proximity-index namespace).
+
+/// Storage key under which the namespaced text-index identity blob lives.
+#[cfg(feature = "proximity")]
+fn text_index_state_key(ns_name: &str, idx_name: &str) -> String {
+    text_state_key(&format!("{ns_name}:{idx_name}"))
+}
+
+/// Short-lived handle to a named text index inside a namespace.
+///
+/// Owns the [`Embedder`] for the duration of the handle. The underlying
+/// vector index is borrowed (via re-borrow of the parent
+/// [`NamespacedKvStore`]) for each operation.
+#[cfg(feature = "proximity")]
+pub struct TextNamespaceHandle<'a, const N: usize, E, S, M>
+where
+    E: Embedder,
+    S: NodeStorage<N>,
+    M: MetadataBackend,
+{
+    store: &'a mut NamespacedKvStore<N, S, M>,
+    ns_name: String,
+    idx_name: String,
+    /// Key into `store.proximity_indexes` — `(ns_name, "__text__<idx_name>")`.
+    inner_idx_key: (String, String),
+    embedder: E,
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, E, S, M> std::fmt::Debug for TextNamespaceHandle<'a, N, E, S, M>
+where
+    E: Embedder,
+    S: NodeStorage<N>,
+    M: MetadataBackend,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextNamespaceHandle")
+            .field("ns_name", &self.ns_name)
+            .field("idx_name", &self.idx_name)
+            .field("embedder_id", &self.embedder.id())
+            .field("dim", &self.embedder.dim())
+            .finish()
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, E, S, M> TextNamespaceHandle<'a, N, E, S, M>
+where
+    E: Embedder,
+    S: NodeStorage<N>,
+    M: MetadataBackend,
+{
+    /// Insert or update `(id, text)`. The text is embedded via the handle's
+    /// embedder and the resulting vector is upserted into the underlying
+    /// proximity index.
+    pub fn insert(&mut self, id: &[u8], text: &str) -> Result<(), TextIndexError> {
+        let vec = self.embedder.embed(text)?;
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&self.inner_idx_key)
+            .expect("inner proximity index must be loaded");
+        idx.insert(id.to_vec(), vec)?;
+        self.store
+            .dirty_proximity_indexes
+            .insert(self.inner_idx_key.clone());
+        Ok(())
+    }
+
+    /// Remove an id. Returns whether anything was removed.
+    pub fn delete(&mut self, id: &[u8]) -> bool {
+        let idx = match self.store.proximity_indexes.get_mut(&self.inner_idx_key) {
+            Some(i) => i,
+            None => return false,
+        };
+        let removed = idx.remove(id);
+        if removed {
+            self.store
+                .dirty_proximity_indexes
+                .insert(self.inner_idx_key.clone());
+        }
+        removed
+    }
+
+    /// k-nearest-neighbour search by query text.
+    pub fn search(&mut self, query: &str, k: usize) -> Result<Vec<TextHit>, TextIndexError> {
+        let q = self.embedder.embed(query)?;
+        let ef = (k * 4).max(32);
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&self.inner_idx_key)
+            .expect("inner proximity index must be loaded");
+        let hits = idx.knn(&q, k, ef)?;
+        Ok(hits
+            .into_iter()
+            .map(|(id, score)| TextHit { id, score })
+            .collect())
+    }
+
+    /// Number of stored documents.
+    pub fn len(&self) -> usize {
+        self.store
+            .proximity_indexes
+            .get(&self.inner_idx_key)
+            .map_or(0, |i| i.len())
+    }
+
+    /// True if the index is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Index name (within its namespace).
+    pub fn name(&self) -> &str {
+        &self.idx_name
+    }
+
+    /// Owning namespace name.
+    pub fn namespace(&self) -> &str {
+        &self.ns_name
+    }
+
+    /// Read-only access to the wrapped embedder.
+    pub fn embedder(&self) -> &E {
+        &self.embedder
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<'a, N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Open or create a named **text** sub-index inside this namespace.
+    ///
+    /// On first call: persists the embedder identity blob via
+    /// `NodeStorage::save_config` (key `text:<ns>:<idx>:state`) and creates a
+    /// fresh underlying proximity index keyed
+    /// `proximity_indexes[(ns, "__text__<idx>")]`.
+    ///
+    /// On subsequent calls (including after re-opening the store): loads the
+    /// identity blob, validates the supplied embedder matches stored
+    /// `id`/`version`/`dim`, and (re-)loads the underlying proximity index
+    /// state from `NodeStorage::save_config`. Mismatch returns
+    /// [`TextIndexError::EmbedderMismatch`] or
+    /// [`TextIndexError::DimensionMismatch`] before mutating state.
+    pub fn text_index<'b, E: Embedder>(
+        &'b mut self,
+        idx_name: &str,
+        config: TextIndexConfig<E>,
+    ) -> Result<TextNamespaceHandle<'b, N, E, S, M>, TextIndexError>
+    where
+        'a: 'b,
+    {
+        let state_key = text_index_state_key(&self.ns_name, idx_name);
+        let storage = self.store.inner.tree.storage.clone();
+
+        validate_or_write_text_identity::<N, _, _>(
+            &storage,
+            &state_key,
+            &config.embedder,
+            config.metric,
+            config.level_bits,
+            config.max_bucket_size,
+        )?;
+
+        let inner_local_name = text_inner_proximity_name(idx_name);
+        let proximity_save_name_full = proximity_save_name(&self.ns_name, &inner_local_name);
+        let inner_idx_key = (self.ns_name.clone(), inner_local_name);
+
+        if !self.store.proximity_indexes.contains_key(&inner_idx_key) {
+            let prox_config = ProximityConfig {
+                dim: config.embedder.dim(),
+                metric: config.metric,
+                level_bits: config.level_bits,
+                max_bucket_size: config.max_bucket_size,
+            };
+            let inner = match ProximityIndex::load(storage.clone(), &proximity_save_name_full) {
+                Ok(loaded) => {
+                    if loaded.config().dim != config.embedder.dim() {
+                        return Err(TextIndexError::DimensionMismatch {
+                            stored: loaded.config().dim,
+                            got: config.embedder.dim(),
+                        });
+                    }
+                    loaded
+                }
+                Err(ProximityError::NotFound(_)) => ProximityIndex::new(storage, prox_config),
+                Err(e) => return Err(TextIndexError::Proximity(e)),
+            };
+            self.store
+                .proximity_indexes
+                .insert(inner_idx_key.clone(), inner);
+        }
+
+        Ok(TextNamespaceHandle {
+            store: &mut *self.store,
+            ns_name: self.ns_name.clone(),
+            idx_name: idx_name.to_string(),
+            inner_idx_key,
+            embedder: config.embedder,
+        })
+    }
+
+    /// Drop a text sub-index from the in-memory cache. The persisted state
+    /// (entries + identity blob + tree nodes) is **not** eagerly deleted —
+    /// content-addressed nodes become unreachable for backend GC. A future
+    /// call to `text_index` with the same name re-loads the same state.
+    pub fn drop_text_index(&mut self, idx_name: &str) -> bool {
+        let inner_idx_key = (self.ns_name.clone(), text_inner_proximity_name(idx_name));
+        self.store.dirty_proximity_indexes.remove(&inner_idx_key);
+        self.store
+            .proximity_indexes
+            .remove(&inner_idx_key)
+            .is_some()
     }
 }

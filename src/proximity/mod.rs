@@ -35,13 +35,16 @@ limitations under the License.
 //! follow-on PRs.
 
 mod distance;
+mod embedder;
 mod index;
 mod level;
 pub mod merge;
 mod node;
 mod storage;
+pub(crate) mod text_index;
 
 pub use distance::{Distance, Metric};
+pub use embedder::{EmbedError, Embedder, HashEmbedder};
 pub use index::{
     deserialize_persisted_state, PersistedProximityState, ProximityConfig, ProximityError,
     ProximityIndex, ProximityIndexEntry,
@@ -53,6 +56,7 @@ pub use merge::{
     ProximityResolution, TakeDestinationProximityResolver, TakeSourceProximityResolver,
 };
 pub use node::ProximityNode;
+pub use text_index::{TextHit, TextIndex, TextIndexConfig, TextIndexError};
 
 // `ProximityNamespaceHandle` lives in the namespace machinery — namespaces are
 // the layer that owns multi-index lifecycle. Re-exported from here so callers
