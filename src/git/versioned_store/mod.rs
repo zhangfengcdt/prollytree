@@ -140,7 +140,24 @@ pub struct VersionedKvStore<
     /// (File/RocksDB/InMemory/Git). Git init/open paths set this from
     /// `storage.dataset_dir()`, and commit()/merge rely on this field being `Some`.
     pub(crate) dataset_dir: Option<std::path::PathBuf>,
+    /// Filename (relative to ``dataset_dir``) for the serialized
+    /// ``TreeConfig`` root hash. Defaults to
+    /// :const:`DEFAULT_TREE_CONFIG_FILENAME`. ``NamespacedKvStore``
+    /// overrides this to :const:`NAMESPACED_TREE_CONFIG_FILENAME` on
+    /// the inner store so the two store types stop fighting over a
+    /// single shared file in the same dataset directory.
+    pub(crate) config_filename: String,
 }
+
+/// Default filename for ``VersionedKvStore``'s ``TreeConfig`` serialization.
+pub const DEFAULT_TREE_CONFIG_FILENAME: &str = "prolly_config_tree_config";
+
+/// Filename used when a ``VersionedKvStore`` is embedded as the inner
+/// store of a ``NamespacedKvStore``. Distinct from
+/// :const:`DEFAULT_TREE_CONFIG_FILENAME` so both store types can
+/// coexist on the same dataset directory without overwriting each
+/// other's root-hash pointer.
+pub const NAMESPACED_TREE_CONFIG_FILENAME: &str = "prolly_config_namespaced_root";
 
 /// Type alias for backward compatibility (Git storage)
 pub type GitVersionedKvStore<const N: usize> = VersionedKvStore<N, GitNodeStorage<N>>;

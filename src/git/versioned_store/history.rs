@@ -59,8 +59,10 @@ where
         })?;
 
         // Construct the file path and use '/' separators for git tree paths
-        // (git uses forward slashes regardless of platform)
-        let config_path = relative_path.join("prolly_config_tree_config");
+        // (git uses forward slashes regardless of platform). Uses
+        // ``self.config_filename`` so namespaced stores read their own
+        // config file rather than the default-filename sibling.
+        let config_path = relative_path.join(&self.config_filename);
         let path_str = config_path
             .components()
             .map(|c| c.as_os_str().to_string_lossy())
@@ -69,8 +71,9 @@ where
         Ok(path_str)
     }
 
-    /// Read the tree config from a specific commit
-    /// This gets the prolly_config_tree_config file from the commit to extract root hash
+    /// Read the tree config from a specific commit. Uses
+    /// ``self.config_filename`` so namespaced stores read their own
+    /// serialized ``TreeConfig`` rather than the default sibling.
     pub(super) fn read_tree_config_from_commit(
         &self,
         commit_id: &gix::ObjectId,
@@ -86,7 +89,10 @@ where
                 Ok(tree_config)
             }
             Err(_) => {
-                eprintln!("Warning: prolly_config_tree_config not found in commit {commit_id}, using default config");
+                eprintln!(
+                    "Warning: {} not found in commit {commit_id}, using default config",
+                    self.config_filename
+                );
                 Ok(TreeConfig::default())
             }
         }

@@ -12,7 +12,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use super::{HistoricalAccess, HistoricalCommitAccess, TreeConfigSaver, VersionedKvStore};
+use super::{
+    HistoricalAccess, HistoricalCommitAccess, TreeConfigSaver, VersionedKvStore,
+    DEFAULT_TREE_CONFIG_FILENAME,
+};
 use crate::config::TreeConfig;
 use crate::diff::{ConflictResolver, IgnoreConflictsResolver};
 use crate::digest::ValueDigest;
@@ -55,12 +58,11 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to serialize config: {e}")))?;
 
-        // Write config to the dataset directory
-        let config_path = self
-            .tree
-            .storage
-            .dataset_dir()
-            .join("prolly_config_tree_config");
+        // Write config to the dataset directory under ``self.config_filename``
+        // (default: ``prolly_config_tree_config``; ``NamespacedKvStore`` sets
+        // its inner to ``prolly_config_namespaced_root`` so the two layouts
+        // can share a dataset_dir without clobbering each other's root hash).
+        let config_path = self.tree.storage.dataset_dir().join(&self.config_filename);
         std::fs::write(&config_path, config_json)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to write config file: {e}")))?;
 
@@ -533,8 +535,20 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         Ok(())
     }
 
-    /// Initialize a new versioned KV store with Git storage (default)
+    /// Initialize a new versioned KV store with Git storage (default).
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        Self::init_with_config_filename(path, DEFAULT_TREE_CONFIG_FILENAME)
+    }
+
+    /// Like :py:meth:`init`, but persists the serialized tree config to
+    /// ``config_filename`` (under the dataset directory) instead of the
+    /// default. Used by :class:`NamespacedKvStore` so its inner store
+    /// doesn't clobber a sibling ``VersionedKvStore``'s root-hash file
+    /// when both share a dataset directory.
+    pub fn init_with_config_filename<P: AsRef<Path>>(
+        path: P,
+        config_filename: &str,
+    ) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
         // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
@@ -561,13 +575,17 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
             GitKvError::GitObjectError(format!("Failed to create dataset directory: {e}"))
         })?;
 
-        // Check if the store is already initialized by looking for config files
-        let config_path = dataset_dir.join("prolly_config_tree_config");
+        // Check if the store is already initialized by looking for config files.
+        // Detect both the caller's requested filename AND the default — a
+        // namespaced reopen of a default-init store should still route to
+        // ``open`` rather than spuriously re-initializing.
+        let config_path = dataset_dir.join(config_filename);
+        let default_config_path = dataset_dir.join(DEFAULT_TREE_CONFIG_FILENAME);
         let mappings_path = dataset_dir.join("prolly_hash_mappings");
 
-        if config_path.exists() || mappings_path.exists() {
-            // Store already exists, use open instead to load existing configuration
-            return Self::open(path);
+        if config_path.exists() || default_config_path.exists() || mappings_path.exists() {
+            // Store already exists, use open instead to load existing configuration.
+            return Self::open_with_config_filename(path, config_filename);
         }
 
         // Open the existing git repository
@@ -587,6 +605,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::Git,
             dataset_dir: Some(dataset_dir),
+            config_filename: config_filename.to_string(),
         };
 
         // Save initial configuration
@@ -598,8 +617,20 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         Ok(store)
     }
 
-    /// Open an existing versioned KV store with Git storage (default)
+    /// Open an existing versioned KV store with Git storage (default).
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
+        Self::open_with_config_filename(path, DEFAULT_TREE_CONFIG_FILENAME)
+    }
+
+    /// Like :py:meth:`open`, but reads the serialized tree config from
+    /// ``config_filename`` (under the dataset directory) instead of the
+    /// default. Used by :class:`NamespacedKvStore` to open its inner
+    /// store without picking up a sibling ``VersionedKvStore``'s root
+    /// hash from the default file.
+    pub fn open_with_config_filename<P: AsRef<Path>>(
+        path: P,
+        config_filename: &str,
+    ) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
         // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
@@ -629,16 +660,29 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         // Create GitNodeStorage with user-provided path for versioned files
         let storage = GitNodeStorage::new(git_repo.clone(), dataset_dir.clone())?;
 
-        // Load tree configuration from dataset directory
-        let config_path = dataset_dir.join("prolly_config_tree_config");
-        if !config_path.exists() {
-            return Err(GitKvError::GitObjectError(
-                "Config file not found. The store may not be initialized. \
-                Call init() to create a new store."
-                    .to_string(),
-            ));
-        }
-        let config_data = std::fs::read_to_string(&config_path)
+        // Load tree configuration from dataset directory under the
+        // requested filename, with a backward-compatibility fallback to
+        // the default filename. This lets an existing store created
+        // before the namespaced-config split (where everything was
+        // under ``prolly_config_tree_config``) be re-opened as a
+        // ``NamespacedKvStore`` without manual migration.
+        let config_path = dataset_dir.join(config_filename);
+        let fallback_path = dataset_dir.join(DEFAULT_TREE_CONFIG_FILENAME);
+        let resolved_path = if config_path.exists() {
+            config_path
+        } else if fallback_path.exists() && config_filename != DEFAULT_TREE_CONFIG_FILENAME {
+            // Pre-split layout — read the legacy filename. The next commit
+            // will write the requested filename, completing the migration.
+            fallback_path
+        } else {
+            return Err(GitKvError::GitObjectError(format!(
+                "Config file not found ({} or {}). The store may not be \
+                initialized. Call init() to create a new store.",
+                config_filename, DEFAULT_TREE_CONFIG_FILENAME,
+            )));
+        };
+
+        let config_data = std::fs::read_to_string(&resolved_path)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to read config file: {e}")))?;
         let config: TreeConfig<N> = serde_json::from_str(&config_data)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
@@ -675,6 +719,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
             current_branch,
             storage_backend: StorageBackend::Git,
             dataset_dir: Some(dataset_dir),
+            config_filename: config_filename.to_string(),
         };
 
         // Load staging area from file if it exists
@@ -682,7 +727,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
 
         // Note: We intentionally do NOT call reload_tree_from_head() here
         // because git-prolly commands should read from the current directory's
-        // prolly_config_tree_config and mapping files, not from git HEAD.
+        // tree-config and mapping files, not from git HEAD.
         // The tree was already loaded from local storage by load_from_storage() above.
 
         Ok(store)
@@ -721,7 +766,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
             .collect::<Vec<_>>()
             .join("/");
 
-        let config_path = format!("{}/prolly_config_tree_config", relative_path_str);
+        let config_path = format!("{}/{}", relative_path_str, self.config_filename);
         let mapping_path = format!("{}/prolly_hash_mappings", relative_path_str);
 
         let config_result = self.metadata.read_file_at_commit(commit_id, &config_path);
@@ -916,6 +961,7 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBack
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::InMemory,
             dataset_dir: Some(dataset_dir),
+            config_filename: DEFAULT_TREE_CONFIG_FILENAME.to_string(),
         };
 
         // Create initial commit
@@ -1019,6 +1065,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::File,
             dataset_dir: Some(dataset_dir),
+            config_filename: DEFAULT_TREE_CONFIG_FILENAME.to_string(),
         };
 
         // Create initial commit (which will save config to dataset_dir)
@@ -1120,6 +1167,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
             current_branch,
             storage_backend: StorageBackend::File,
             dataset_dir: Some(dataset_dir),
+            config_filename: DEFAULT_TREE_CONFIG_FILENAME.to_string(),
         };
 
         // Load staging area from file if it exists
@@ -1215,6 +1263,7 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBacke
             current_branch: "main".to_string(),
             storage_backend: StorageBackend::RocksDB,
             dataset_dir: Some(dataset_dir),
+            config_filename: DEFAULT_TREE_CONFIG_FILENAME.to_string(),
         };
 
         // Create initial commit (which will save config to dataset_dir)
@@ -1306,6 +1355,7 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBacke
             current_branch,
             storage_backend: StorageBackend::RocksDB,
             dataset_dir: Some(dataset_dir),
+            config_filename: DEFAULT_TREE_CONFIG_FILENAME.to_string(),
         };
 
         // Load staging area from file if it exists

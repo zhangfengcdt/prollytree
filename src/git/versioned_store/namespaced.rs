@@ -33,7 +33,7 @@ limitations under the License.
 //! All namespace trees share the same [`NodeStorage`] backend (content-addressed,
 //! so there is no collision risk).
 
-use super::{TreeConfigSaver, VersionedKvStore};
+use super::{TreeConfigSaver, VersionedKvStore, NAMESPACED_TREE_CONFIG_FILENAME};
 use crate::config::TreeConfig;
 use crate::diff::{ConflictResolver, IgnoreConflictsResolver, MergeConflict};
 use crate::digest::ValueDigest;
@@ -999,9 +999,33 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
     }
 
     /// Initialize a new namespaced store with Git storage.
+    ///
+    /// Idempotent: if the dataset directory already contains a
+    /// namespaced config file (``prolly_config_namespaced_root``) or
+    /// a namespace registry, dispatches to :py:meth:`open` instead of
+    /// re-initializing. This prevents the historical bug where every
+    /// caller of ``NamespacedKvStore::init`` added an
+    /// ``"Initial namespaced store"`` commit to git history, even on
+    /// already-initialized stores.
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
-        // Delegate to VersionedKvStore for git setup
-        let inner = VersionedKvStore::<N, GitNodeStorage<N>>::init(&path)?;
+        let path_ref = path.as_ref();
+        // Fast existence check — only the namespace-specific markers,
+        // since a sibling ``VersionedKvStore`` may legitimately own the
+        // default-filename config in the same dataset_dir.
+        if path_ref.join(NAMESPACED_TREE_CONFIG_FILENAME).exists()
+            || path_ref.join("prolly_namespace_registry").exists()
+        {
+            return Self::open(path);
+        }
+
+        // Inner store writes its ``TreeConfig`` to
+        // ``prolly_config_namespaced_root`` instead of the default file
+        // so a sibling ``VersionedKvStore`` on the same dataset_dir
+        // doesn't have its root hash clobbered (and vice versa).
+        let inner = VersionedKvStore::<N, GitNodeStorage<N>>::init_with_config_filename(
+            &path,
+            NAMESPACED_TREE_CONFIG_FILENAME,
+        )?;
 
         let mut store = NamespacedKvStore {
             inner,
@@ -1040,7 +1064,15 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
 
     /// Open an existing store. Automatically detects V1/V2 format.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
-        let inner = VersionedKvStore::<N, GitNodeStorage<N>>::open(&path)?;
+        // Open the inner store from the namespaced config filename. The
+        // ``VersionedKvStore::open_with_config_filename`` impl falls
+        // back to the default filename when the namespaced one is
+        // absent, so a pre-existing default-layout store is still
+        // openable as namespaced (one-time migration on next commit).
+        let inner = VersionedKvStore::<N, GitNodeStorage<N>>::open_with_config_filename(
+            &path,
+            NAMESPACED_TREE_CONFIG_FILENAME,
+        )?;
 
         let dataset_dir = inner
             .dataset_dir
