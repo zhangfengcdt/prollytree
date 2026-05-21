@@ -58,10 +58,7 @@ where
             GitKvError::GitObjectError("Dataset directory is not inside git repository".to_string())
         })?;
 
-        // Construct the file path and use '/' separators for git tree paths
-        // (git uses forward slashes regardless of platform). Uses
-        // ``self.config_filename`` so namespaced stores read their own
-        // config file rather than the default-filename sibling.
+        // git tree paths always use forward slashes.
         let config_path = relative_path.join(&self.config_filename);
         let path_str = config_path
             .components()
@@ -71,9 +68,7 @@ where
         Ok(path_str)
     }
 
-    /// Read the tree config from a specific commit. Uses
-    /// ``self.config_filename`` so namespaced stores read their own
-    /// serialized ``TreeConfig`` rather than the default sibling.
+    /// Read the tree config from a specific commit.
     pub(super) fn read_tree_config_from_commit(
         &self,
         commit_id: &gix::ObjectId,
