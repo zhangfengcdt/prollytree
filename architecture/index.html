@@ -621,6 +621,8 @@
       
         
       
+        
+      
     
     
     
@@ -824,6 +826,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#7-proximity-text-search-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Proximity / text-search layer
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -953,6 +966,34 @@
     
   
     SQL Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../text_search/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Text Search
   
 
     
@@ -1428,6 +1469,8 @@
       
         
       
+        
+      
     
     
     
@@ -1553,6 +1596,34 @@
     
   
     SQL Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/text_search/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Text Search
   
 
     
@@ -1710,6 +1781,17 @@
     <span class="md-ellipsis">
       
         6. Language bindings — PyO3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-proximity-text-search-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Proximity / text-search layer
       
     </span>
   </a>
@@ -1903,9 +1985,28 @@
 <ul>
 <li><code>ProllyTree</code>, <code>TreeConfig</code></li>
 <li><code>VersionedKvStore</code>, <code>ConflictResolution</code>, <code>MergeConflict</code></li>
+<li><code>NamespacedKvStore</code>, <code>HashEmbedder</code>, <code>CallableEmbedder</code>, <code>MiniLmEmbedder</code></li>
 <li><code>ProllySQLStore</code></li>
 </ul>
 <p>The binding is a thin wrapper — Rust objects are held behind <code>Arc&lt;Mutex&lt;…&gt;&gt;</code> and Python types are PyO3 newtypes over them. See the <a href="../api/python/">Python API reference</a>.</p>
+<h3 id="7-proximity-text-search-layer">7. Proximity / text-search layer<a class="headerlink" href="#7-proximity-text-search-layer" title="Permanent link">&para;</a></h3>
+<p>Each namespace of a <code>NamespacedKvStore</code> can own zero or more <strong>text sub-indexes</strong> that ride on top of the same <code>NodeStorage&lt;N&gt;</code> the primary tree uses. Documents go through a pluggable <code>Embedder</code> (and optional <code>Chunker</code>) to produce vectors, which are stored in a content-addressed <strong>proximity tree</strong> — a Dolt-style Merkle ANN structure (<a href="https://www.dolthub.com/blog/2025-06-23-vector-index-deep-dive/">design discussion</a>) whose shape is a pure function of the current <code>(id, vector)</code> set.</p>
+<pre class="mermaid"><code>flowchart LR
+    P[ns_insert primary] --&gt;|cascade| C{cascade configured?}
+    C -- yes --&gt; E[Embedder] --&gt; V[(vector)]
+    C -- no  --&gt; NIL[(no-op for index)]
+    V --&gt; PROX[ProximityIndex&lt;br/&gt;BTreeMap + lazy rebuild]
+    PROX --&gt; NS[NodeStorage]</code></pre>
+<p>Key properties:</p>
+<ul>
+<li><strong>One git commit, all layers.</strong> Every dirty namespace (primary tree + every dirty sub-index) drains into a single Git commit. There is no on-disk state where the primary tree updated but the index didn't.</li>
+<li><strong>History-independent shape.</strong> A vector's max level is derived from a hash of <code>(id, vector)</code> — index shape, and therefore root hash, depend only on the current data, not insertion order. Two replicas converge to the same root.</li>
+<li><strong>Primary is the source of truth.</strong> The index stores <code>(id, vector)</code> only — never the source text. Reads are two steps: ANN search, then primary KV lookup by id. Re-embedding after a model swap is therefore possible.</li>
+<li><strong>Three-way merge.</strong> Per-index merge runs the same nine-case logic as the byte-key primary tree, routed through a <code>ProximityConflictResolver</code>. Built-in resolvers: take-source, take-destination, latest-vector (by timestamp), mean-vector.</li>
+<li><strong>Externalised values.</strong> Large primary values can be offloaded to content-addressed blobs (44-byte envelope inline). <code>gc_blobs()</code> reclaims unreferenced blobs.</li>
+</ul>
+<p>Backends in v1: <strong>File</strong> and <strong>RocksDB</strong>. <code>InMemory</code> works for tests. <code>Git</code> proximity persistence relies on the namespaced commit machinery and is exercised through <code>NamespacedKvStore</code> rather than constructing <code>ProximityIndex&lt;_, GitNodeStorage&lt;_&gt;&gt;</code> directly.</p>
+<p>Full reference: <a href="../text_search/">Text Search</a>.</p>
 <h2 id="data-flow">Data flow<a class="headerlink" href="#data-flow" title="Permanent link">&para;</a></h2>
 <h3 id="write-path-versioned-store">Write path (versioned store)<a class="headerlink" href="#write-path-versioned-store" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>client.insert(key, value)

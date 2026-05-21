@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://zhangfengcdt.github.io/prollytree/faq/">
+        <link rel="canonical" href="https://zhangfengcdt.github.io/prollytree/text_search/">
       
       
-        <link rel="prev" href="../text_search/">
+        <link rel="prev" href="../sql/">
       
       
-        <link rel="next" href="../theory/">
+        <link rel="next" href="../faq/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>FAQ - ProllyTree</title>
+        <title>Text Search - ProllyTree</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#faq" class="md-skip">
+        <a href="#text-indexing-vector-search" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              FAQ
+              Text Search
             
           </span>
         </div>
@@ -759,34 +759,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../text_search/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Text Search
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -806,7 +778,7 @@
   <span class="md-ellipsis">
     
   
-    FAQ
+    Text Search
   
 
     
@@ -824,7 +796,7 @@
   <span class="md-ellipsis">
     
   
-    FAQ
+    Text Search
   
 
     
@@ -850,22 +822,66 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#general" class="md-nav__link">
+  <a href="#when-to-use-it" class="md-nav__link">
     <span class="md-ellipsis">
       
-        General
+        When to use it
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="General">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works-in-60-seconds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works in 60 seconds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feature-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature flags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-tour-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API tour (Python)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API tour (Python)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#what-is-a-prolly-tree-in-one-sentence" class="md-nav__link">
+  <a href="#open-or-re-open-an-index" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What is a prolly tree, in one sentence?
+        Open or re-open an index
       
     </span>
   </a>
@@ -873,10 +889,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-is-this-different-from-a-merkle-tree" class="md-nav__link">
+  <a href="#dual-write-the-canonical-pattern" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How is this different from a Merkle tree?
+        Dual-write (the canonical pattern)
       
     </span>
   </a>
@@ -884,10 +900,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-is-this-different-from-a-b-tree" class="md-nav__link">
+  <a href="#cascade-replace-the-dual-write-with-one-call" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How is this different from a B-tree?
+        Cascade — replace the dual write with one call
       
     </span>
   </a>
@@ -895,10 +911,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-is-this-different-from-git" class="md-nav__link">
+  <a href="#search-and-resolve-back-to-text" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How is this different from Git?
+        Search and resolve back to text
       
     </span>
   </a>
@@ -906,10 +922,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#when-should-i-not-use-prollytree" class="md-nav__link">
+  <a href="#multi-chunk-indexing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When should I not use ProllyTree?
+        Multi-chunk indexing
       
     </span>
   </a>
@@ -922,22 +938,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
+  <a href="#embedders" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Usage
+        Embedders
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Usage">
+    <nav class="md-nav" aria-label="Embedders">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#how-big-can-a-store-get-before-performance-degrades" class="md-nav__link">
+  <a href="#hashembedder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How big can a store get before performance degrades?
+        HashEmbedder
       
     </span>
   </a>
@@ -945,10 +961,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#are-commits-cheap" class="md-nav__link">
+  <a href="#minilmembedder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Are commits cheap?
+        MiniLmEmbedder
       
     </span>
   </a>
@@ -956,32 +972,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#do-i-need-to-use-git" class="md-nav__link">
+  <a href="#callableembedder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Do I need to use Git?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-use-a-custom-hash-function" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I use a custom hash function?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-two-processes-write-to-the-same-git-backed-store" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can two processes write to the same Git-backed store?
+        CallableEmbedder
       
     </span>
   </a>
@@ -994,230 +988,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#merging" class="md-nav__link">
+  <a href="#drift-management" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Merging
+        Drift management
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Merging">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#what-happens-when-two-branches-change-the-same-key" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What happens when two branches change the same key?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-probe-for-conflicts-without-merging" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I probe for conflicts without merging?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-did-my-merge-succeed-silently-when-i-expected-a-conflict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why did my merge succeed silently when I expected a conflict?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#python-bindings" class="md-nav__link">
+  <a href="#branching-and-merging" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Python bindings
+        Branching and merging
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Python bindings">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#does-pip-install-prollytree-include-sql-and-git-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Does pip install prollytree include SQL and Git support?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#where-are-the-python-docs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where are the Python docs?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-use-prollytree-as-an-ai-agent-memory-backend" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I use ProllyTree as an AI agent memory backend?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#sql" class="md-nav__link">
+  <a href="#externalisation-blob-gc" class="md-nav__link">
     <span class="md-ellipsis">
       
-        SQL
+        Externalisation + blob GC
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="SQL">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#which-sql-engine-does-prollytree-use" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Which SQL engine does ProllyTree use?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-run-sql-on-a-historical-commit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I run SQL on a historical commit?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-select-from-users-returns-i641-instead-of-1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why SELECT * FROM users returns I64(1) instead of 1?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#storage-backends" class="md-nav__link">
+  <a href="#where-to-go-next" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Storage backends
+        Where to go next
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Storage backends">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#which-backend-should-i-use-in-production" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Which backend should I use in production?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#contributing-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Contributing / support
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Contributing / support">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#where-do-i-report-bugs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where do I report bugs?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#where-do-i-see-the-rust-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where do I see the Rust API?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#is-there-a-discord-slack" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Is there a Discord / Slack?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1225,6 +1035,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1894,22 +1732,66 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#general" class="md-nav__link">
+  <a href="#when-to-use-it" class="md-nav__link">
     <span class="md-ellipsis">
       
-        General
+        When to use it
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="General">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works-in-60-seconds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works in 60 seconds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feature-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Feature flags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-tour-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API tour (Python)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API tour (Python)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#what-is-a-prolly-tree-in-one-sentence" class="md-nav__link">
+  <a href="#open-or-re-open-an-index" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What is a prolly tree, in one sentence?
+        Open or re-open an index
       
     </span>
   </a>
@@ -1917,10 +1799,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-is-this-different-from-a-merkle-tree" class="md-nav__link">
+  <a href="#dual-write-the-canonical-pattern" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How is this different from a Merkle tree?
+        Dual-write (the canonical pattern)
       
     </span>
   </a>
@@ -1928,10 +1810,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-is-this-different-from-a-b-tree" class="md-nav__link">
+  <a href="#cascade-replace-the-dual-write-with-one-call" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How is this different from a B-tree?
+        Cascade — replace the dual write with one call
       
     </span>
   </a>
@@ -1939,10 +1821,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#how-is-this-different-from-git" class="md-nav__link">
+  <a href="#search-and-resolve-back-to-text" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How is this different from Git?
+        Search and resolve back to text
       
     </span>
   </a>
@@ -1950,10 +1832,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#when-should-i-not-use-prollytree" class="md-nav__link">
+  <a href="#multi-chunk-indexing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When should I not use ProllyTree?
+        Multi-chunk indexing
       
     </span>
   </a>
@@ -1966,22 +1848,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
+  <a href="#embedders" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Usage
+        Embedders
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Usage">
+    <nav class="md-nav" aria-label="Embedders">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#how-big-can-a-store-get-before-performance-degrades" class="md-nav__link">
+  <a href="#hashembedder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How big can a store get before performance degrades?
+        HashEmbedder
       
     </span>
   </a>
@@ -1989,10 +1871,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#are-commits-cheap" class="md-nav__link">
+  <a href="#minilmembedder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Are commits cheap?
+        MiniLmEmbedder
       
     </span>
   </a>
@@ -2000,32 +1882,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#do-i-need-to-use-git" class="md-nav__link">
+  <a href="#callableembedder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Do I need to use Git?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-use-a-custom-hash-function" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I use a custom hash function?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-two-processes-write-to-the-same-git-backed-store" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can two processes write to the same Git-backed store?
+        CallableEmbedder
       
     </span>
   </a>
@@ -2038,230 +1898,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#merging" class="md-nav__link">
+  <a href="#drift-management" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Merging
+        Drift management
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Merging">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#what-happens-when-two-branches-change-the-same-key" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What happens when two branches change the same key?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-probe-for-conflicts-without-merging" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I probe for conflicts without merging?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-did-my-merge-succeed-silently-when-i-expected-a-conflict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why did my merge succeed silently when I expected a conflict?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#python-bindings" class="md-nav__link">
+  <a href="#branching-and-merging" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Python bindings
+        Branching and merging
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Python bindings">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#does-pip-install-prollytree-include-sql-and-git-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Does pip install prollytree include SQL and Git support?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#where-are-the-python-docs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where are the Python docs?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-use-prollytree-as-an-ai-agent-memory-backend" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I use ProllyTree as an AI agent memory backend?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#sql" class="md-nav__link">
+  <a href="#externalisation-blob-gc" class="md-nav__link">
     <span class="md-ellipsis">
       
-        SQL
+        Externalisation + blob GC
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="SQL">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#which-sql-engine-does-prollytree-use" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Which SQL engine does ProllyTree use?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#can-i-run-sql-on-a-historical-commit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Can I run SQL on a historical commit?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-select-from-users-returns-i641-instead-of-1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Why SELECT * FROM users returns I64(1) instead of 1?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#storage-backends" class="md-nav__link">
+  <a href="#where-to-go-next" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Storage backends
+        Where to go next
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Storage backends">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#which-backend-should-i-use-in-production" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Which backend should I use in production?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#contributing-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Contributing / support
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Contributing / support">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#where-do-i-report-bugs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where do I report bugs?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#where-do-i-see-the-rust-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where do I see the Rust API?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#is-there-a-discord-slack" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Is there a Discord / Slack?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -2282,7 +1958,7 @@
 
 
   
-    <a href="https://github.com/zhangfengcdt/prollytree/edit/main/docs/faq.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/zhangfengcdt/prollytree/edit/main/docs/text_search.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -2290,70 +1966,165 @@
   
 
 
-<h1 id="faq">FAQ<a class="headerlink" href="#faq" title="Permanent link">&para;</a></h1>
-<h2 id="general">General<a class="headerlink" href="#general" title="Permanent link">&para;</a></h2>
-<h3 id="what-is-a-prolly-tree-in-one-sentence">What is a prolly tree, in one sentence?<a class="headerlink" href="#what-is-a-prolly-tree-in-one-sentence" title="Permanent link">&para;</a></h3>
-<p>A B-tree whose node boundaries are chosen by a content-defined hash predicate, which makes the tree shape a function of the key set alone — so the root hash becomes a stable fingerprint. See <a href="../theory/prolly_tree/">Prolly Trees</a> for the full story.</p>
-<h3 id="how-is-this-different-from-a-merkle-tree">How is this different from a Merkle tree?<a class="headerlink" href="#how-is-this-different-from-a-merkle-tree" title="Permanent link">&para;</a></h3>
-<p>A plain Merkle tree is content-addressed, but two Merkle trees with the same data can have different shapes (and root hashes). A prolly tree is <strong>history-independent</strong>: identical KV sets yield identical trees, byte for byte.</p>
-<h3 id="how-is-this-different-from-a-b-tree">How is this different from a B-tree?<a class="headerlink" href="#how-is-this-different-from-a-b-tree" title="Permanent link">&para;</a></h3>
-<p>A classical B-tree rebalances on <em>count</em>, so shape depends on insertion order. A prolly tree rebalances on a content-defined predicate — same content means same shape regardless of order. See <a href="../theory/rolling_hash/">Probabilistic Balancing</a>.</p>
-<h3 id="how-is-this-different-from-git">How is this different from Git?<a class="headerlink" href="#how-is-this-different-from-git" title="Permanent link">&para;</a></h3>
-<p>Git versions files; it merges with text-level diffs. <code>git-prolly</code> versions structured key-value data and merges at the KV level using a three-way algorithm over Merkle subtrees. You can use Git on top of ProllyTree (the default <code>git</code> backend is a real Git repo) for remotes, tags, etc.</p>
-<h3 id="when-should-i-not-use-prollytree">When should I <em>not</em> use ProllyTree?<a class="headerlink" href="#when-should-i-not-use-prollytree" title="Permanent link">&para;</a></h3>
+<h1 id="text-indexing-vector-search">Text Indexing &amp; Vector Search<a class="headerlink" href="#text-indexing-vector-search" title="Permanent link">&para;</a></h1>
+<p>ProllyTree includes a <strong>version-controlled approximate-nearest-neighbour (ANN) index</strong> that sits inside any namespace of a <code>NamespacedKvStore</code>. You can do semantic similarity search on the same data that the rest of the store versions, branches, and merges — without standing up a separate vector database.</p>
+<div class="admonition tip">
+<p class="admonition-title">Try it in your browser</p>
+<p>Open the <a href="../text_search_demo.html">interactive demo</a> for a self-contained walkthrough — namespaced store + text indexes + cascade + live search, no install required.</p>
+</div>
+<p>For the conceptual model see <a href="../architecture/#7-proximity-text-search-layer">Architecture → Proximity / text-search layer</a>. For runnable code see <a href="../examples/text_search/">Examples → Text Search</a>.</p>
+<h2 id="when-to-use-it">When to use it<a class="headerlink" href="#when-to-use-it" title="Permanent link">&para;</a></h2>
 <ul>
-<li>When a single SQLite file would do.</li>
-<li>When you need a full relational database (joins across millions of rows, transactions spanning many tables with isolation guarantees). GlueSQL is embedded but not a replacement for Postgres.</li>
-<li>When you need strong multi-writer concurrency on a single branch. ProllyTree concurrency is per-branch; concurrent writers to the <em>same</em> branch should serialise.</li>
+<li>You're already using ProllyTree (or want to) for versioned storage.</li>
+<li>You need top-k nearest-neighbour over short-ish text (notes, docs, logs, chunks).</li>
+<li>You want index + primary data to commit, branch, and merge <strong>atomically</strong> — no separate sync job between a vector DB and your source of truth.</li>
 </ul>
-<h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<h3 id="how-big-can-a-store-get-before-performance-degrades">How big can a store get before performance degrades?<a class="headerlink" href="#how-big-can-a-store-get-before-performance-degrades" title="Permanent link">&para;</a></h3>
-<p>RocksDB-backed stores have been tested to the low millions of keys without tuning. File-backed stores should be kept to tens of thousands of keys — one file per node doesn't scale. See <a href="../storage/">Storage Backends</a> for guidance.</p>
-<h3 id="are-commits-cheap">Are commits cheap?<a class="headerlink" href="#are-commits-cheap" title="Permanent link">&para;</a></h3>
-<p>Yes. A commit records the current root hash plus the usual Git commit metadata. Tree nodes that didn't change aren't re-serialised — the new root hash just references the same child hashes as the previous commit.</p>
-<h3 id="do-i-need-to-use-git">Do I need to use Git?<a class="headerlink" href="#do-i-need-to-use-git" title="Permanent link">&para;</a></h3>
-<p>Not necessarily. The tree works on top of <code>InMemoryNodeStorage</code>, <code>FileNodeStorage</code>, or <code>RocksDBNodeStorage</code> without Git. But if you want commits, branches, and merges, the <code>VersionedKvStore</code> needs the <code>git</code> feature.</p>
-<h3 id="can-i-use-a-custom-hash-function">Can I use a custom hash function?<a class="headerlink" href="#can-i-use-a-custom-hash-function" title="Permanent link">&para;</a></h3>
-<p>The tree is parameterised by digest length (commonly <code>32</code> for SHA-256) but the hash function itself is currently fixed. If you have a specific need, open an issue.</p>
-<h3 id="can-two-processes-write-to-the-same-git-backed-store">Can two processes write to the same Git-backed store?<a class="headerlink" href="#can-two-processes-write-to-the-same-git-backed-store" title="Permanent link">&para;</a></h3>
-<p>Use <code>StoreFactory::git_threadsafe</code> (or the worktree manager) for multi-threaded access. For multi-<em>process</em> writers on the same branch, serialise via an external lock — Git's own locking is per-repository and not sufficient for arbitrary concurrent writers.</p>
-<h2 id="merging">Merging<a class="headerlink" href="#merging" title="Permanent link">&para;</a></h2>
-<h3 id="what-happens-when-two-branches-change-the-same-key">What happens when two branches change the same key?<a class="headerlink" href="#what-happens-when-two-branches-change-the-same-key" title="Permanent link">&para;</a></h3>
-<p>The merge engine detects the conflict and delegates to a <strong>conflict resolver</strong>. Built-in options: <code>IgnoreAll</code> (keep destination), <code>TakeSource</code>, <code>TakeDestination</code>. You can also plug in a custom resolver. See <a href="../theory/versioning/">Theory → Versioning &amp; Merge</a>.</p>
-<h3 id="can-i-probe-for-conflicts-without-merging">Can I probe for conflicts without merging?<a class="headerlink" href="#can-i-probe-for-conflicts-without-merging" title="Permanent link">&para;</a></h3>
-<p>Yes:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">ok</span><span class="p">,</span> <span class="n">conflicts</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">try_merge</span><span class="p">(</span><span class="s2">&quot;feature&quot;</span><span class="p">)</span>
+<p>It is not a replacement for a high-end ANN library on billion-scale corpora. The current implementation targets per-namespace corpora in the thousands-to-millions range with deterministic, history-independent index shape.</p>
+<h2 id="how-it-works-in-60-seconds">How it works in 60 seconds<a class="headerlink" href="#how-it-works-in-60-seconds" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>NamespacedKvStore (one git repo)
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── namespace &quot;docs&quot;
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   ├── primary tree           ← source of truth: doc_id → body bytes
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   ├── text sub-index &quot;by_body&quot;      ← (id, vector) pairs, ANN-searchable
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│   └── text sub-index &quot;by_summary&quot;   ← multiple indexes per namespace
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>└── ...
 </span></code></pre></div>
-<p><code>try_merge</code> walks the diff and reports conflicts without mutating state.</p>
-<h3 id="why-did-my-merge-succeed-silently-when-i-expected-a-conflict">Why did my merge succeed silently when I expected a conflict?<a class="headerlink" href="#why-did-my-merge-succeed-silently-when-i-expected-a-conflict" title="Permanent link">&para;</a></h3>
-<p>You're almost certainly using <code>ConflictResolution.IgnoreAll</code> (the default in some flows). That's not technically a silent merge — it's the documented "keep destination" behaviour — but it can be surprising. Use <code>try_merge</code> first if you want to know before committing.</p>
-<h2 id="python-bindings">Python bindings<a class="headerlink" href="#python-bindings" title="Permanent link">&para;</a></h2>
-<h3 id="does-pip-install-prollytree-include-sql-and-git-support">Does <code>pip install prollytree</code> include SQL and Git support?<a class="headerlink" href="#does-pip-install-prollytree-include-sql-and-git-support" title="Permanent link">&para;</a></h3>
-<p>Yes. The published wheel is built with the <code>python</code> + <code>sql</code> features and the <code>git</code> feature is on by default.</p>
-<h3 id="where-are-the-python-docs">Where are the Python docs?<a class="headerlink" href="#where-are-the-python-docs" title="Permanent link">&para;</a></h3>
-<p>Here, in the <a href="../api/python/">Python API</a> section, and with examples in <a href="../examples/python/">Examples → Python bindings</a>. The old Sphinx-based docs on Read the Docs may still be reachable but are being replaced by this site.</p>
-<h3 id="can-i-use-prollytree-as-an-ai-agent-memory-backend">Can I use ProllyTree as an AI agent memory backend?<a class="headerlink" href="#can-i-use-prollytree-as-an-ai-agent-memory-backend" title="Permanent link">&para;</a></h3>
-<p>Yes — ProllyTree is designed with AI agent memory in mind. The <code>NamespacedKvStore</code> plus text-indexing surface (see <a href="../examples/python/">Examples → Python bindings</a>) gives you versioned, branchable storage with optional semantic search; the <a href="https://github.com/zhangfengcdt/memoir">Memoir project</a> builds a full semantic memory system on top of it.</p>
-<h2 id="sql">SQL<a class="headerlink" href="#sql" title="Permanent link">&para;</a></h2>
-<h3 id="which-sql-engine-does-prollytree-use">Which SQL engine does ProllyTree use?<a class="headerlink" href="#which-sql-engine-does-prollytree-use" title="Permanent link">&para;</a></h3>
-<p><a href="https://github.com/gluesql/gluesql">GlueSQL</a>. It's embedded (no external process) and speaks a useful subset of SQL. See <a href="../sql/">SQL Interface</a> for the supported features and known limitations.</p>
-<h3 id="can-i-run-sql-on-a-historical-commit">Can I run SQL on a historical commit?<a class="headerlink" href="#can-i-run-sql-on-a-historical-commit" title="Permanent link">&para;</a></h3>
-<p>Yes, read-only:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>git-prolly<span class="w"> </span>sql<span class="w"> </span>-b<span class="w"> </span>v1.0<span class="w"> </span><span class="s2">&quot;SELECT COUNT(*) FROM users&quot;</span>
+<p>A text index turns each document into one or more vectors via a configurable <strong>embedder</strong> and stores them inside a Dolt-style proximity tree (Merkle ANN structure — see <a href="https://www.dolthub.com/blog/2025-06-23-vector-index-deep-dive/">the design discussion</a>). The proximity tree's <em>shape</em> is a pure function of the current <code>(id, vector)</code> set, so two replicas with the same data converge to the same root hash regardless of insertion order — the same content-defined-shape property the prolly tree itself has.</p>
+<p>The proximity index stores only <code>(id, vector)</code> pairs — never the source text. <strong>The primary KV tree is the source of truth.</strong> Search results give you ids; you resolve back to the original text via the primary tree.</p>
+<h2 id="feature-flags">Feature flags<a class="headerlink" href="#feature-flags" title="Permanent link">&para;</a></h2>
+<p>ProllyTree's text-search surface is gated behind two Cargo features:</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Pulls in</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>proximity</code></td>
+<td>nothing extra</td>
+<td>Raw vector index + text-index infrastructure. ML-free; ships <a href="#hashembedder"><code>HashEmbedder</code></a> for tests and the <a href="#callableembedder"><code>CallableEmbedder</code></a> shim for "bring your own embedder".</td>
+</tr>
+<tr>
+<td><code>proximity_text</code></td>
+<td>Candle (pure-Rust ML), tokenizers, ureq</td>
+<td>Adds the bundled <a href="#minilmembedder"><code>MiniLmEmbedder</code></a>. First call downloads ~90 MB of weights into <code>$PROLLYTREE_EMBEDDER_CACHE</code> (default <code>~/.cache/prollytree/embedders</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>PyPI wheels and <code>cargo install</code>'d builds ship both features by default.</p>
+<h2 id="supported-backends">Supported backends<a class="headerlink" href="#supported-backends" title="Permanent link">&para;</a></h2>
+<p>v1 of the proximity index is fully supported on the <strong>File</strong> and <strong>RocksDB</strong> storage backends. <code>InMemoryNodeStorage</code> works for testing. <code>GitNodeStorage</code> is mechanically functional but its hash-mapping is only flushed by the higher-level commit path, so production use of git-backed proximity is exercised through <code>NamespacedKvStore</code> rather than direct <code>ProximityIndex&lt;_, GitNodeStorage&lt;_&gt;&gt;</code> constructions.</p>
+<h2 id="api-tour-python">API tour (Python)<a class="headerlink" href="#api-tour-python" title="Permanent link">&para;</a></h2>
+<p>A complete runnable walkthrough lives in <a href="../examples/text_search/">Examples → Text Search</a>. The minimum surface you need:</p>
+<h3 id="open-or-re-open-an-index">Open or re-open an index<a class="headerlink" href="#open-or-re-open-an-index" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">prollytree</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamespacedKvStore</span><span class="p">,</span> <span class="n">MiniLmEmbedder</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">store</span> <span class="o">=</span> <span class="n">NamespacedKvStore</span><span class="p">(</span><span class="s2">&quot;./data&quot;</span><span class="p">)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">emb</span> <span class="o">=</span> <span class="n">MiniLmEmbedder</span><span class="p">()</span>                       <span class="c1"># or HashEmbedder / CallableEmbedder</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># Creates the index on first call; on subsequent calls validates that the</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># supplied embedder&#39;s id + version match what&#39;s persisted on disk.</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">store</span><span class="o">.</span><span class="n">text_index_open</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_body&quot;</span><span class="p">,</span> <span class="n">emb</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Write queries are rejected when <code>-b</code> is set to keep historical commits immutable.</p>
-<h3 id="why-select-from-users-returns-i641-instead-of-1">Why <code>SELECT * FROM users</code> returns <code>I64(1)</code> instead of <code>1</code>?<a class="headerlink" href="#why-select-from-users-returns-i641-instead-of-1" title="Permanent link">&para;</a></h3>
-<p>GlueSQL's default table output includes the wire type. Use <code>-o json</code> or <code>-o csv</code> for a cleaner shape.</p>
-<h2 id="storage-backends">Storage backends<a class="headerlink" href="#storage-backends" title="Permanent link">&para;</a></h2>
-<h3 id="which-backend-should-i-use-in-production">Which backend should I use in production?<a class="headerlink" href="#which-backend-should-i-use-in-production" title="Permanent link">&para;</a></h3>
-<p>Most likely <strong>RocksDB</strong>. It's the only backend tuned for write-heavy, large-dataset workloads. <code>File</code> is fine for small datasets and debugging; <code>InMemory</code> is for tests. The <strong>Git backend</strong> is production-capable <em>as long as you commit</em> — experimental raw Git object storage (without commits) is explicitly unsafe because of <code>git gc</code>. See <a href="../storage/">Storage Backends</a>.</p>
-<h2 id="contributing-support">Contributing / support<a class="headerlink" href="#contributing-support" title="Permanent link">&para;</a></h2>
-<h3 id="where-do-i-report-bugs">Where do I report bugs?<a class="headerlink" href="#where-do-i-report-bugs" title="Permanent link">&para;</a></h3>
-<p><a href="https://github.com/zhangfengcdt/prollytree/issues">github.com/zhangfengcdt/prollytree/issues</a>.</p>
-<h3 id="where-do-i-see-the-rust-api">Where do I see the Rust API?<a class="headerlink" href="#where-do-i-see-the-rust-api" title="Permanent link">&para;</a></h3>
-<p><a href="https://docs.rs/prollytree">docs.rs/prollytree</a> — auto-generated from the source. The <a href="../api/rust/">Rust API</a> page here is a pointer.</p>
-<h3 id="is-there-a-discord-slack">Is there a Discord / Slack?<a class="headerlink" href="#is-there-a-discord-slack" title="Permanent link">&para;</a></h3>
-<p>Not currently. Open an issue or a discussion on GitHub.</p>
+<p>The embedder's <code>id</code> and <code>version</code> are persisted on first open and re-checked on every reopen. Mismatch raises a clear error so you don't silently mix vectors produced by different models.</p>
+<h3 id="dual-write-the-canonical-pattern">Dual-write (the canonical pattern)<a class="headerlink" href="#dual-write-the-canonical-pattern" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">docs</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="sa">b</span><span class="s2">&quot;doc:1&quot;</span><span class="p">:</span> <span class="s2">&quot;the quick brown fox&quot;</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="sa">b</span><span class="s2">&quot;doc:2&quot;</span><span class="p">:</span> <span class="s2">&quot;lazy dog asleep on the mat&quot;</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">}</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">for</span> <span class="n">doc_id</span><span class="p">,</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">docs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">store</span><span class="o">.</span><span class="n">ns_insert</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="n">doc_id</span><span class="p">,</span> <span class="n">text</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span>            <span class="c1"># primary tree (truth)</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">store</span><span class="o">.</span><span class="n">text_index_insert</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_body&quot;</span><span class="p">,</span> <span class="n">doc_id</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>  <span class="c1"># index (pointer)</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">store</span><span class="o">.</span><span class="n">commit</span><span class="p">(</span><span class="s2">&quot;seed corpus&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Both writes land in the <strong>same git commit</strong> atomically. The primary tree carries the source bytes; the index carries the vectors. If you ever change embedders, you can re-embed every doc from the primary tree.</p>
+<h3 id="cascade-replace-the-dual-write-with-one-call">Cascade — replace the dual write with one call<a class="headerlink" href="#cascade-replace-the-dual-write-with-one-call" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">store</span><span class="o">.</span><span class="n">text_index_open</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_body&quot;</span><span class="p">,</span> <span class="n">emb</span><span class="p">)</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">store</span><span class="o">.</span><span class="n">set_cascade</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;by_body&quot;</span><span class="p">])</span>                        <span class="c1"># opt-in once</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">store</span><span class="o">.</span><span class="n">ns_insert</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;doc:3&quot;</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;branching is first-class&quot;</span><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">store</span><span class="o">.</span><span class="n">commit</span><span class="p">(</span><span class="s2">&quot;cascade-driven indexing&quot;</span><span class="p">)</span>                       <span class="c1"># also updated the index</span>
+</span></code></pre></div>
+<p>Cascade is per-namespace and runtime-only (not persisted in the store registry). <code>ns_delete</code> cascades too. A namespace can cascade into multiple indexes — e.g. <code>["by_body", "by_title"]</code> — and each index can run its own value-transformer for non-UTF-8 primary values.</p>
+<h3 id="search-and-resolve-back-to-text">Search and resolve back to text<a class="headerlink" href="#search-and-resolve-back-to-text" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">for</span> <span class="n">doc_id</span><span class="p">,</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">store</span><span class="o">.</span><span class="n">text_index_search</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_body&quot;</span><span class="p">,</span> <span class="s2">&quot;vulpine animal&quot;</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">body</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">ns_get</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="n">doc_id</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">doc_id</span><span class="si">}</span><span class="s2"> (distance=</span><span class="si">{</span><span class="n">score</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">body</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Returns <code>(id_bytes, distance)</code> tuples ordered by ascending distance (closer first). Multi-chunk indexes (see below) automatically dedup so each document appears once at its best chunk's score.</p>
+<h3 id="multi-chunk-indexing">Multi-chunk indexing<a class="headerlink" href="#multi-chunk-indexing" title="Permanent link">&para;</a></h3>
+<p>Pass a chunker by name when opening the index. The chunk-id encoding is <code>[doc_id_len:4][doc_id_bytes][chunk_idx:4]</code>, so every chunk for a doc shares a prefix and <code>text_index_delete</code> can prefix-scan-remove them all.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">store</span><span class="o">.</span><span class="n">text_index_open</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_line&quot;</span><span class="p">,</span> <span class="n">emb</span><span class="p">,</span> <span class="n">chunker</span><span class="o">=</span><span class="s2">&quot;line&quot;</span><span class="p">)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">store</span><span class="o">.</span><span class="n">text_index_insert</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_line&quot;</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;log:2026-05-20&quot;</span><span class="p">,</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>                        <span class="s2">&quot;alpha</span><span class="se">\n</span><span class="s2">beta</span><span class="se">\n</span><span class="s2">gamma&quot;</span><span class="p">)</span>     <span class="c1"># 3 chunks under one doc id</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">store</span><span class="o">.</span><span class="n">text_index_len</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_line&quot;</span><span class="p">)</span>           <span class="c1"># 1 (distinct documents)</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">store</span><span class="o">.</span><span class="n">text_index_chunk_count</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_line&quot;</span><span class="p">)</span>   <span class="c1"># 3 (raw chunks)</span>
+</span></code></pre></div>
+<p>Built-in chunkers: <code>"identity"</code> (default — one chunk per doc) and <code>"line"</code> (one chunk per non-empty line).</p>
+<h2 id="embedders">Embedders<a class="headerlink" href="#embedders" title="Permanent link">&para;</a></h2>
+<h3 id="hashembedder"><code>HashEmbedder</code><a class="headerlink" href="#hashembedder" title="Permanent link">&para;</a></h3>
+<p>Deterministic SHA-256-based embedder. Pure Rust, no deps, useful for tests and exact-match lookup. <strong>Not semantic</strong> — <code>"a cat sat"</code> and <code>"a feline rested"</code> will land in unrelated parts of the vector space.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">prollytree</span><span class="w"> </span><span class="kn">import</span> <span class="n">HashEmbedder</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">emb</span> <span class="o">=</span> <span class="n">HashEmbedder</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">384</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="minilmembedder"><code>MiniLmEmbedder</code><a class="headerlink" href="#minilmembedder" title="Permanent link">&para;</a></h3>
+<p>Bundled Candle + <code>sentence-transformers/all-MiniLM-L6-v2</code> (384-d). Real semantic search. First call downloads weights (~90 MB) to <code>~/.cache/prollytree/embedders/</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">prollytree</span><span class="w"> </span><span class="kn">import</span> <span class="n">MiniLmEmbedder</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">emb</span> <span class="o">=</span> <span class="n">MiniLmEmbedder</span><span class="p">()</span>                                       <span class="c1"># default model + revision</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">emb</span> <span class="o">=</span> <span class="n">MiniLmEmbedder</span><span class="p">(</span><span class="n">model_id</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">,</span> <span class="n">revision</span><span class="o">=</span><span class="s2">&quot;main&quot;</span><span class="p">)</span>        <span class="c1"># override either field</span>
+</span></code></pre></div>
+<p>Requires the <code>proximity_text</code> feature. Set <code>PROLLYTREE_EMBEDDER_CACHE</code> to relocate the cache directory.</p>
+<h3 id="callableembedder"><code>CallableEmbedder</code><a class="headerlink" href="#callableembedder" title="Permanent link">&para;</a></h3>
+<p>Wrap any Python embedding function as an Embedder — use this to plug in OpenAI, Cohere, sentence-transformers, your own pipeline, etc.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">prollytree</span><span class="w"> </span><span class="kn">import</span> <span class="n">CallableEmbedder</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">openai</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAI</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">client</span> <span class="o">=</span> <span class="n">OpenAI</span><span class="p">()</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">def</span><span class="w"> </span><span class="nf">openai_embed</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="k">return</span> <span class="n">client</span><span class="o">.</span><span class="n">embeddings</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>        <span class="nb">input</span><span class="o">=</span><span class="n">text</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s2">&quot;text-embedding-3-small&quot;</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="p">)</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">embedding</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="n">emb</span> <span class="o">=</span> <span class="n">CallableEmbedder</span><span class="p">(</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;openai:text-embedding-3-small&quot;</span><span class="p">,</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    <span class="n">version</span><span class="o">=</span><span class="s2">&quot;2024-01&quot;</span><span class="p">,</span>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>    <span class="n">dim</span><span class="o">=</span><span class="mi">1536</span><span class="p">,</span>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>    <span class="n">embed_fn</span><span class="o">=</span><span class="n">openai_embed</span><span class="p">,</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>The <code>id</code> and <code>version</code> are what's persisted. <strong>Change <code>version</code> whenever the embedding distribution changes</strong> (model upgrade, new tokenizer) so reopens correctly surface the mismatch.</p>
+<h2 id="drift-management">Drift management<a class="headerlink" href="#drift-management" title="Permanent link">&para;</a></h2>
+<p>If you write to the primary tree without cascade and forget to mirror into the index — or you change the embedder mid-history — the index can drift from the primary. Detection and repair are first-class:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">report</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">audit_text_index</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_body&quot;</span><span class="p">)</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="c1"># {&quot;orphans_in_index&quot;: [...], &quot;missing_from_index&quot;: [...], &quot;is_in_sync&quot;: False}</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">store</span><span class="o">.</span><span class="n">purge_text_index_orphans</span><span class="p">(</span><span class="s2">&quot;docs&quot;</span><span class="p">,</span> <span class="s2">&quot;by_body&quot;</span><span class="p">)</span>    <span class="c1"># remove index entries</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>                                                     <span class="c1"># that have no primary row</span>
+</span></code></pre></div>
+<p>Filling <code>missing_from_index</code> is your call — typically a loop over the listed ids that re-inserts each from the primary tree.</p>
+<h2 id="branching-and-merging">Branching and merging<a class="headerlink" href="#branching-and-merging" title="Permanent link">&para;</a></h2>
+<p>Every text index is owned by its namespace and versioned alongside the namespace's primary tree. The store-wide <code>branch</code>, <code>checkout</code>, <code>merge</code> operations move every namespace's primary tree <strong>and</strong> every sub-index together. Switching branches gives you that branch's view of both data and search results.</p>
+<p>Three-way merge for text indexes runs the same nine-case logic as the primary KV merge, routed through a <code>ProximityConflictResolver</code>. Built-in resolvers (in the Rust crate; not yet surfaced in Python):</p>
+<ul>
+<li><code>TakeSourceProximityResolver</code> / <code>TakeDestinationProximityResolver</code></li>
+<li><code>LatestVectorResolver&lt;F&gt;</code> — timestamp-extractor function picks the newer vector</li>
+<li><code>MeanVectorResolver</code> — averages conflicting vectors (L2 / Cosine only)</li>
+</ul>
+<h2 id="externalisation-blob-gc">Externalisation + blob GC<a class="headerlink" href="#externalisation-blob-gc" title="Permanent link">&para;</a></h2>
+<p>Large documents (set via <code>store.set_externalize_threshold(bytes)</code>) are stored as content-addressed blobs alongside the prolly tree, with only a 44-byte envelope inline in the leaf. <code>store.gc_blobs()</code> walks the current store and reclaims unreferenced blobs. Useful when you're indexing real document bodies rather than short snippets.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">store</span><span class="o">.</span><span class="n">set_externalize_threshold</span><span class="p">(</span><span class="mi">64</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">)</span>        <span class="c1"># 64 KiB threshold</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">report</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">gc_blobs</span><span class="p">()</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="c1"># {&quot;total&quot;: 12, &quot;referenced&quot;: 12, &quot;removed&quot;: 0, &quot;errors&quot;: []}</span>
+</span></code></pre></div>
+<p>Externalisation is currently supported on the <strong>File</strong> and <strong>RocksDB</strong> backends.</p>
+<h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../examples/text_search/">Examples → Text Search</a> — runnable end-to-end demos.</li>
+<li><a href="../api/python/#namespacedkvstore">Python API</a> — full method-level reference.</li>
+<li><a href="../architecture/#7-proximity-text-search-layer">Architecture → Proximity / text-search layer</a> — how the proximity tree integrates with the rest of the stack.</li>
+</ul>
 
 
 

@@ -719,6 +719,8 @@
       
         
       
+        
+      
     
     
     
@@ -835,6 +837,34 @@
     
   
     SQL Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="text_search/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Text Search
   
 
     
@@ -1310,6 +1340,8 @@
       
         
       
+        
+      
     
     
     
@@ -1435,6 +1467,34 @@
     
   
     SQL Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="examples/text_search/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Text Search
   
 
     
@@ -1610,7 +1670,8 @@
 <li><strong>Multiple storage backends.</strong> In-memory, File, RocksDB, and Git-backed persistence behind a single <code>NodeStorage</code> trait.</li>
 <li><strong>Git-backed versioning.</strong> Branch, commit, diff, and three-way merge the key-value store with the <code>git-prolly</code> CLI or the <code>VersionedKvStore</code> API — uses real Git under the hood.</li>
 <li><strong>SQL interface.</strong> Query your tree as relational tables via GlueSQL integration.</li>
-<li><strong>Python bindings.</strong> Full API coverage via PyO3, including versioning, merging, and SQL.</li>
+<li><strong>Vector / text search.</strong> Versioned approximate-nearest-neighbour index (<a href="text_search/">Text Search</a>) lives inside any namespace; ships with a deterministic test embedder, a bundled Candle + MiniLM embedder, and a callable shim for bring-your-own pipelines.</li>
+<li><strong>Python bindings.</strong> Full API coverage via PyO3, including versioning, merging, SQL, and text search.</li>
 </ul>
 <h2 id="quick-example-rust">Quick example (Rust)<a class="headerlink" href="#quick-example-rust" title="Permanent link">&para;</a></h2>
 <div class="language-rust highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">use</span><span class="w"> </span><span class="n">prollytree</span><span class="p">::</span><span class="n">tree</span><span class="p">::{</span><span class="n">ProllyTree</span><span class="p">,</span><span class="w"> </span><span class="n">Tree</span><span class="p">};</span>
