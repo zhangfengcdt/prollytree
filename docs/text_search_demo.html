@@ -1,0 +1,1010 @@
+<!--
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ProllyTree — Versioned Vector Search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Palette borrowed from memoir-ai.dev */
+      --bg-0: #0a0d12;
+      --bg-1: #10141c;
+      --bg-2: #161b26;
+      --bg-3: #1d2330;
+      --fg-0: #f3f5f9;
+      --fg-1: #a8b0bf;
+      --fg-2: #6b7384;
+      --fg-3: #4a5263;
+      --accent: #00d68f;
+      --accent-hover: #00ebaa;
+      --accent-dim: rgba(0, 214, 143, 0.15);
+      --accent-glow: rgba(0, 214, 143, 0.35);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.14);
+      --danger: #ff6b6b;
+      --warning: #ffb84d;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
+      --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+      --dur-fast: 0.12s;
+      --dur-med: 0.22s;
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "JetBrains Mono", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-0);
+      color: var(--fg-1);
+      line-height: 1.55;
+      letter-spacing: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    .mono { font-family: var(--font-mono); }
+    code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+    code {
+      background: var(--bg-2); color: var(--fg-0);
+      padding: 1px 6px; border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); }
+
+    /* ---------- Deck ---------- */
+    .deck {
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(circle at 20% 0%, var(--accent-dim) 0%, transparent 40%),
+        radial-gradient(circle at 90% 100%, rgba(0, 214, 143, 0.05) 0%, transparent 50%),
+        var(--bg-0);
+    }
+    .slide {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      padding: 60px 80px 100px;
+      opacity: 0; transform: translateX(40px) scale(0.99);
+      pointer-events: none; overflow-y: auto;
+      transition:
+        opacity var(--dur-med) var(--ease-out),
+        transform var(--dur-med) var(--ease-out);
+    }
+    .slide.active { opacity: 1; transform: none; pointer-events: auto; }
+    .slide.prev   { transform: translateX(-40px) scale(0.99); }
+
+    .slide-inner {
+      max-width: 1200px; margin: 0 auto; width: 100%; flex: 1;
+      display: flex; flex-direction: column;
+    }
+
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+      color: var(--accent); letter-spacing: 0.04em;
+      text-transform: uppercase; margin-bottom: 16px;
+    }
+    .eyebrow .dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    h1.slide-title {
+      font-size: clamp(34px, 4.2vw, 56px); font-weight: 700;
+      color: var(--fg-0); letter-spacing: -0.02em; line-height: 1.1;
+      margin-bottom: 18px;
+    }
+    h2.slide-title {
+      font-size: clamp(28px, 3.2vw, 44px); font-weight: 700;
+      color: var(--fg-0); letter-spacing: -0.02em; line-height: 1.15;
+      margin-bottom: 14px;
+    }
+    .lede {
+      font-size: 18px; color: var(--fg-1); max-width: 780px;
+      line-height: 1.6; margin-bottom: 28px;
+    }
+    .lede strong { color: var(--fg-0); font-weight: 600; }
+
+    /* ---------- Surface ---------- */
+    .surface {
+      background: var(--bg-1); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 24px;
+      box-shadow: var(--shadow-md);
+    }
+    .surface-tight { padding: 16px; }
+    .surface.hl {
+      border-color: var(--border-strong);
+      box-shadow: var(--shadow-lg), 0 0 0 1px var(--accent-dim);
+    }
+
+    /* ---------- Title slide ---------- */
+    .title-slide {
+      justify-content: center; text-align: center; padding-top: 0;
+    }
+    .title-slide h1 {
+      font-size: clamp(48px, 6vw, 88px);
+      background: linear-gradient(135deg, var(--fg-0) 0%, var(--accent) 70%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 24px;
+    }
+    .title-slide .tagline {
+      font-size: 22px; color: var(--fg-1); max-width: 760px;
+      margin: 0 auto 36px; line-height: 1.5;
+    }
+    .title-slide .tagline strong { color: var(--fg-0); font-weight: 600; }
+    .pill-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 999px; font-size: 13px;
+      background: var(--bg-2); border: 1px solid var(--border);
+      color: var(--fg-1); font-family: var(--font-mono);
+    }
+
+    /* ---------- 2D vector space ---------- */
+    .space-wrap { position: relative; }
+    svg.space {
+      display: block; width: 100%; height: 460px;
+      background:
+        radial-gradient(circle at 50% 50%, var(--bg-2) 0%, var(--bg-1) 100%);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+    }
+    .space-axis { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 2 6; }
+    .space-axis-label {
+      fill: var(--fg-3); font-size: 11px; font-family: var(--font-mono);
+    }
+    .doc-point {
+      fill: var(--bg-3); stroke: var(--fg-2); stroke-width: 1.5;
+      transition: r var(--dur-med) var(--ease-out),
+                  fill var(--dur-med) var(--ease-out);
+      cursor: pointer;
+    }
+    .doc-point.hit { fill: var(--warning); stroke: #b88800; }
+    .doc-point.top1 {
+      fill: var(--accent); stroke: var(--accent-hover);
+      filter: drop-shadow(0 0 8px var(--accent-glow));
+    }
+    .doc-label {
+      font-size: 10px; fill: var(--fg-2); pointer-events: none;
+      font-family: var(--font-mono);
+    }
+    .doc-label.top1 { fill: var(--accent); font-weight: 600; }
+    .query-point {
+      fill: var(--danger); stroke: #ff9999; stroke-width: 2;
+      filter: drop-shadow(0 0 8px rgba(255, 107, 107, 0.5));
+    }
+    .dist-line { stroke: var(--fg-3); stroke-width: 1.5; stroke-dasharray: 3 4; opacity: 0.7; }
+    .dist-line.top1 {
+      stroke: var(--accent); opacity: 1; stroke-dasharray: none; stroke-width: 2;
+    }
+
+    .doc-tip {
+      position: absolute; pointer-events: none; z-index: 10;
+      background: var(--bg-3); color: var(--fg-0);
+      padding: 8px 12px; border-radius: var(--radius-sm);
+      font-size: 12px; max-width: 280px;
+      box-shadow: var(--shadow-md);
+      border: 1px solid var(--border-strong);
+      display: none;
+    }
+    .doc-tip strong { color: var(--accent); font-family: var(--font-mono); }
+
+    /* ---------- Query row ---------- */
+    .query-row {
+      display: grid; grid-template-columns: 1fr 100px 120px; gap: 12px;
+      align-items: end; margin-bottom: 16px;
+    }
+    .query-row label {
+      display: block; font-size: 12px; font-weight: 500;
+      color: var(--fg-2); margin-bottom: 6px;
+      font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .query-row input {
+      width: 100%; padding: 12px 14px;
+      background: var(--bg-2); border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm); color: var(--fg-0);
+      font-family: var(--font-sans); font-size: 14px;
+      transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+    }
+    .query-row input:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-dim);
+    }
+    button.btn {
+      padding: 12px 18px; background: var(--accent); color: var(--bg-0);
+      border: none; border-radius: var(--radius-sm); cursor: pointer;
+      font-family: var(--font-sans); font-weight: 600; font-size: 13px;
+      letter-spacing: 0.02em;
+      transition: background var(--dur-fast), transform var(--dur-fast);
+    }
+    button.btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+    button.btn.sec {
+      background: var(--bg-2); color: var(--fg-0);
+      border: 1px solid var(--border-strong);
+    }
+    button.btn.sec:hover { background: var(--bg-3); }
+
+    /* ---------- Hits ---------- */
+    .hits { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+    .hit {
+      display: grid; grid-template-columns: 28px 1fr 100px; gap: 12px;
+      align-items: center;
+      background: var(--bg-2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 14px;
+      transition: border-color var(--dur-fast);
+    }
+    .hit:hover { border-color: var(--border-strong); }
+    .hit.top1 { border-color: var(--accent); background: var(--accent-dim); }
+    .hit .rk {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--bg-3); color: var(--fg-1);
+      text-align: center; font-family: var(--font-mono);
+      font-weight: 600; font-size: 11px; line-height: 24px;
+    }
+    .hit.top1 .rk { background: var(--accent); color: var(--bg-0); }
+    .hit .body { font-size: 13px; color: var(--fg-0); }
+    .hit .body .id { color: var(--fg-2); font-family: var(--font-mono); font-size: 11px; margin-right: 6px; }
+    .hit .dist {
+      text-align: right; font-family: var(--font-mono);
+      color: var(--fg-2); font-size: 11px;
+    }
+    .hit.top1 .dist { color: var(--accent); }
+
+    /* ---------- Two/three col ---------- */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: stretch; }
+    .three-col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 880px) {
+      .two-col, .three-col { grid-template-columns: 1fr; }
+    }
+
+    /* ---------- Commits timeline ---------- */
+    .commits {
+      display: flex; align-items: center; gap: 0;
+      max-width: 720px; margin: 0 auto 24px; position: relative;
+    }
+    .commits::before {
+      content: ''; position: absolute; left: 30px; right: 30px; top: 50%;
+      height: 2px; background: var(--border-strong); z-index: 0;
+    }
+    .commit { flex: 1; text-align: center; position: relative; z-index: 1; cursor: pointer; }
+    .commit .dot {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--bg-2); border: 2px solid var(--border-strong);
+      margin: 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-mono); font-weight: 600; color: var(--fg-2);
+      transition: all var(--dur-fast);
+    }
+    .commit:hover .dot { border-color: var(--fg-2); }
+    .commit.active .dot {
+      background: var(--accent); border-color: var(--accent-hover);
+      color: var(--bg-0);
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+    .commit .meta {
+      margin-top: 8px; font-size: 11px; color: var(--fg-3);
+      font-family: var(--font-mono);
+    }
+    .commit .msg { margin-top: 2px; font-size: 11px; color: var(--fg-1); }
+    .commit.active .msg { color: var(--fg-0); font-weight: 500; }
+
+    .snapshot { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .pane {
+      background: var(--bg-2); border-radius: var(--radius-md);
+      padding: 16px; border: 1px solid var(--border);
+      min-height: 220px;
+    }
+    .pane h4 {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--fg-2); margin-bottom: 12px; font-family: var(--font-mono);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .pane .pill-tag {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 10px; font-weight: 600;
+    }
+    .pill-blue { background: rgba(96, 165, 250, 0.15); color: #93c5fd; }
+    .pill-green { background: var(--accent-dim); color: var(--accent); }
+    .pane.primary { border-top: 2px solid #60a5fa; }
+    .pane.index { border-top: 2px solid var(--accent); }
+    .pane .row {
+      font-family: var(--font-mono); font-size: 12px;
+      padding: 4px 0; color: var(--fg-0);
+      border-bottom: 1px dashed var(--border);
+    }
+    .pane .row:last-child { border-bottom: none; }
+    .pane .row .k { color: var(--fg-2); }
+    .pane.empty-state {
+      color: var(--fg-3); font-size: 12px; padding: 40px;
+      text-align: center; font-family: var(--font-mono);
+    }
+    .pane .note {
+      margin-top: 12px; padding: 10px;
+      background: rgba(255, 184, 77, 0.08); border-radius: var(--radius-sm);
+      font-size: 11px; color: var(--warning); font-family: var(--font-sans);
+      border: 1px solid rgba(255, 184, 77, 0.2);
+    }
+
+    /* ---------- Branch diagram ---------- */
+    .branch-info { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+    .branch-card {
+      padding: 16px; border-radius: var(--radius-md);
+      background: var(--bg-2); font-size: 13px; color: var(--fg-1);
+    }
+    .branch-card.main { border-left: 3px solid #60a5fa; }
+    .branch-card.exp  { border-left: 3px solid var(--accent); }
+    .branch-card strong {
+      display: block; margin-bottom: 6px; font-size: 12px;
+      color: var(--fg-0); font-family: var(--font-mono);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    /* ---------- Use cases ---------- */
+    .uc {
+      padding: 22px; background: var(--bg-1);
+      border: 1px solid var(--border); border-radius: var(--radius-md);
+      transition: border-color var(--dur-fast), transform var(--dur-fast);
+    }
+    .uc:hover {
+      border-color: var(--border-strong); transform: translateY(-2px);
+    }
+    .uc .icon {
+      width: 38px; height: 38px; border-radius: var(--radius-sm);
+      background: var(--accent-dim); color: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; margin-bottom: 12px;
+      font-family: var(--font-mono); font-weight: 600;
+    }
+    .uc h3 { font-size: 15px; color: var(--fg-0); margin-bottom: 6px; font-weight: 600; }
+    .uc p { font-size: 13px; color: var(--fg-1); line-height: 1.55; }
+
+    /* ---------- Compare cards (without/with) ---------- */
+    .compare-card {
+      padding: 20px; border-radius: var(--radius-md);
+    }
+    .compare-card.without {
+      background: rgba(255, 107, 107, 0.05);
+      border: 1px solid rgba(255, 107, 107, 0.2);
+    }
+    .compare-card.with {
+      background: var(--accent-dim);
+      border: 1px solid rgba(0, 214, 143, 0.3);
+    }
+    .compare-card h3 {
+      font-size: 14px; color: var(--fg-0); margin-bottom: 14px;
+      font-family: var(--font-mono); display: flex; align-items: center; gap: 8px;
+    }
+    .compare-card.without h3 .label-pill {
+      background: rgba(255, 107, 107, 0.15); color: var(--danger);
+    }
+    .compare-card.with h3 .label-pill {
+      background: var(--accent-dim); color: var(--accent);
+    }
+    .label-pill {
+      padding: 3px 8px; border-radius: 4px; font-size: 10px;
+      font-weight: 600; text-transform: uppercase;
+    }
+
+    /* ---------- CTA ---------- */
+    .cta-slide { justify-content: center; text-align: center; }
+    .cta-snippet {
+      display: inline-block; text-align: left; margin: 28px auto;
+      background: var(--bg-2); padding: 22px 28px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-strong);
+      font-family: var(--font-mono); font-size: 14px; color: var(--fg-1);
+      line-height: 1.7; box-shadow: var(--shadow-md);
+    }
+    .cta-snippet .k { color: var(--fg-2); }
+    .cta-snippet .s { color: var(--accent); }
+    .cta-snippet .n { color: #60a5fa; }
+    .cta-snippet .y { color: var(--warning); }
+    .cta-btns {
+      display: flex; justify-content: center; gap: 12px; margin-top: 12px; flex-wrap: wrap;
+    }
+    .cta-btn {
+      display: inline-block; padding: 12px 22px;
+      border-radius: var(--radius-sm); font-weight: 600; font-size: 14px;
+      transition: transform var(--dur-fast);
+    }
+    .cta-btn:hover { transform: translateY(-1px); }
+    .cta-btn.primary {
+      background: var(--accent); color: var(--bg-0);
+    }
+    .cta-btn.primary:hover { background: var(--accent-hover); color: var(--bg-0); }
+    .cta-btn.secondary {
+      background: var(--bg-2); color: var(--fg-0);
+      border: 1px solid var(--border-strong);
+    }
+    .cta-btn.secondary:hover { background: var(--bg-3); color: var(--fg-0); }
+
+    /* ---------- Deck chrome (nav, counter) ---------- */
+    .deck-nav {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 12px; z-index: 100;
+      background: var(--bg-1); border: 1px solid var(--border-strong);
+      padding: 8px 14px; border-radius: 999px; box-shadow: var(--shadow-md);
+    }
+    .deck-nav button {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: transparent; color: var(--fg-1); border: none;
+      cursor: pointer; font-size: 16px; line-height: 1;
+      transition: background var(--dur-fast), color var(--dur-fast);
+    }
+    .deck-nav button:hover:not(:disabled) {
+      background: var(--bg-3); color: var(--fg-0);
+    }
+    .deck-nav button:disabled { opacity: 0.3; cursor: default; }
+    .deck-nav .counter {
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--fg-2); padding: 0 6px;
+    }
+    .deck-nav .counter .cur { color: var(--accent); font-weight: 600; }
+
+    .deck-dots {
+      position: fixed; top: 50%; right: 24px; transform: translateY(-50%);
+      display: flex; flex-direction: column; gap: 8px; z-index: 100;
+    }
+    .deck-dots .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--bg-3); border: 1px solid var(--border-strong);
+      cursor: pointer; transition: all var(--dur-fast);
+    }
+    .deck-dots .dot:hover { background: var(--fg-3); }
+    .deck-dots .dot.active {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent-glow);
+      transform: scale(1.3);
+    }
+
+    .deck-hint {
+      position: fixed; bottom: 24px; left: 24px; z-index: 100;
+      font-family: var(--font-mono); font-size: 11px; color: var(--fg-3);
+    }
+    .deck-hint kbd {
+      display: inline-block; padding: 2px 6px;
+      background: var(--bg-2); border: 1px solid var(--border-strong);
+      border-radius: 4px; color: var(--fg-1); font-family: var(--font-mono);
+      font-size: 10px;
+    }
+
+    .brand {
+      position: fixed; top: 24px; left: 24px; z-index: 100;
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--fg-2); display: flex; align-items: center; gap: 8px;
+    }
+    .brand .logo-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
+    }
+
+    /* ---------- Inline SVG helpers for "Concept 4" cards ---------- */
+    .compare-svg { width: 100%; height: 180px; margin-top: 8px; }
+    .compare-svg text { fill: var(--fg-1); }
+
+    @media (max-width: 760px) {
+      .slide { padding: 56px 24px 100px; }
+      .deck-dots { display: none; }
+      .query-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="brand">
+    <span class="logo-dot"></span>
+    <span>ProllyTree · text&nbsp;search demo</span>
+  </div>
+
+  <div class="deck" id="deck">
+
+    <!-- ============== Slide 1: Title ============== -->
+    <section class="slide title-slide" data-slide>
+      <div class="slide-inner" style="justify-content: center;">
+        <h1>Vector search,<br/>versioned like code.</h1>
+        <p class="tagline">
+          ProllyTree lets you do top-k semantic search over text — and then
+          <strong>rewind it, branch it, diff it, and merge it</strong> the way Git lets you do those
+          things to code. Eight slides; takes about a minute.
+        </p>
+        <div class="pill-row">
+          <span class="pill">pip install prollytree</span>
+          <span class="pill">Rust + Python</span>
+          <span class="pill">Merkle under the hood</span>
+          <span class="pill">Built with agents in mind</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== Slide 2: Coordinates ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 1 · 2 of 8</div>
+        <h2 class="slide-title">Words become coordinates.</h2>
+        <p class="lede">
+          An <strong>embedder</strong> turns each piece of text into a list of numbers — its vector.
+          Texts that mean similar things land at similar coordinates. Search is then just
+          "what's nearest?" The real index uses 384 dimensions; we're showing 2D so it's legible.
+        </p>
+
+        <div class="space-wrap">
+          <svg viewBox="0 0 800 460" class="space" id="space-static"></svg>
+          <div class="doc-tip" id="tip-static"></div>
+        </div>
+        <p style="margin-top: 14px; color: var(--fg-2); font-size: 13px;">
+          Hover any point to read its text. <span class="mono" style="color: var(--accent);">→ press ▶ or right-arrow to continue</span>
+        </p>
+      </div>
+    </section>
+
+    <!-- ============== Slide 3: Search ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 2 · 3 of 8</div>
+        <h2 class="slide-title">Search is "what's nearest?"</h2>
+        <p class="lede">
+          Your query becomes a point in the same space. Top-<em>k</em> sorts every document
+          by distance and returns the closest ones. <strong>Try a query</strong> — watch where it lands.
+        </p>
+
+        <div class="surface">
+          <div class="query-row">
+            <div>
+              <label for="q">Your query</label>
+              <input id="q" type="text" value="how do I deploy a database safely" />
+            </div>
+            <div>
+              <label for="k">k</label>
+              <input id="k" type="number" value="3" min="1" max="6" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button class="btn" onclick="runSearch()">Search</button>
+            </div>
+          </div>
+
+          <div class="space-wrap">
+            <svg viewBox="0 0 800 460" class="space" id="space-live"></svg>
+            <div class="doc-tip" id="tip-live"></div>
+          </div>
+
+          <div class="hits" id="hits"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== Slide 4: Versioning ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 3 · 4 of 8</div>
+        <h2 class="slide-title">Now version it.</h2>
+        <p class="lede">
+          Every write — to the primary tree <em>and</em> to the index — lands in a real Git commit.
+          <strong>Click any commit</strong> below to time-travel back; both panes change together because
+          they're stored together.
+        </p>
+
+        <div class="surface">
+          <div class="commits" id="commits"></div>
+          <div class="snapshot">
+            <div class="pane primary">
+              <h4><span class="pill-tag pill-blue">primary</span> docs namespace</h4>
+              <div id="pane-primary"></div>
+            </div>
+            <div class="pane index">
+              <h4><span class="pill-tag pill-green">index</span> by_body</h4>
+              <div id="pane-index"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== Slide 5: Compare ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 4 · 5 of 8</div>
+        <h2 class="slide-title">Two trees, one commit.</h2>
+        <p class="lede">
+          What makes versioned vector search actually useful: the source text and the index are
+          committed atomically — never out of sync, never drifting. With a separate vector DB
+          you babysit a sync job. Here you don't.
+        </p>
+
+        <div class="two-col">
+          <div class="compare-card without">
+            <h3><span class="label-pill">without</span> two systems, eventual consistency</h3>
+            <svg viewBox="0 0 360 180" class="compare-svg">
+              <rect x="20"  y="40" width="120" height="60" fill="rgba(255, 107, 107, 0.08)" stroke="#ff6b6b" stroke-width="2" rx="8"/>
+              <rect x="220" y="40" width="120" height="60" fill="rgba(255, 107, 107, 0.08)" stroke="#ff6b6b" stroke-width="2" rx="8"/>
+              <text x="80"  y="70" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#ff6b6b" font-weight="600">Your DB</text>
+              <text x="80"  y="88" text-anchor="middle" font-size="10" fill="#a8b0bf">documents</text>
+              <text x="280" y="70" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#ff6b6b" font-weight="600">Vector DB</text>
+              <text x="280" y="88" text-anchor="middle" font-size="10" fill="#a8b0bf">embeddings</text>
+              <path d="M140,70 Q180,130 220,70" stroke="#ff6b6b" stroke-width="2" fill="none" stroke-dasharray="4 4"/>
+              <text x="180" y="135" text-anchor="middle" font-size="11" fill="#ff6b6b" font-weight="600">sync job</text>
+              <text x="180" y="160" text-anchor="middle" font-size="10" fill="#a8b0bf">drift, stale vectors, race conditions</text>
+            </svg>
+          </div>
+
+          <div class="compare-card with">
+            <h3><span class="label-pill">with prollytree</span> one transaction</h3>
+            <svg viewBox="0 0 360 180" class="compare-svg">
+              <rect x="80" y="20" width="200" height="46" fill="var(--accent-dim)" stroke="var(--accent)" stroke-width="2" rx="8"/>
+              <text x="180" y="40" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="var(--accent)" font-weight="600">ns_insert("docs", id, text)</text>
+              <text x="180" y="56" text-anchor="middle" font-size="9" fill="#a8b0bf">cascade enabled</text>
+              <path d="M180,70 L120,105" stroke="var(--accent)" stroke-width="2" fill="none"/>
+              <path d="M180,70 L240,105" stroke="var(--accent)" stroke-width="2" fill="none"/>
+              <rect x="55"  y="108" width="120" height="46" fill="rgba(96,165,250,0.1)" stroke="#60a5fa" stroke-width="2" rx="8"/>
+              <rect x="185" y="108" width="120" height="46" fill="var(--accent-dim)" stroke="var(--accent)" stroke-width="2" rx="8"/>
+              <text x="115" y="135" text-anchor="middle" font-family="JetBrains Mono" font-size="11" font-weight="600" fill="#60a5fa">primary</text>
+              <text x="245" y="135" text-anchor="middle" font-family="JetBrains Mono" font-size="11" font-weight="600" fill="var(--accent)">index</text>
+              <text x="180" y="175" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="var(--accent)" font-weight="600">same git commit ✓</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== Slide 6: Branching ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Concept 5 · 6 of 8</div>
+        <h2 class="slide-title">Branch your knowledge.</h2>
+        <p class="lede">
+          Fork the store, try something — re-embed with a new model, re-chunk for tighter recall,
+          index a speculative document an agent might be hallucinating. Discard if it doesn't help,
+          merge back if it does. Just <code>store.branch("experiment")</code>.
+        </p>
+
+        <div class="surface">
+          <svg viewBox="0 0 800 220" style="width: 100%; height: 220px;">
+            <!-- Main timeline -->
+            <path d="M40,120 L240,120" stroke="#60a5fa" stroke-width="3" fill="none"/>
+            <path d="M240,120 Q300,120 320,80 L520,80" stroke="var(--accent)" stroke-width="3" fill="none"/>
+            <path d="M240,120 L760,120" stroke="#60a5fa" stroke-width="3" fill="none"/>
+            <path d="M520,80 Q580,80 600,120" stroke="var(--accent)" stroke-width="3" fill="none" stroke-dasharray="6 4"/>
+
+            <circle cx="80"  cy="120" r="13" fill="#60a5fa"/>
+            <circle cx="160" cy="120" r="13" fill="#60a5fa"/>
+            <circle cx="240" cy="120" r="13" fill="#60a5fa"/>
+            <circle cx="600" cy="120" r="15" fill="var(--bg-2)" stroke="var(--accent)" stroke-width="3"/>
+            <circle cx="720" cy="120" r="13" fill="#60a5fa"/>
+            <text x="600" y="125" text-anchor="middle" font-family="JetBrains Mono" font-size="10" font-weight="700" fill="var(--accent)">M</text>
+
+            <circle cx="380" cy="80" r="13" fill="var(--accent)"/>
+            <circle cx="460" cy="80" r="13" fill="var(--accent)"/>
+            <circle cx="520" cy="80" r="13" fill="var(--accent)"/>
+
+            <text x="80"  y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#60a5fa">seed</text>
+            <text x="160" y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#60a5fa">obs:1</text>
+            <text x="240" y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#60a5fa">obs:2</text>
+            <text x="720" y="155" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#60a5fa">obs:3</text>
+            <text x="380" y="55"  text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="var(--accent)">try new chunker</text>
+            <text x="460" y="55"  text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="var(--accent)">re-embed</text>
+            <text x="520" y="55"  text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="var(--accent)">test recall</text>
+
+            <text x="600" y="148" text-anchor="middle" font-family="JetBrains Mono" font-size="11" font-weight="700" fill="var(--accent)">merge</text>
+
+            <text x="40"  y="195" font-family="JetBrains Mono" font-size="11" fill="#60a5fa" font-weight="600">main</text>
+            <text x="380" y="30"  font-family="JetBrains Mono" font-size="11" fill="var(--accent)" font-weight="600">experiment</text>
+          </svg>
+          <div class="branch-info">
+            <div class="branch-card main">
+              <strong>main</strong>
+              Live store. Agent reads + writes here. Search returns whatever was last committed on main.
+            </div>
+            <div class="branch-card exp">
+              <strong>experiment</strong>
+              Isolated copy. Same data; different embedder, chunker, or scratch documents. Three-way merge when ready.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== Slide 7: Why ============== -->
+    <section class="slide" data-slide>
+      <div class="slide-inner">
+        <div class="eyebrow"><span class="dot"></span>Why this matters · 7 of 8</div>
+        <h2 class="slide-title">What versioned vector search unlocks.</h2>
+        <p class="lede">
+          Most vector databases give you "the latest state, whatever it happens to be." ProllyTree
+          treats your embeddings the way you'd treat your code: a typed, reviewable, recoverable artifact.
+        </p>
+
+        <div class="three-col">
+          <div class="uc"><div class="icon">↶</div><h3>Rewind a poisoned corpus</h3><p>An agent ingested a bad batch. Roll back to the last good commit; the search index travels with the data. No reindex.</p></div>
+          <div class="uc"><div class="icon">⑂</div><h3>A/B test embedders</h3><p>Branch, swap MiniLM for an OpenAI model via <code>CallableEmbedder</code>, re-embed, compare recall. Discard the loser.</p></div>
+          <div class="uc"><div class="icon">🔍</div><h3>Audit what an agent learned</h3><p>Diff two commits and see exactly which memories were added, removed, or rewritten between yesterday and today.</p></div>
+          <div class="uc"><div class="icon">👥</div><h3>Isolate multiple agents</h3><p>One store, many namespaces. Each agent gets its own primary tree + index. One commit covers all of them.</p></div>
+          <div class="uc"><div class="icon">📐</div><h3>Cryptographic proofs</h3><p>Inherited from the Merkle tree underneath. Every value carries an inclusion proof you can hand to a verifier.</p></div>
+          <div class="uc"><div class="icon">🚫</div><h3>No separate vector DB</h3><p>Embeddings and source text share one transaction. No sync job, no consistency window, no drift.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== Slide 8: CTA ============== -->
+    <section class="slide cta-slide" data-slide>
+      <div class="slide-inner" style="justify-content: center;">
+        <div class="eyebrow" style="justify-content: center;"><span class="dot"></span>8 of 8</div>
+        <h2 class="slide-title" style="text-align: center;">Three lines from a working text index.</h2>
+        <div class="cta-snippet">
+<span class="y">pip install</span> prollytree
+<span class="k">from</span> prollytree <span class="k">import</span> NamespacedKvStore, MiniLmEmbedder
+store.<span class="n">text_index_open</span>(<span class="s">"docs"</span>, <span class="s">"by_body"</span>, <span class="n">MiniLmEmbedder</span>())
+        </div>
+        <div class="cta-btns">
+          <a class="cta-btn primary" href="https://zhangfengcdt.github.io/prollytree/text_search/">User Guide</a>
+          <a class="cta-btn secondary" href="https://zhangfengcdt.github.io/prollytree/examples/text_search/">Runnable Examples</a>
+          <a class="cta-btn secondary" href="https://github.com/zhangfengcdt/prollytree">GitHub</a>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ---------- Deck chrome ---------- -->
+  <div class="deck-hint">
+    <kbd>←</kbd> <kbd>→</kbd> or <kbd>space</kbd> to navigate
+  </div>
+  <div class="deck-dots" id="deck-dots"></div>
+  <div class="deck-nav">
+    <button id="prev" aria-label="Previous slide">◀</button>
+    <span class="counter"><span class="cur" id="cur">1</span> / <span id="total">8</span></span>
+    <button id="next" aria-label="Next slide">▶</button>
+  </div>
+
+  <script>
+    // ============================================================
+    // Corpus — hand-positioned in a 2D space; nearer = more similar.
+    // ============================================================
+    const CORPUS = [
+      { id: "doc:1", x: 150, y: 360, body: "the quick brown fox jumps over the lazy dog",
+        tags: ["fox", "dog", "lazy", "quick", "brown", "jumps"] },
+      { id: "doc:2", x: 580, y: 380, body: "rust is a fast systems programming language",
+        tags: ["rust", "fast", "programming", "language", "systems"] },
+      { id: "doc:3", x: 620, y: 130, body: "merkle trees enable verifiable data structures",
+        tags: ["merkle", "trees", "data", "structures", "verifiable"] },
+      { id: "doc:4", x: 540, y: 320, body: "rocksdb is a fast embedded key-value database",
+        tags: ["rocksdb", "fast", "database", "key", "value", "embedded"] },
+      { id: "doc:5", x: 700, y: 180, body: "approximate nearest neighbour search in high dimensions",
+        tags: ["search", "nearest", "neighbour", "dimensions", "high"] },
+      { id: "doc:6", x: 460, y: 260, body: "git tracks commits, branches and merges across time",
+        tags: ["git", "commits", "branches", "merges", "time", "version"] },
+      { id: "doc:7", x: 680, y: 100, body: "probabilistic data structures balance speed and memory",
+        tags: ["probabilistic", "data", "structures", "speed", "memory", "balance"] },
+      { id: "doc:8", x: 110, y: 290, body: "a fox and a hound walk through the forest at dusk",
+        tags: ["fox", "hound", "forest", "walk", "dusk"] },
+    ];
+
+    function ce(tag, attrs, parent) {
+      const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]);
+      if (parent) parent.appendChild(e);
+      return e;
+    }
+
+    function drawShell(svg) {
+      ce("line", { class: "space-axis", x1: 40,  y1: 230, x2: 760, y2: 230 }, svg);
+      ce("line", { class: "space-axis", x1: 400, y1: 20,  x2: 400, y2: 440 }, svg);
+      ce("text", { class: "space-axis-label", x: 50, y: 222 }, svg).textContent = "← animals / natural";
+      const t2 = ce("text", { class: "space-axis-label", x: 750, y: 222, "text-anchor": "end" }, svg);
+      t2.textContent = "tech / data →";
+      ce("text", { class: "space-axis-label", x: 408, y: 30 }, svg).textContent = "↑ structure";
+      ce("text", { class: "space-axis-label", x: 408, y: 435 }, svg).textContent = "↓ workflow";
+    }
+
+    function drawDocs(svg, tipEl, opts = {}) {
+      const { highlights = new Map(), top1 = null } = opts;
+      CORPUS.forEach(d => {
+        const rank = highlights.get(d.id);
+        const isTop = top1 === d.id;
+        const cls = isTop ? "doc-point top1" : (rank !== undefined ? "doc-point hit" : "doc-point");
+        const r = isTop ? 11 : (rank !== undefined ? 9 : 6);
+        const pt = ce("circle", { class: cls, cx: d.x, cy: d.y, r }, svg);
+        pt.addEventListener("mouseenter", (e) => {
+          tipEl.style.display = "block";
+          tipEl.style.left = (e.pageX + 14) + "px";
+          tipEl.style.top  = (e.pageY + 14) + "px";
+          tipEl.innerHTML = `<strong>${d.id}</strong><br/>${d.body}`;
+        });
+        pt.addEventListener("mousemove", (e) => {
+          tipEl.style.left = (e.pageX + 14) + "px";
+          tipEl.style.top  = (e.pageY + 14) + "px";
+        });
+        pt.addEventListener("mouseleave", () => { tipEl.style.display = "none"; });
+
+        const lblCls = isTop ? "doc-label top1" : "doc-label";
+        const lbl = ce("text", { class: lblCls, x: d.x + 11, y: d.y + 4 }, svg);
+        lbl.textContent = d.id + (rank !== undefined ? `  #${rank + 1}` : "");
+      });
+    }
+
+    // Static space on slide 2
+    {
+      const svg = document.getElementById("space-static");
+      drawShell(svg);
+      drawDocs(svg, document.getElementById("tip-static"));
+    }
+
+    // ---------- Toy "embedder": tag overlap + bigram Jaccard ----------
+    function tokenize(t) { return t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean); }
+    function tagOverlap(qt, dt) { let n = 0; for (const t of qt) if (dt.includes(t)) n++; return n; }
+    function bigrams(t) {
+      const s = " " + t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ") + " ";
+      const out = new Set();
+      for (let i = 0; i < s.length - 1; i++) out.add(s.slice(i, i + 2));
+      return out;
+    }
+    function jaccard(a, b) {
+      let inter = 0;
+      for (const x of a) if (b.has(x)) inter++;
+      return inter / Math.max(1, a.size + b.size - inter);
+    }
+    function score(q, d) {
+      return -(tagOverlap(tokenize(q), d.tags) * 1.0 + jaccard(bigrams(q), bigrams(d.body)) * 0.6);
+    }
+    function locateQuery(q) {
+      const ranked = CORPUS.map(d => ({ d, s: score(q, d) })).sort((a, b) => a.s - b.s);
+      const top3 = ranked.slice(0, 3);
+      let wx = 0, wy = 0, w = 0;
+      top3.forEach(({ d }, i) => { const k = 3 - i; wx += d.x * k; wy += d.y * k; w += k; });
+      return { x: wx / w, y: wy / w, ranking: ranked.map(r => r.d) };
+    }
+
+    function runSearch() {
+      const svg = document.getElementById("space-live");
+      svg.innerHTML = "";
+      drawShell(svg);
+      const q = document.getElementById("q").value || "";
+      const k = Math.max(1, Math.min(6, parseInt(document.getElementById("k").value || "3", 10)));
+      const { x: qx, y: qy, ranking } = locateQuery(q);
+      const highlights = new Map();
+      ranking.slice(0, k).forEach((d, i) => highlights.set(d.id, i));
+      const top1 = ranking[0].id;
+      ranking.slice(0, k).forEach((d, i) => {
+        ce("line", { class: i === 0 ? "dist-line top1" : "dist-line",
+                     x1: qx, y1: qy, x2: d.x, y2: d.y }, svg);
+      });
+      drawDocs(svg, document.getElementById("tip-live"), { highlights, top1 });
+      ce("circle", { class: "query-point", cx: qx, cy: qy, r: 9 }, svg);
+      const lbl = ce("text", {
+        x: qx + 14, y: qy - 8, fill: "#ff9999", "font-size": 11,
+        "font-weight": 700, "font-family": "JetBrains Mono",
+      }, svg);
+      lbl.textContent = "your query";
+
+      const hits = document.getElementById("hits");
+      hits.innerHTML = ranking.slice(0, k).map((d, i) => {
+        const dist = Math.sqrt((qx - d.x) ** 2 + (qy - d.y) ** 2);
+        return `<div class="hit ${i === 0 ? "top1" : ""}">
+          <div class="rk">${i + 1}</div>
+          <div class="body"><span class="id">${d.id}</span>${d.body}</div>
+          <div class="dist">d=${dist.toFixed(1)}</div>
+        </div>`;
+      }).join("");
+    }
+    document.getElementById("q").addEventListener("keypress", (e) => {
+      if (e.key === "Enter") runSearch();
+    });
+    runSearch();
+
+    // ---------- Commit timeline ----------
+    const COMMITS = [
+      { id: "c0", short: "0", msg: "init", primary: [], index: [] },
+      {
+        id: "c1", short: "1", msg: "seed",
+        primary: [["obs:1", "user prefers dark mode interfaces"],
+                  ["obs:2", "user is learning ML with Python"]],
+        index:   [["obs:1", "[0.21, 0.83, -0.04, …]"],
+                  ["obs:2", "[0.55, -0.12, 0.61, …]"]],
+      },
+      {
+        id: "c2", short: "2", msg: "add obs:3",
+        primary: [["obs:1", "user prefers dark mode interfaces"],
+                  ["obs:2", "user is learning ML with Python"],
+                  ["obs:3", "user works best in the morning"]],
+        index:   [["obs:1", "[0.21, 0.83, -0.04, …]"],
+                  ["obs:2", "[0.55, -0.12, 0.61, …]"],
+                  ["obs:3", "[0.32, 0.41, 0.18, …]"]],
+      },
+      {
+        id: "c3", short: "3", msg: "rollback",
+        primary: [["obs:1", "user prefers dark mode interfaces"],
+                  ["obs:2", "user is learning ML with Python"]],
+        index:   [["obs:1", "[0.21, 0.83, -0.04, …]"],
+                  ["obs:2", "[0.55, -0.12, 0.61, …]"]],
+        note: "obs:3 was noise — rewind keeps both trees aligned",
+      },
+    ];
+    function renderCommits(idx) {
+      document.getElementById("commits").innerHTML = COMMITS.map((cm, i) =>
+        `<div class="commit ${i === idx ? "active" : ""}" onclick="renderCommits(${i})">
+          <div class="dot">${cm.short}</div>
+          <div class="meta">commit ${i}</div>
+          <div class="msg">${cm.msg}</div>
+        </div>`
+      ).join("");
+      const cm = COMMITS[idx];
+      const p = document.getElementById("pane-primary");
+      const x = document.getElementById("pane-index");
+      p.innerHTML = cm.primary.length === 0
+        ? '<div class="empty-state">empty</div>'
+        : cm.primary.map(([k, v]) => `<div class="row"><span class="k">${k}</span> → ${v}</div>`).join("");
+      x.innerHTML = cm.index.length === 0
+        ? '<div class="empty-state">empty</div>'
+        : cm.index.map(([k, v]) => `<div class="row"><span class="k">${k}</span> → ${v}</div>`).join("");
+      if (cm.note) x.innerHTML += `<div class="note">${cm.note}</div>`;
+    }
+    renderCommits(2);
+
+    // ============================================================
+    // Deck navigation
+    // ============================================================
+    const slides = Array.from(document.querySelectorAll("[data-slide]"));
+    const dotsHost = document.getElementById("deck-dots");
+    let current = 0;
+
+    function setSlide(i) {
+      i = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach((s, k) => {
+        s.classList.toggle("active", k === i);
+        s.classList.toggle("prev", k < i);
+      });
+      dotsHost.querySelectorAll(".dot").forEach((d, k) => d.classList.toggle("active", k === i));
+      document.getElementById("cur").textContent = i + 1;
+      document.getElementById("prev").disabled = i === 0;
+      document.getElementById("next").disabled = i === slides.length - 1;
+      current = i;
+    }
+
+    slides.forEach((_, k) => {
+      const d = document.createElement("div");
+      d.className = "dot";
+      d.title = `Slide ${k + 1}`;
+      d.addEventListener("click", () => setSlide(k));
+      dotsHost.appendChild(d);
+    });
+    document.getElementById("total").textContent = slides.length;
+    document.getElementById("prev").addEventListener("click", () => setSlide(current - 1));
+    document.getElementById("next").addEventListener("click", () => setSlide(current + 1));
+
+    document.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT" && e.key !== "Escape") return;
+      if (["ArrowRight", "PageDown", " "].includes(e.key)) { setSlide(current + 1); e.preventDefault(); }
+      else if (["ArrowLeft", "PageUp"].includes(e.key)) { setSlide(current - 1); e.preventDefault(); }
+      else if (e.key === "Home") setSlide(0);
+      else if (e.key === "End") setSlide(slides.length - 1);
+    });
+
+    // Touch swipe
+    let touchX = null;
+    document.addEventListener("touchstart", (e) => { touchX = e.changedTouches[0].screenX; });
+    document.addEventListener("touchend", (e) => {
+      if (touchX === null) return;
+      const dx = e.changedTouches[0].screenX - touchX;
+      if (Math.abs(dx) > 50) setSlide(current + (dx < 0 ? 1 : -1));
+      touchX = null;
+    });
+
+    setSlide(0);
+  </script>
+</body>
+</html>

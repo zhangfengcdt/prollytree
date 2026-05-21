@@ -44,6 +44,10 @@ pub enum GitKvError {
     #[error("Merge conflicts: {0:?}")]
     MergeConflictError(Vec<crate::diff::MergeConflict>),
 
+    #[cfg(feature = "proximity")]
+    #[error("Proximity merge conflicts: {0:?}")]
+    ProximityMergeConflictError(Vec<crate::proximity::ProximityConflict>),
+
     #[error("Invalid commit: {0}")]
     InvalidCommit(String),
 

@@ -89,6 +89,7 @@ nav:
       - Architecture: architecture.md
       - Storage Backends: storage.md
       - SQL Interface: sql.md
+      - Text Search: text_search.md
       - FAQ: faq.md
   - Theory:
       - Overview: theory/index.md
@@ -106,6 +107,7 @@ nav:
       - Basic Tree: examples/basic.md
       - Versioned Store: examples/versioning.md
       - SQL Queries: examples/sql.md
+      - Text Search: examples/text_search.md
       - Python Bindings: examples/python.md
 
 extra:

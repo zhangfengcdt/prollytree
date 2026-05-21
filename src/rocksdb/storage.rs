@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 const CONFIG_PREFIX: &[u8] = b"config:";
 const NODE_PREFIX: &[u8] = b"node:";
+const BLOB_PREFIX: &[u8] = b"blob:";
 
 /// RocksDB-backed storage for ProllyTree nodes
 ///
@@ -130,6 +131,14 @@ impl<const N: usize> RocksDBNodeStorage<N> {
         result.extend_from_slice(key.as_bytes());
         result
     }
+
+    /// Create a key for storing an externalised blob.
+    fn blob_key(hash: &ValueDigest<N>) -> Vec<u8> {
+        let mut key = Vec::with_capacity(BLOB_PREFIX.len() + N);
+        key.extend_from_slice(BLOB_PREFIX);
+        key.extend_from_slice(&hash.0);
+        key
+    }
 }
 
 impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
@@ -195,6 +204,54 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
     fn get_config(&self, key: &str) -> Option<Vec<u8>> {
         let db_key = Self::config_key(key);
         self.db.get(&db_key).ok().flatten()
+    }
+
+    fn insert_blob(&mut self, hash: ValueDigest<N>, bytes: &[u8]) -> Result<(), StorageError> {
+        let db_key = Self::blob_key(&hash);
+        // Content-addressed: if the key is already present, skip writing.
+        // Avoids needlessly bumping RocksDB write counters on repeated
+        // inserts of the same blob.
+        if self.db.get(&db_key).ok().flatten().is_some() {
+            return Ok(());
+        }
+        self.db
+            .put(&db_key, bytes)
+            .map_err(|e| StorageError::Other(e.to_string()))
+    }
+
+    fn get_blob(&self, hash: &ValueDigest<N>) -> Option<Vec<u8>> {
+        let db_key = Self::blob_key(hash);
+        self.db.get(&db_key).ok().flatten()
+    }
+
+    fn delete_blob(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
+        let db_key = Self::blob_key(hash);
+        self.db
+            .delete(&db_key)
+            .map_err(|e| StorageError::Other(e.to_string()))
+    }
+
+    fn list_blobs(&self) -> Result<Vec<ValueDigest<N>>, StorageError> {
+        let mut out = Vec::new();
+        let iter = self.db.iterator(rocksdb::IteratorMode::From(
+            BLOB_PREFIX,
+            rocksdb::Direction::Forward,
+        ));
+        for item in iter {
+            let (key, _) = item.map_err(|e| StorageError::Other(e.to_string()))?;
+            // Keys are returned in sorted byte order. Once we see a key that
+            // doesn't start with our prefix, we've walked past the blob range.
+            if !key.starts_with(BLOB_PREFIX) {
+                break;
+            }
+            let suffix = &key[BLOB_PREFIX.len()..];
+            if suffix.len() == N {
+                let mut arr = [0u8; N];
+                arr.copy_from_slice(suffix);
+                out.push(ValueDigest(arr));
+            }
+        }
+        Ok(out)
     }
 }
 

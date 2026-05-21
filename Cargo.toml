@@ -42,6 +42,12 @@ futures = { version = "0.3", optional = true }
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync"], optional = true }
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"], optional = true }
 rocksdb = { version = "0.22", optional = true }
+candle-core = { version = "0.10", optional = true }
+candle-nn = { version = "0.10", optional = true }
+candle-transformers = { version = "0.10", optional = true }
+tokenizers = { version = "0.23", optional = true, default-features = false, features = ["onig"] }
+ureq = { version = "2.10", optional = true, default-features = false, features = ["tls"] }
+dirs = { version = "5.0", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -63,6 +69,16 @@ git = ["dep:gix", "dep:clap", "dep:lru", "dep:hex", "dep:chrono", "dep:uuid"]
 sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures", "dep:tokio"]
 python = ["dep:pyo3"]
 rocksdb_storage = ["dep:rocksdb", "dep:lru"]
+proximity = []
+proximity_text = [
+    "proximity",
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+    "dep:ureq",
+    "dep:dirs",
+]
 
 [[bin]]
 name = "git-prolly"
@@ -114,3 +130,13 @@ required-features = ["rocksdb_storage"]
 name = "worktree"
 path = "examples/worktree.rs"
 required-features = ["git", "sql"]
+
+[[example]]
+name = "namespaced"
+path = "examples/namespaced.rs"
+required-features = ["git"]
+
+[[example]]
+name = "text_index"
+path = "examples/text_index.rs"
+required-features = ["git", "proximity"]

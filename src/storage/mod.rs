@@ -12,6 +12,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+pub mod externalize;
 pub mod file;
 #[cfg(feature = "git")]
 pub mod git;
@@ -106,6 +107,74 @@ pub trait NodeStorage<const N: usize>: Send + Sync + Clone {
 
     /// Retrieves a configuration value.
     fn get_config(&self, key: &str) -> Option<Vec<u8>>;
+
+    /// Flush any in-memory bookkeeping that backends need on disk for a fresh
+    /// handle to read what this handle wrote.
+    ///
+    /// Default: no-op. Most backends (in-memory, file, rocksdb) place every
+    /// write durably on `insert_node` / `save_config` already. `GitNodeStorage`
+    /// is the exception: it persists each node as a git blob immediately, but
+    /// its `prolly_hash → git_object_id` mapping lives only in memory until
+    /// the higher-level commit machinery writes the canonical
+    /// `prolly_hash_mappings` snapshot. Callers that intend a fresh process
+    /// to reload the data they just wrote (e.g. an explicit `persist()` on
+    /// a higher-level index) should call this after they finish writing.
+    fn sync(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Blob API — PR 0a foundation for large-value externalization.
+    // -----------------------------------------------------------------------
+    //
+    // Blobs are arbitrary opaque byte sequences stored under a caller-chosen
+    // content hash (typically `ValueDigest::new(&bytes)`). They are NOT
+    // ProllyNodes — they're just raw bytes. The motivating use case is
+    // externalizing values too large to fit inline in a leaf node: the leaf
+    // stores `(key, hash)` and the value bytes live in a blob.
+    //
+    // PR 0a only adds the API + per-backend implementations. The threshold-
+    // based externalization logic in `VersionedKvStore::insert` lands in a
+    // follow-up PR.
+    //
+    // Default impls return `BlobNotSupported` so a backend that doesn't yet
+    // implement them fails loudly rather than silently dropping data.
+
+    /// Persist raw bytes under `hash`. Idempotent — if `hash` is already
+    /// present, the call must be a no-op (content-addressed: same hash
+    /// implies same content).
+    fn insert_blob(&mut self, hash: ValueDigest<N>, bytes: &[u8]) -> Result<(), StorageError> {
+        let _ = (hash, bytes);
+        Err(StorageError::Other(
+            "blob storage not supported by this backend".into(),
+        ))
+    }
+
+    /// Retrieve previously-stored bytes by `hash`. Returns `None` if not
+    /// found.
+    fn get_blob(&self, hash: &ValueDigest<N>) -> Option<Vec<u8>> {
+        let _ = hash;
+        None
+    }
+
+    /// Remove a blob by `hash`. Idempotent — missing blob is success.
+    fn delete_blob(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
+        let _ = hash;
+        Err(StorageError::Other(
+            "blob storage not supported by this backend".into(),
+        ))
+    }
+
+    /// Enumerate every blob currently stored. Used by
+    /// [`crate::git::versioned_store::NamespacedKvStore::gc_blobs`] to
+    /// identify orphans (blobs no longer referenced by any namespace tree).
+    ///
+    /// Default returns an empty list — appropriate for backends that don't
+    /// support blob storage. Backends that implement `insert_blob` / `get_blob`
+    /// / `delete_blob` must also implement this for GC to work.
+    fn list_blobs(&self) -> Result<Vec<ValueDigest<N>>, StorageError> {
+        Ok(Vec::new())
+    }
 }
 
 impl<const N: usize> Display for ValueDigest<N> {

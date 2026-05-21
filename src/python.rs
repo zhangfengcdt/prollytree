@@ -1880,9 +1880,17 @@ fn sql_value_to_json(value: &SqlValue) -> serde_json::Value {
 ///
 /// Each namespace is backed by its own ProllyTree subtree, enabling O(1) change
 /// detection, efficient namespace-scoped operations, and clean isolation.
+#[cfg(feature = "proximity")]
+type PyTextConfigMap = HashMap<(String, String), (Arc<dyn Embedder>, Arc<dyn Chunker>)>;
+
 #[pyclass(name = "NamespacedKvStore")]
 struct PyNamespacedKvStore {
     inner: Arc<Mutex<GitNamespacedKvStore<32>>>,
+    // Python-side cache of `(ns, idx) -> (embedder, chunker)` so subsequent
+    // text-index calls can rebuild the generic `TextIndexConfig<E>` without
+    // forcing the caller to re-pass the embedder every time.
+    #[cfg(feature = "proximity")]
+    text_configs: Arc<Mutex<PyTextConfigMap>>,
 }
 
 #[pymethods]
@@ -1895,6 +1903,8 @@ impl PyNamespacedKvStore {
         })?;
         Ok(Self {
             inner: Arc::new(Mutex::new(store)),
+            #[cfg(feature = "proximity")]
+            text_configs: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -1905,6 +1915,8 @@ impl PyNamespacedKvStore {
             .map_err(|e| PyValueError::new_err(format!("Failed to open NamespacedKvStore: {e}")))?;
         Ok(Self {
             inner: Arc::new(Mutex::new(store)),
+            #[cfg(feature = "proximity")]
+            text_configs: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -2116,6 +2128,554 @@ impl PyNamespacedKvStore {
             store.current_branch()
         )
     }
+
+    // ----- Proximity / text-search (feature `proximity`) ----------------
+    // All methods below are additive — no existing surface area changes.
+
+    /// Open or create a named text sub-index inside a namespace. Caches the
+    /// embedder + chunker on the Python wrapper so subsequent text-index
+    /// methods don't require re-passing them.
+    ///
+    /// `chunker` is one of `"identity"` (default — one chunk per doc) or
+    /// `"line"` (split on `\n`).
+    #[cfg(feature = "proximity")]
+    #[pyo3(signature = (namespace, idx_name, embedder, chunker=None))]
+    fn text_index_open(
+        &self,
+        namespace: &str,
+        idx_name: &str,
+        embedder: &Bound<'_, PyAny>,
+        chunker: Option<&str>,
+    ) -> PyResult<()> {
+        let arc_embedder = extract_embedder(embedder)?;
+        let arc_chunker = build_chunker(chunker)?;
+        {
+            let mut store = self.inner.lock();
+            let mut ns = store.namespace(namespace);
+            let cfg = Self::make_text_cfg(arc_embedder.clone(), arc_chunker.clone());
+            ns.text_index(idx_name, cfg)
+                .map(|_| ())
+                .map_err(|e| PyValueError::new_err(format!("text_index_open failed: {e}")))?;
+        }
+        self.text_configs.lock().insert(
+            (namespace.to_string(), idx_name.to_string()),
+            (arc_embedder, arc_chunker),
+        );
+        Ok(())
+    }
+
+    /// Insert a `(id, text)` pair into a text sub-index.
+    #[cfg(feature = "proximity")]
+    fn text_index_insert(
+        &self,
+        namespace: &str,
+        idx_name: &str,
+        id: &Bound<'_, PyBytes>,
+        text: &str,
+    ) -> PyResult<()> {
+        let (e, c) = self.lookup_text_cfg(namespace, idx_name)?;
+        let id_bytes = id.as_bytes().to_vec();
+        let mut store = self.inner.lock();
+        let mut ns = store.namespace(namespace);
+        let mut handle = ns
+            .text_index(idx_name, Self::make_text_cfg(e, c))
+            .map_err(|e| PyValueError::new_err(format!("text_index re-open failed: {e}")))?;
+        handle
+            .insert(&id_bytes, text)
+            .map_err(|e| PyValueError::new_err(format!("text_index_insert failed: {e}")))
+    }
+
+    /// Search a text sub-index. Returns a list of `(id_bytes, score)`
+    /// tuples — top-k documents (dedupped across chunks).
+    #[cfg(feature = "proximity")]
+    fn text_index_search<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: &str,
+        idx_name: &str,
+        query: &str,
+        k: usize,
+    ) -> PyResult<Py<PyList>> {
+        let (e, c) = self.lookup_text_cfg(namespace, idx_name)?;
+        let hits = {
+            let mut store = self.inner.lock();
+            let mut ns = store.namespace(namespace);
+            let mut handle = ns
+                .text_index(idx_name, Self::make_text_cfg(e, c))
+                .map_err(|e| PyValueError::new_err(format!("text_index re-open failed: {e}")))?;
+            handle
+                .search(query, k)
+                .map_err(|e| PyValueError::new_err(format!("text_index_search failed: {e}")))?
+        };
+        let tuples: Vec<Py<PyAny>> = hits
+            .into_iter()
+            .map(|h| {
+                let t = pyo3::types::PyTuple::new_bound(
+                    py,
+                    &[
+                        PyBytes::new_bound(py, &h.id).to_object(py),
+                        h.score.to_object(py),
+                    ],
+                );
+                t.into()
+            })
+            .collect();
+        Ok(PyList::new_bound(py, &tuples).into())
+    }
+
+    /// Delete every chunk for `id` from a text sub-index.
+    #[cfg(feature = "proximity")]
+    fn text_index_delete(
+        &self,
+        namespace: &str,
+        idx_name: &str,
+        id: &Bound<'_, PyBytes>,
+    ) -> PyResult<bool> {
+        let (e, c) = self.lookup_text_cfg(namespace, idx_name)?;
+        let id_bytes = id.as_bytes().to_vec();
+        let mut store = self.inner.lock();
+        let mut ns = store.namespace(namespace);
+        let mut handle = ns
+            .text_index(idx_name, Self::make_text_cfg(e, c))
+            .map_err(|e| PyValueError::new_err(format!("text_index re-open failed: {e}")))?;
+        Ok(handle.delete(&id_bytes))
+    }
+
+    /// Number of distinct documents in a text sub-index.
+    #[cfg(feature = "proximity")]
+    fn text_index_len(&self, namespace: &str, idx_name: &str) -> PyResult<usize> {
+        let (e, c) = self.lookup_text_cfg(namespace, idx_name)?;
+        let mut store = self.inner.lock();
+        let mut ns = store.namespace(namespace);
+        let handle = ns
+            .text_index(idx_name, Self::make_text_cfg(e, c))
+            .map_err(|e| PyValueError::new_err(format!("text_index re-open failed: {e}")))?;
+        Ok(handle.len())
+    }
+
+    /// Raw chunk count for a text sub-index (>= len() under non-identity chunkers).
+    #[cfg(feature = "proximity")]
+    fn text_index_chunk_count(&self, namespace: &str, idx_name: &str) -> PyResult<usize> {
+        let (e, c) = self.lookup_text_cfg(namespace, idx_name)?;
+        let mut store = self.inner.lock();
+        let mut ns = store.namespace(namespace);
+        let handle = ns
+            .text_index(idx_name, Self::make_text_cfg(e, c))
+            .map_err(|e| PyValueError::new_err(format!("text_index re-open failed: {e}")))?;
+        Ok(handle.chunk_count())
+    }
+
+    /// Drop a text sub-index from the in-memory cache.
+    #[cfg(feature = "proximity")]
+    fn text_index_drop(&self, namespace: &str, idx_name: &str) -> bool {
+        let dropped = {
+            let mut store = self.inner.lock();
+            let mut ns = store.namespace(namespace);
+            ns.drop_text_index(idx_name)
+        };
+        self.text_configs
+            .lock()
+            .remove(&(namespace.to_string(), idx_name.to_string()));
+        dropped
+    }
+
+    /// Configure auto-cascade — every primary insert/delete in this
+    /// namespace mirrors into the listed text sub-indexes.
+    #[cfg(feature = "proximity")]
+    fn set_cascade(&self, namespace: &str, idx_names: Vec<String>) {
+        self.inner.lock().set_cascade(namespace, idx_names);
+    }
+
+    /// Disable auto-cascade for a namespace.
+    #[cfg(feature = "proximity")]
+    fn clear_cascade(&self, namespace: &str) {
+        self.inner.lock().clear_cascade(namespace);
+    }
+
+    /// Current cascade list for a namespace, or None if not configured.
+    #[cfg(feature = "proximity")]
+    fn cascade_for_namespace(&self, namespace: &str) -> Option<Vec<String>> {
+        self.inner
+            .lock()
+            .cascade_for_namespace(namespace)
+            .map(|s| s.to_vec())
+    }
+
+    /// Audit a text sub-index against the primary KV tree.
+    /// Returns a dict with `orphans_in_index`, `missing_from_index`,
+    /// and `is_in_sync` keys.
+    #[cfg(feature = "proximity")]
+    fn audit_text_index<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: &str,
+        idx_name: &str,
+    ) -> PyResult<Py<PyDict>> {
+        let report = self
+            .inner
+            .lock()
+            .audit_text_index(namespace, idx_name)
+            .map_err(|e| PyValueError::new_err(format!("audit_text_index failed: {e}")))?;
+        let d = PyDict::new_bound(py);
+        let orphans: Vec<Py<PyBytes>> = report
+            .orphans_in_index
+            .iter()
+            .map(|b| PyBytes::new_bound(py, b).into())
+            .collect();
+        let missing: Vec<Py<PyBytes>> = report
+            .missing_from_index
+            .iter()
+            .map(|b| PyBytes::new_bound(py, b).into())
+            .collect();
+        d.set_item("orphans_in_index", PyList::new_bound(py, &orphans))?;
+        d.set_item("missing_from_index", PyList::new_bound(py, &missing))?;
+        d.set_item("is_in_sync", report.is_in_sync())?;
+        Ok(d.into())
+    }
+
+    /// Delete every orphan id from a text sub-index. Returns the count.
+    #[cfg(feature = "proximity")]
+    fn purge_text_index_orphans(&self, namespace: &str, idx_name: &str) -> PyResult<usize> {
+        self.inner
+            .lock()
+            .purge_text_index_orphans(namespace, idx_name)
+            .map_err(|e| PyValueError::new_err(format!("purge_text_index_orphans failed: {e}")))
+    }
+
+    /// Set the externalisation threshold (in bytes). None disables.
+    #[cfg(feature = "proximity")]
+    #[pyo3(signature = (threshold=None))]
+    fn set_externalize_threshold(&self, threshold: Option<usize>) {
+        self.inner.lock().set_externalize_threshold(threshold);
+    }
+
+    /// Get the externalisation threshold, or None when disabled.
+    #[cfg(feature = "proximity")]
+    fn externalize_threshold(&self) -> Option<usize> {
+        self.inner.lock().externalize_threshold()
+    }
+
+    /// Run blob garbage collection. Returns a dict with `total`,
+    /// `referenced`, `removed`, and `errors` keys.
+    #[cfg(feature = "proximity")]
+    fn gc_blobs<'py>(&self, py: Python<'py>) -> PyResult<Py<PyDict>> {
+        let report = self
+            .inner
+            .lock()
+            .gc_blobs()
+            .map_err(|e| PyValueError::new_err(format!("gc_blobs failed: {e}")))?;
+        let d = PyDict::new_bound(py);
+        d.set_item("total", report.total)?;
+        d.set_item("referenced", report.referenced)?;
+        d.set_item("removed", report.removed)?;
+        d.set_item("errors", report.errors)?;
+        Ok(d.into())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proximity / text-search bindings
+// ---------------------------------------------------------------------------
+//
+// Backward compatibility: every existing class and method above is unchanged.
+// All new surface area is additive — gated by `#[cfg(feature = "proximity")]`
+// (with `proximity_text` for the MiniLM embedder).
+
+#[cfg(feature = "proximity")]
+use crate::proximity::{Chunker, Embedder, IdentityChunker, LineChunker};
+
+/// Python wrapper around the built-in deterministic `HashEmbedder` — pure
+/// Rust, no ML deps. Useful for tests and demos; NOT a semantic embedder.
+#[cfg(feature = "proximity")]
+#[pyclass(name = "HashEmbedder")]
+struct PyHashEmbedder {
+    inner: Arc<dyn Embedder>,
+}
+
+#[cfg(feature = "proximity")]
+#[pymethods]
+impl PyHashEmbedder {
+    /// Build a new hash embedder of the given dimensionality.
+    #[new]
+    fn new(dim: u16, seed: u64) -> Self {
+        Self {
+            inner: Arc::new(crate::proximity::HashEmbedder::new(dim, seed)),
+        }
+    }
+
+    /// Stable id of the embedder family.
+    #[getter]
+    fn id(&self) -> String {
+        self.inner.id().to_string()
+    }
+
+    /// Version string (changes if dim or seed change).
+    #[getter]
+    fn version(&self) -> String {
+        self.inner.version().to_string()
+    }
+
+    /// Vector dimensionality this embedder produces.
+    #[getter]
+    fn dim(&self) -> u16 {
+        self.inner.dim()
+    }
+
+    /// Embed `text` into a `dim`-length list of floats.
+    fn embed(&self, text: &str) -> PyResult<Vec<f32>> {
+        self.inner
+            .embed(text)
+            .map_err(|e| PyValueError::new_err(format!("embed failed: {e}")))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HashEmbedder(id='{}', version='{}', dim={})",
+            self.inner.id(),
+            self.inner.version(),
+            self.inner.dim()
+        )
+    }
+}
+
+/// Python wrapper around the Candle + all-MiniLM-L6-v2 sentence embedder.
+/// First call downloads ~90 MB of weights into the local cache (override the
+/// path via `PROLLYTREE_EMBEDDER_CACHE`).
+#[cfg(feature = "proximity_text")]
+#[pyclass(name = "MiniLmEmbedder")]
+struct PyMiniLmEmbedder {
+    inner: Arc<dyn Embedder>,
+}
+
+#[cfg(feature = "proximity_text")]
+#[pymethods]
+impl PyMiniLmEmbedder {
+    /// Construct with default `sentence-transformers/all-MiniLM-L6-v2@main`.
+    #[new]
+    #[pyo3(signature = (model_id=None, revision=None))]
+    fn new(model_id: Option<&str>, revision: Option<&str>) -> Self {
+        let model_id = model_id.unwrap_or(crate::proximity::DEFAULT_MODEL_ID);
+        let revision = revision.unwrap_or(crate::proximity::DEFAULT_REVISION);
+        Self {
+            inner: Arc::new(crate::proximity::MiniLmEmbedder::new(model_id, revision)),
+        }
+    }
+
+    #[getter]
+    fn id(&self) -> String {
+        self.inner.id().to_string()
+    }
+
+    #[getter]
+    fn version(&self) -> String {
+        self.inner.version().to_string()
+    }
+
+    #[getter]
+    fn dim(&self) -> u16 {
+        self.inner.dim()
+    }
+
+    fn embed(&self, text: &str) -> PyResult<Vec<f32>> {
+        self.inner
+            .embed(text)
+            .map_err(|e| PyValueError::new_err(format!("embed failed: {e}")))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MiniLmEmbedder(id='{}', version='{}', dim={})",
+            self.inner.id(),
+            self.inner.version(),
+            self.inner.dim()
+        )
+    }
+}
+
+/// Wraps a Python-side embedder (any callable returning `list[float]`) as an
+/// `Arc<dyn Embedder>` so users can plug in their own embedding pipelines
+/// without writing Rust. The wrapped callable is invoked under the GIL; the
+/// `id`, `version`, and `dim` metadata is captured at construction so the
+/// `Embedder` trait's `&str` accessors stay borrow-safe.
+#[cfg(feature = "proximity")]
+#[pyclass(name = "CallableEmbedder")]
+struct PyCallableEmbedder {
+    inner: Arc<CallableEmbedderImpl>,
+}
+
+#[cfg(feature = "proximity")]
+struct CallableEmbedderImpl {
+    id: String,
+    version: String,
+    dim: u16,
+    callable: Py<PyAny>,
+}
+
+#[cfg(feature = "proximity")]
+impl Embedder for CallableEmbedderImpl {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn version(&self) -> &str {
+        &self.version
+    }
+    fn dim(&self) -> u16 {
+        self.dim
+    }
+    fn embed(&self, text: &str) -> Result<Vec<f32>, crate::proximity::EmbedError> {
+        Python::with_gil(|py| {
+            let result = self.callable.bind(py).call1((text,)).map_err(|e| {
+                crate::proximity::EmbedError::Failure(format!("python callback raised: {e}"))
+            })?;
+            let vec: Vec<f32> = result.extract().map_err(|e| {
+                crate::proximity::EmbedError::Failure(format!(
+                    "python callback returned non-list-of-floats: {e}"
+                ))
+            })?;
+            if vec.len() != self.dim as usize {
+                return Err(crate::proximity::EmbedError::DimensionMismatch {
+                    expected: self.dim,
+                    got: vec.len() as u16,
+                });
+            }
+            Ok(vec)
+        })
+    }
+}
+
+#[cfg(feature = "proximity")]
+#[pymethods]
+impl PyCallableEmbedder {
+    /// Wrap a Python callable as an Embedder. `embed_fn(text)` must return a
+    /// list of `dim` floats and must be deterministic for a given input —
+    /// changing what it returns for the same text breaks index identity.
+    ///
+    /// `id` and `version` are persisted in the text-index registry on first
+    /// open and re-checked on every reopen. Pick values that change whenever
+    /// the embedding distribution changes (e.g. model upgrade, new tokenizer)
+    /// so reopens correctly surface as `EmbedderMismatch`.
+    #[new]
+    fn new(id: String, version: String, dim: u16, embed_fn: Py<PyAny>) -> Self {
+        Self {
+            inner: Arc::new(CallableEmbedderImpl {
+                id,
+                version,
+                dim,
+                callable: embed_fn,
+            }),
+        }
+    }
+
+    #[getter]
+    fn id(&self) -> String {
+        self.inner.id.clone()
+    }
+
+    #[getter]
+    fn version(&self) -> String {
+        self.inner.version.clone()
+    }
+
+    #[getter]
+    fn dim(&self) -> u16 {
+        self.inner.dim
+    }
+
+    fn embed(&self, text: &str) -> PyResult<Vec<f32>> {
+        Embedder::embed(self.inner.as_ref(), text)
+            .map_err(|e| PyValueError::new_err(format!("embed failed: {e}")))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CallableEmbedder(id='{}', version='{}', dim={})",
+            self.inner.id, self.inner.version, self.inner.dim
+        )
+    }
+}
+
+/// Internal helper: extract the inner `Arc<dyn Embedder>` from any of the
+/// known Python embedder wrappers.
+#[cfg(feature = "proximity")]
+fn extract_embedder(obj: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Embedder>> {
+    if let Ok(h) = obj.downcast::<PyHashEmbedder>() {
+        return Ok(h.borrow().inner.clone());
+    }
+    if let Ok(c) = obj.downcast::<PyCallableEmbedder>() {
+        return Ok(c.borrow().inner.clone());
+    }
+    #[cfg(feature = "proximity_text")]
+    if let Ok(m) = obj.downcast::<PyMiniLmEmbedder>() {
+        return Ok(m.borrow().inner.clone());
+    }
+    Err(PyValueError::new_err(
+        "expected an Embedder (HashEmbedder, CallableEmbedder, or MiniLmEmbedder)",
+    ))
+}
+
+/// Internal helper: build a chunker from a string name. None or "identity"
+/// → IdentityChunker. "line" → LineChunker.
+#[cfg(feature = "proximity")]
+fn build_chunker(name: Option<&str>) -> PyResult<Arc<dyn Chunker>> {
+    match name {
+        None | Some("identity") => Ok(Arc::new(IdentityChunker)),
+        Some("line") => Ok(Arc::new(LineChunker)),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "unknown chunker '{other}'; expected 'identity' or 'line'"
+        ))),
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl PyNamespacedKvStore {
+    /// Look up `(embedder, chunker)` for a previously-opened text index.
+    fn lookup_text_cfg(
+        &self,
+        namespace: &str,
+        idx_name: &str,
+    ) -> PyResult<(Arc<dyn Embedder>, Arc<dyn Chunker>)> {
+        let guard = self.text_configs.lock();
+        guard
+            .get(&(namespace.to_string(), idx_name.to_string()))
+            .cloned()
+            .ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "text index '{idx_name}' not opened in namespace '{namespace}' — call text_index_open first"
+                ))
+            })
+    }
+
+    /// Build a `TextIndexConfig<ArcEmbedderShim>` from cached parts.
+    fn make_text_cfg(
+        embedder: Arc<dyn Embedder>,
+        chunker: Arc<dyn Chunker>,
+    ) -> crate::proximity::TextIndexConfig<ArcEmbedderShim> {
+        let mut cfg = crate::proximity::TextIndexConfig::new(ArcEmbedderShim(embedder));
+        cfg.chunker = chunker;
+        cfg
+    }
+}
+
+/// Internal newtype wrapping `Arc<dyn Embedder>` so it satisfies
+/// `E: Embedder + 'static` for the generic `text_index<E>` method.
+/// Delegates every trait method to the inner Arc.
+#[cfg(feature = "proximity")]
+struct ArcEmbedderShim(Arc<dyn Embedder>);
+
+#[cfg(feature = "proximity")]
+impl Embedder for ArcEmbedderShim {
+    fn id(&self) -> &str {
+        self.0.id()
+    }
+    fn version(&self) -> &str {
+        self.0.version()
+    }
+    fn dim(&self) -> u16 {
+        self.0.dim()
+    }
+    fn embed(&self, text: &str) -> Result<Vec<f32>, crate::proximity::EmbedError> {
+        self.0.embed(text)
+    }
 }
 
 #[pymodule]
@@ -2136,5 +2696,11 @@ fn prollytree(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWorktreeVersionedKvStore>()?;
     #[cfg(feature = "sql")]
     m.add_class::<PyProllySQLStore>()?;
+    #[cfg(feature = "proximity")]
+    m.add_class::<PyHashEmbedder>()?;
+    #[cfg(feature = "proximity")]
+    m.add_class::<PyCallableEmbedder>()?;
+    #[cfg(feature = "proximity_text")]
+    m.add_class::<PyMiniLmEmbedder>()?;
     Ok(())
 }

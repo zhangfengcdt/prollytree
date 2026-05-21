@@ -2,6 +2,12 @@
 
 This directory contains the Sphinx documentation for ProllyTree Python bindings.
 
+> **Note:** the primary, user-facing documentation site is now the MkDocs
+> Material build at **<https://zhangfengcdt.github.io/prollytree/>** (sources
+> under `docs/` at the repo root). The Sphinx + Read the Docs build here is
+> kept for Python-specific API reference auto-generation and as a fallback;
+> link new content from the mkdocs site first.
+
 ## Local Development
 
 ### Prerequisites

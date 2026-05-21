@@ -1,0 +1,60 @@
+name: Rust Examples
+
+# Runs every example under `examples/` to catch regressions that the unit/
+# integration test suite doesn't surface (CLI plumbing, demo dual-write
+# patterns, multi-backend storage paths). No path filter — examples are a
+# user-facing contract and any PR that breaks them should fail this gate.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+  push:
+    branches:
+      - main
+
+jobs:
+  examples:
+    name: Run examples
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check Cargo.lock is up to date
+      run: cargo check --locked
+
+    # librocksdb-sys (pulled in by the `rocksdb_storage` feature, which the
+    # `storage` example needs) requires clang for bindgen and a C++ toolchain
+    # to compile RocksDB itself.
+    - name: Install clang + C++ toolchain for librocksdb-sys
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends clang g++ libc6-dev
+
+    # Examples that touch GitVersionedKvStore / GitNamespacedKvStore run
+    # `git init` against temp dirs and need a configured identity.
+    - name: Configure git identity
+      run: |
+        git config --global user.name  "CI Examples"
+        git config --global user.email "ci-examples@example.com"
+        git config --global init.defaultBranch main
+
+    # Build every example once with the union feature set; each example's
+    # `required-features` is satisfied as long as it is a subset.
+    - name: Build all examples
+      run: |
+        cargo build --locked --examples \
+          --features "git sql proximity rocksdb_storage" --verbose
+
+    # Run each example by name. Fail fast (`set -e`) so the first failure
+    # surfaces immediately in the PR check.
+    - name: Run examples
+      run: |
+        set -e
+        cargo run --locked --example proof
+        cargo run --locked --example sql --features sql
+        cargo run --locked --example versioning
+        cargo run --locked --example worktree --features "git sql"
+        cargo run --locked --example storage --features rocksdb_storage
+        cargo run --locked --example namespaced --features git
+        cargo run --locked --example text_index --features "git proximity"

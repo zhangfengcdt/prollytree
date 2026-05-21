@@ -108,9 +108,35 @@ Python exposes:
 
 - `ProllyTree`, `TreeConfig`
 - `VersionedKvStore`, `ConflictResolution`, `MergeConflict`
+- `NamespacedKvStore`, `HashEmbedder`, `CallableEmbedder`, `MiniLmEmbedder`
 - `ProllySQLStore`
 
 The binding is a thin wrapper — Rust objects are held behind `Arc<Mutex<…>>` and Python types are PyO3 newtypes over them. See the [Python API reference](api/python.md).
+
+### 7. Proximity / text-search layer
+
+Each namespace of a `NamespacedKvStore` can own zero or more **text sub-indexes** that ride on top of the same `NodeStorage<N>` the primary tree uses. Documents go through a pluggable `Embedder` (and optional `Chunker`) to produce vectors, which are stored in a content-addressed **proximity tree** — a Dolt-style Merkle ANN structure ([design discussion](https://www.dolthub.com/blog/2025-06-23-vector-index-deep-dive/)) whose shape is a pure function of the current `(id, vector)` set.
+
+```mermaid
+flowchart LR
+    P[ns_insert primary] -->|cascade| C{cascade configured?}
+    C -- yes --> E[Embedder] --> V[(vector)]
+    C -- no  --> NIL[(no-op for index)]
+    V --> PROX[ProximityIndex<br/>BTreeMap + lazy rebuild]
+    PROX --> NS[NodeStorage]
+```
+
+Key properties:
+
+- **One git commit, all layers.** Every dirty namespace (primary tree + every dirty sub-index) drains into a single Git commit. There is no on-disk state where the primary tree updated but the index didn't.
+- **History-independent shape.** A vector's max level is derived from a hash of `(id, vector)` — index shape, and therefore root hash, depend only on the current data, not insertion order. Two replicas converge to the same root.
+- **Primary is the source of truth.** The index stores `(id, vector)` only — never the source text. Reads are two steps: ANN search, then primary KV lookup by id. Re-embedding after a model swap is therefore possible.
+- **Three-way merge.** Per-index merge runs the same nine-case logic as the byte-key primary tree, routed through a `ProximityConflictResolver`. Built-in resolvers: take-source, take-destination, latest-vector (by timestamp), mean-vector.
+- **Externalised values.** Large primary values can be offloaded to content-addressed blobs (44-byte envelope inline). `gc_blobs()` reclaims unreferenced blobs.
+
+Backends in v1: **File** and **RocksDB**. `InMemory` works for tests. `Git` proximity persistence relies on the namespaced commit machinery and is exercised through `NamespacedKvStore` rather than constructing `ProximityIndex<_, GitNodeStorage<_>>` directly.
+
+Full reference: [Text Search](text_search.md).
 
 ## Data flow
 

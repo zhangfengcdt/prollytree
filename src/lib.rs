@@ -70,6 +70,8 @@ pub mod errors;
 pub mod git;
 pub mod node;
 pub mod proof;
+#[cfg(feature = "proximity")]
+pub mod proximity;
 #[cfg(feature = "python")]
 pub mod python;
 #[cfg(feature = "rocksdb_storage")]

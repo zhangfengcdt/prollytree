@@ -272,6 +272,58 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
 
         None
     }
+
+    /// Flush the in-memory `prolly_hash → git_object_id` mapping to
+    /// `dataset_dir/prolly_hash_mappings` in the same sorted format
+    /// `load_hash_mappings` expects. Idempotent; safe to call repeatedly.
+    ///
+    /// Snapshots the mapping under the lock, releases it, then writes via a
+    /// temp file + atomic rename so concurrent readers/writers aren't blocked
+    /// on filesystem I/O and a crash mid-write can't leave a partially-written
+    /// `prolly_hash_mappings` behind.
+    fn sync(&self) -> Result<(), StorageError> {
+        // 1) Snapshot the mapping under the lock — fast, releases promptly.
+        let lines: Vec<String> = {
+            let mappings = self.hash_to_object_id.lock();
+            let mut v: Vec<String> = mappings
+                .iter()
+                .map(|(hash, oid)| format!("{hash:x}:{oid}"))
+                .collect();
+            // Sorted output keeps the file diff-stable across runs and
+            // matches the canonical writer used by the higher-level commit
+            // machinery.
+            v.sort();
+            v
+        };
+
+        // 2) Build the final content with no lock held.
+        let mut content = lines.join("\n");
+        if !content.is_empty() {
+            content.push('\n');
+        }
+
+        // 3) Atomic write: temp file alongside the target, sync, rename.
+        let path = self.dataset_dir.join("prolly_hash_mappings");
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let tmp = self.dataset_dir.join(format!(
+            ".prolly_hash_mappings.{}.{}",
+            std::process::id(),
+            nanos
+        ));
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::File::create(&tmp).map_err(StorageError::Io)?;
+            f.write_all(content.as_bytes()).map_err(StorageError::Io)?;
+            f.sync_all().map_err(StorageError::Io)?;
+        }
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            StorageError::Io(e)
+        })
+    }
 }
 
 impl<const N: usize> GitNodeStorage<N> {

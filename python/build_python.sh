@@ -17,7 +17,7 @@
 # Usage:
 #   ./build_python.sh                    # Build with default Python bindings
 #   ./build_python.sh --with-sql         # Build with SQL support
-#   ./build_python.sh --all-features     # Build with all features (Python + SQL + RocksDB)
+#   ./build_python.sh --all-features     # Build with all features (Python + SQL + RocksDB + Proximity + ProximityText)
 #   ./build_python.sh --features "python sql"  # Specify features explicitly
 #   ./build_python.sh --install          # Build and install the package
 #   ./build_python.sh --with-sql --install  # Build with SQL and install
@@ -36,7 +36,7 @@ if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo ""
     echo "Options:"
     echo "  --with-sql           Build with SQL support"
-    echo "  --all-features       Build with all features (Python + SQL + RocksDB)"
+    echo "  --all-features       Build with all features (Python + SQL + RocksDB + Proximity + ProximityText)"
     echo "                       Requires clang/libclang + C++ toolchain for librocksdb-sys."
     echo "  --features FEATURES  Specify features explicitly (e.g., 'python sql rocksdb_storage')"
     echo "  --install            Install the built package after building"
@@ -79,7 +79,7 @@ for arg in "$@"; do
             shift
             ;;
         --all-features)
-            FEATURES="python sql rocksdb_storage"
+            FEATURES="python sql rocksdb_storage proximity proximity_text"
             shift
             ;;
     esac
@@ -89,8 +89,10 @@ done
 echo "🍹 Building wheel with maturin (features: $FEATURES)..."
 maturin build --release --features "$FEATURES"
 
-# Find the built wheel
-WHEEL_PATH=$(find target/wheels -name "prollytree-*.whl" | head -1)
+# Find the freshly-built wheel. Pick the newest by mtime — `find | head -1`
+# would return the alphabetical first, which can be a STALE wheel from a prior
+# version sitting next to the one we just built (e.g. 0.3.4 vs 0.3.5).
+WHEEL_PATH=$(ls -t target/wheels/prollytree-*.whl 2>/dev/null | head -1)
 
 if [ -z "$WHEEL_PATH" ]; then
     echo "❌ No wheel found in target/wheels/"

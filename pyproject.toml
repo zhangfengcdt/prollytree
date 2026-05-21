@@ -43,6 +43,11 @@ Repository = "https://github.com/zhangfengcdt/prollytree.git"
 # rocksdb_storage is bundled so PyPI wheels (and sdist installs) ship with the
 # RocksDB backend enabled; users falling back to sdist need clang + a C++
 # toolchain installed for librocksdb-sys.
-features = ["python", "sql", "rocksdb_storage"]
+#
+# proximity = vector index + text-search infra (pure Rust, no extra deps).
+# proximity_text = bundled Candle + all-MiniLM-L6-v2 embedder (pure Rust; no
+#   system toolchain needed). First MiniLmEmbedder call downloads ~90 MB of
+#   weights into $PROLLYTREE_EMBEDDER_CACHE (default ~/.cache/prollytree).
+features = ["python", "sql", "rocksdb_storage", "proximity", "proximity_text"]
 module-name = "prollytree"
 python-source = "python"

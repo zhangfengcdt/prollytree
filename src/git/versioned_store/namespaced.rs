@@ -52,6 +52,17 @@ use crate::storage::FileNodeStorage;
 #[cfg(feature = "rocksdb_storage")]
 use crate::storage::RocksDBNodeStorage;
 
+#[cfg(feature = "proximity")]
+use crate::proximity::text_index::{
+    dedup_chunk_hits_by_doc, doc_id_prefix, make_chunk_id, text_inner_proximity_name,
+    text_state_key, validate_or_write_text_identity, OVERFETCH_MULTIPLIER,
+};
+#[cfg(feature = "proximity")]
+use crate::proximity::{
+    Chunker, Embedder, IdentityChunker, ProximityConfig, ProximityError, ProximityIndex,
+    ProximityIndexEntry, TextHit, TextIndexConfig, TextIndexError,
+};
+
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
@@ -84,6 +95,12 @@ pub struct MigrationReport {
 
 /// The default namespace name used for backward-compatible flat API calls.
 pub const DEFAULT_NAMESPACE: &str = "default";
+
+/// Type alias for the per-target value transformer closure used by cascade.
+/// Takes the raw primary-tree value bytes and returns `Some(text)` to embed,
+/// or `None` to opt this id out of cascade for this index.
+#[cfg(feature = "proximity")]
+pub type ValueTransformer = Arc<dyn Fn(&[u8]) -> Option<String> + Send + Sync>;
 
 // ---------------------------------------------------------------------------
 // NamespacedKvStore
@@ -120,6 +137,45 @@ pub struct NamespacedKvStore<
     pub(crate) dirty_namespaces: HashSet<String>,
     /// Store format version (V1 = flat/legacy, V2 = namespaced).
     pub(crate) format_version: StoreFormatVersion,
+    /// Lazily loaded per-namespace proximity (vector) indexes, keyed by
+    /// `(namespace_name, index_name)`. See [`crate::proximity`].
+    #[cfg(feature = "proximity")]
+    pub(crate) proximity_indexes: HashMap<(String, String), ProximityIndex<N, S>>,
+    /// Tracks which proximity indexes are dirty since last commit.
+    #[cfg(feature = "proximity")]
+    pub(crate) dirty_proximity_indexes: HashSet<(String, String)>,
+    /// Centrally-owned embedders for text indexes, keyed by
+    /// `(namespace, idx_name)`. Stored here (rather than in the
+    /// `TextNamespaceHandle`) so the primary-tree `NamespaceHandle::insert`
+    /// path can reach them for auto-cascade — PR 4d.
+    #[cfg(feature = "proximity")]
+    pub(crate) text_embedders: HashMap<(String, String), Arc<dyn Embedder>>,
+    /// Centrally-owned chunkers for text indexes, parallel to
+    /// `text_embedders`. Insert paths use the chunker to split a document
+    /// into one or more text fragments; each fragment becomes a separate
+    /// chunk-id in the underlying proximity index.
+    #[cfg(feature = "proximity")]
+    pub(crate) text_chunkers: HashMap<(String, String), Arc<dyn Chunker>>,
+    /// Per-namespace cascade lists. When a namespace name is keyed here, every
+    /// `NamespaceHandle::insert` / `::delete` against that namespace also
+    /// applies the operation to each listed text sub-index. Targets that
+    /// aren't currently loaded (no `text_index<E>()` call yet this process)
+    /// are silently skipped — drift can be detected via `audit_text_index`.
+    #[cfg(feature = "proximity")]
+    pub(crate) cascade_lists: HashMap<String, Vec<String>>,
+    /// Per-target value transformers consulted during cascade. When
+    /// `(ns, idx_name)` is keyed here, the closure runs on the raw value
+    /// bytes to produce the text that will be embedded. Returning `None`
+    /// opts the id out of cascade for this index — useful for "this row
+    /// isn't text-indexable" decisions on structured payloads. Absence of
+    /// a transformer falls back to UTF-8 interpretation.
+    #[cfg(feature = "proximity")]
+    pub(crate) text_transformers: HashMap<(String, String), ValueTransformer>,
+    /// Threshold (in bytes) above which inserted values are externalised as
+    /// separate blobs via [`crate::storage::NodeStorage::insert_blob`].
+    /// `None` (default) disables externalisation. Runtime config only —
+    /// not persisted in the namespace registry; users set it per process.
+    pub(crate) externalize_threshold: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -181,21 +237,31 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     /// Get a value by key within this namespace.
     ///
     /// Checks the namespace's staging area first, then the committed tree.
+    /// Tree-side values are unwrapped through
+    /// [`crate::storage::externalize::unwrap_value`], so externalised values
+    /// transparently look like normal inline values to callers.
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        // Check namespace staging area first
+        // Check namespace staging area first. Staged values are always
+        // inline user bytes — externalisation only applies when staging
+        // is drained into the tree on commit, so no unwrap needed here.
         if let Some(staging) = self.store.namespace_staging.get(&self.ns_name) {
             if let Some(staged_value) = staging.get(key) {
                 return staged_value.clone();
             }
         }
 
-        // Check committed tree
+        // Check committed tree. Raw bytes from the leaf may be an externalised
+        // envelope; unwrap_value handles both cases (inline pass-through plus
+        // graceful fallback when an envelope-shaped value's hash doesn't
+        // resolve to a real blob).
         if let Some(tree) = self.store.namespaces.get(&self.ns_name) {
             return tree.find(key).and_then(|node| {
-                node.keys
-                    .iter()
-                    .position(|k| k == key)
-                    .map(|idx| node.values[idx].clone())
+                node.keys.iter().position(|k| k == key).map(|idx| {
+                    crate::storage::externalize::unwrap_value::<N, _>(
+                        &node.values[idx],
+                        &self.store.inner.tree.storage,
+                    )
+                })
             });
         }
 
@@ -203,8 +269,20 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     }
 
     /// Insert a key-value pair within this namespace (stages the change).
+    ///
+    /// When the namespace has been configured for auto-cascade via
+    /// `NamespacedKvStore::set_cascade`, this also embeds `value` (as UTF-8)
+    /// and upserts the resulting vector into every cascading text sub-index
+    /// that is currently loaded. Targets not loaded yet, and values that
+    /// aren't valid UTF-8, are silently skipped.
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
         crate::validation::validate_kv(&key, &value)?;
+        // Auto-cascade into text indexes, if configured. Done BEFORE staging
+        // the primary insert so an embed error surfaces before any state has
+        // been touched.
+        #[cfg(feature = "proximity")]
+        self.cascade_insert(&key, &value);
+
         self.store
             .namespace_staging
             .entry(self.ns_name.clone())
@@ -215,6 +293,10 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     }
 
     /// Delete a key within this namespace (stages the deletion).
+    ///
+    /// When the namespace has been configured for auto-cascade via
+    /// `NamespacedKvStore::set_cascade`, this also removes the id from every
+    /// cascading text sub-index that is currently loaded.
     pub fn delete(&mut self, key: &[u8]) -> Result<bool, GitKvError> {
         let exists = self.get(key).is_some();
         if exists {
@@ -224,8 +306,121 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
                 .or_default()
                 .insert(key.to_vec(), None);
             self.store.dirty_namespaces.insert(self.ns_name.clone());
+
+            #[cfg(feature = "proximity")]
+            self.cascade_delete(key);
         }
         Ok(exists)
+    }
+
+    /// Cascade an insert to every configured text sub-index for this
+    /// namespace. Per target the text to embed comes from:
+    ///
+    /// 1. A registered `ValueTransformer` (PR 4d follow-up) if one exists —
+    ///    its `Option<String>` return value determines whether this id
+    ///    participates (`None` opts out for this index).
+    /// 2. Otherwise UTF-8 interpretation of the bytes (silent skip on
+    ///    non-UTF-8).
+    ///
+    /// Silent no-op cases otherwise: no cascade list configured, target
+    /// whose embedder/proximity-index isn't currently loaded, or the
+    /// embedder itself returns an error.
+    #[cfg(feature = "proximity")]
+    fn cascade_insert(&mut self, key: &[u8], value: &[u8]) {
+        let Some(cascade_list) = self.store.cascade_lists.get(&self.ns_name).cloned() else {
+            return;
+        };
+        for idx_name in cascade_list {
+            let target_key = (self.ns_name.clone(), idx_name.clone());
+            let prox_key = (self.ns_name.clone(), text_inner_proximity_name(&idx_name));
+
+            // 1. Determine the text to embed.
+            let text: String = match self.store.text_transformers.get(&target_key).cloned() {
+                Some(transformer) => match transformer(value) {
+                    Some(t) => t,
+                    None => continue, // transformer explicitly opted out
+                },
+                None => match std::str::from_utf8(value) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => continue, // non-UTF-8 + no transformer
+                },
+            };
+
+            // 2. Resolve the embedder + chunker (immutable borrow ends with the clones).
+            let Some(embedder) = self.store.text_embedders.get(&target_key).cloned() else {
+                continue;
+            };
+            let chunker: Arc<dyn Chunker> = self
+                .store
+                .text_chunkers
+                .get(&target_key)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(IdentityChunker));
+
+            // 3. Chunk → embed → insert. Drop any previous chunks for this
+            //    doc-id first so re-inserts with a different chunk count
+            //    don't leak stale entries.
+            //
+            //    Borrow gymnastics: each chunk's embed happens outside the
+            //    proximity-index borrow, then a fresh `get_mut` reborrows
+            //    for the insert. Slight overhead, but keeps the embedder
+            //    free to call into anything (incl. error-returning paths).
+            Self::cascade_delete_chunks_for_doc(self.store, &prox_key, key);
+            let chunks = chunker.split(&text);
+            for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
+                let Ok(vec) = embedder.embed(chunk_text) else {
+                    continue;
+                };
+                let chunk_id = make_chunk_id(key, chunk_idx as u32);
+                if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
+                    let _ = idx.insert(chunk_id, vec);
+                    self.store.dirty_proximity_indexes.insert(prox_key.clone());
+                }
+            }
+        }
+    }
+
+    /// Cascade a delete to every configured text sub-index for this
+    /// namespace. Removes every chunk for `key` from each target.
+    #[cfg(feature = "proximity")]
+    fn cascade_delete(&mut self, key: &[u8]) {
+        let Some(cascade_list) = self.store.cascade_lists.get(&self.ns_name).cloned() else {
+            return;
+        };
+        for idx_name in cascade_list {
+            let prox_key = (self.ns_name.clone(), text_inner_proximity_name(&idx_name));
+            Self::cascade_delete_chunks_for_doc(self.store, &prox_key, key);
+        }
+    }
+
+    /// Static helper: prefix-scan and remove every chunk for `doc_id`
+    /// from the proximity index at `prox_key`. Marks the index dirty if
+    /// anything was removed.
+    #[cfg(feature = "proximity")]
+    fn cascade_delete_chunks_for_doc(
+        store: &mut NamespacedKvStore<N, S, M>,
+        prox_key: &(String, String),
+        doc_id: &[u8],
+    ) {
+        let Some(idx) = store.proximity_indexes.get_mut(prox_key) else {
+            return;
+        };
+        let prefix = doc_id_prefix(doc_id);
+        let to_remove: Vec<Vec<u8>> = idx
+            .entries_snapshot()
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let mut any = false;
+        for cid in to_remove {
+            if idx.remove(&cid) {
+                any = true;
+            }
+        }
+        if any {
+            store.dirty_proximity_indexes.insert(prox_key.clone());
+        }
     }
 
     /// List all keys within this namespace (includes staged changes).
@@ -486,6 +681,102 @@ where
         StoreFormatVersion::V1
     }
 
+    // -- Externalisation config (PR 0b) -------------------------------------
+
+    /// Set the threshold (in bytes) above which inserted values are stored
+    /// as separate content-addressed blobs via
+    /// [`crate::storage::NodeStorage::insert_blob`] instead of inline in the
+    /// leaf node.
+    ///
+    /// Passing `None` (the default) disables externalisation entirely —
+    /// values are stored inline regardless of size.
+    ///
+    /// Runtime configuration only. Not persisted in the namespace registry,
+    /// so callers must set this each time they open a store. The setting
+    /// affects future inserts; previously-stored externalised values are
+    /// always unwrapped transparently on read.
+    pub fn set_externalize_threshold(&mut self, threshold: Option<usize>) {
+        self.externalize_threshold = threshold;
+    }
+
+    /// Current externalisation threshold, if any.
+    pub fn externalize_threshold(&self) -> Option<usize> {
+        self.externalize_threshold
+    }
+
+    /// Borrow the inner content-addressed storage. Useful for integration
+    /// tests that want to verify externalised values landed as blobs, and
+    /// for advanced callers building on top of the blob API.
+    pub fn inner_storage(&self) -> &S {
+        &self.inner.tree.storage
+    }
+
+    /// Walk every loaded namespace, collect all blob hashes referenced by
+    /// envelope-shaped leaf values, and delete every blob in storage that
+    /// isn't on that list.
+    ///
+    /// Loads every namespace listed in the registry first, so blobs
+    /// referenced by namespaces the user hasn't explicitly opened are still
+    /// preserved.
+    ///
+    /// **Scope caveat:** GC walks only the current HEAD state. Blobs
+    /// referenced by older commits but not by HEAD are deleted, so checking
+    /// out an old commit after GC may fail to retrieve those values.
+    /// History-aware GC (walking all reachable commits) is a future PR.
+    pub fn gc_blobs(&mut self) -> Result<BlobGcReport, GitKvError> {
+        // 1. Ensure every namespace from the registry is loaded in memory.
+        let ns_names = self.list_namespaces();
+        for name in &ns_names {
+            let _ = self.namespace(name);
+        }
+
+        // 2. Walk every loaded namespace tree, collect referenced blob hashes.
+        let mut referenced: HashSet<ValueDigest<N>> = HashSet::new();
+        for tree in self.namespaces.values() {
+            for key in tree.collect_keys() {
+                let raw = tree.find(&key).and_then(|node| {
+                    node.keys
+                        .iter()
+                        .position(|k| k == &key)
+                        .map(|i| node.values[i].clone())
+                });
+                if let Some(bytes) = raw {
+                    if let Some((hash, _size)) =
+                        crate::storage::externalize::parse_envelope::<N>(&bytes)
+                    {
+                        referenced.insert(hash);
+                    }
+                }
+            }
+        }
+
+        // 3. List every blob currently in storage.
+        let all_blobs = self
+            .inner
+            .tree
+            .storage
+            .list_blobs()
+            .map_err(|e| GitKvError::GitObjectError(format!("list_blobs: {e}")))?;
+
+        // 4. Delete orphans.
+        let mut report = BlobGcReport {
+            total: all_blobs.len(),
+            referenced: referenced.len(),
+            removed: 0,
+            errors: Vec::new(),
+        };
+        for h in all_blobs {
+            if referenced.contains(&h) {
+                continue;
+            }
+            match self.inner.tree.storage.delete_blob(&h) {
+                Ok(()) => report.removed += 1,
+                Err(e) => report.errors.push(format!("{h}: {e}")),
+            }
+        }
+        Ok(report)
+    }
+
     // -- Commit -------------------------------------------------------------
 
     /// Core commit logic shared by all backends.
@@ -517,7 +808,35 @@ where
                     for (key, value) in staging.drain() {
                         match value {
                             Some(v) => {
-                                tree.insert(key, v);
+                                // Apply externalisation threshold: values longer
+                                // than `externalize_threshold` are stored as
+                                // separate blobs via `insert_blob`, with the
+                                // in-tree value replaced by a 44-byte envelope
+                                // (magic + content hash + original size). Smaller
+                                // values stay inline, byte-for-byte unchanged.
+                                let stored = match self.externalize_threshold {
+                                    Some(threshold) if v.len() > threshold => {
+                                        let hash = ValueDigest::<N>::new(&v);
+                                        // Write the blob through the inner
+                                        // storage (the shared backing) so a
+                                        // fresh handle to the same path sees it.
+                                        self.inner
+                                            .tree
+                                            .storage
+                                            .insert_blob(hash.clone(), &v)
+                                            .map_err(|e| {
+                                                GitKvError::GitObjectError(format!(
+                                                    "externalise insert_blob: {e}"
+                                                ))
+                                            })?;
+                                        crate::storage::externalize::make_envelope::<N>(
+                                            &hash,
+                                            v.len() as u64,
+                                        )
+                                    }
+                                    _ => v,
+                                };
+                                tree.insert(key, stored);
                             }
                             None => {
                                 tree.delete(&key);
@@ -540,10 +859,17 @@ where
             );
         }
 
-        // 3. Write namespace registry + version to dataset dir
+        // 3. Flush any dirty proximity sub-indexes through ProximityIndex::persist,
+        //    which writes their canonical entries + root hash via NodeStorage::save_config.
+        //    Each persist also calls NodeStorage::sync() so backends with deferred
+        //    bookkeeping flush their mapping snapshots in time for the inner commit.
+        #[cfg(feature = "proximity")]
+        self.flush_dirty_proximity_indexes()?;
+
+        // 4. Write namespace registry + version to dataset dir
         self.save_namespace_registry()?;
 
-        // 4. Delegate to inner for the git commit
+        // 5. Delegate to inner for the git commit
         // (inner.commit drains its own empty staging, persists its placeholder tree,
         //  writes prolly_config_tree_config, stages ALL dataset_dir files via git add,
         //  creates the git commit, updates refs)
@@ -564,6 +890,19 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
         for tree in self.namespaces.values() {
             let ns_mappings = tree.storage.get_hash_mappings();
             self.inner.tree.storage.merge_hash_mappings(ns_mappings);
+        }
+    }
+
+    /// Mirror of [`Self::merge_ns_hash_mappings_to_inner_git`] for proximity
+    /// sub-indexes. Each proximity index holds a clone of the inner storage
+    /// with its own `hash_to_object_id` map; this consolidates those maps
+    /// into the inner store before `save_tree_config_to_git` snapshots the
+    /// canonical `prolly_hash_mappings` file.
+    #[cfg(feature = "proximity")]
+    fn merge_proximity_hash_mappings_to_inner_git(&self) {
+        for idx in self.proximity_indexes.values() {
+            let mappings = idx.storage().get_hash_mappings();
+            self.inner.tree.storage.merge_hash_mappings(mappings);
         }
     }
 
@@ -595,7 +934,28 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
                 if let Some(tree) = self.namespaces.get_mut(ns_name) {
                     for (key, value) in staging.drain() {
                         match value {
-                            Some(v) => tree.insert(key, v),
+                            Some(v) => {
+                                let stored = match self.externalize_threshold {
+                                    Some(threshold) if v.len() > threshold => {
+                                        let hash = ValueDigest::<N>::new(&v);
+                                        self.inner
+                                            .tree
+                                            .storage
+                                            .insert_blob(hash.clone(), &v)
+                                            .map_err(|e| {
+                                                GitKvError::GitObjectError(format!(
+                                                    "externalise insert_blob: {e}"
+                                                ))
+                                            })?;
+                                        crate::storage::externalize::make_envelope::<N>(
+                                            &hash,
+                                            v.len() as u64,
+                                        )
+                                    }
+                                    _ => v,
+                                };
+                                tree.insert(key, stored);
+                            }
                             None => {
                                 tree.delete(&key);
                             }
@@ -617,13 +977,24 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             );
         }
 
-        // 3. Write namespace files
+        // 3. Flush any dirty proximity sub-indexes (writes their canonical
+        //    entries + tree nodes via ProximityIndex::persist).
+        #[cfg(feature = "proximity")]
+        self.flush_dirty_proximity_indexes()?;
+
+        // 4. Write namespace files
         self.save_namespace_registry()?;
 
-        // 4. Merge namespace hash mappings into inner storage
+        // 5. Merge namespace hash mappings into inner storage
         self.merge_ns_hash_mappings_to_inner_git();
 
-        // 5. Delegate to inner for git commit
+        // 6. Merge proximity-index hash mappings into inner storage so the
+        //    canonical `prolly_hash_mappings` written by inner.commit covers
+        //    every proximity node we just wrote.
+        #[cfg(feature = "proximity")]
+        self.merge_proximity_hash_mappings_to_inner_git();
+
+        // 7. Delegate to inner for git commit
         self.inner.commit(message)
     }
 
@@ -640,6 +1011,19 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: StoreFormatVersion::V2,
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
+            externalize_threshold: None,
         };
 
         // Create the default namespace with an empty tree
@@ -672,6 +1056,19 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: format_version.clone(),
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
+            externalize_threshold: None,
         };
 
         match format_version {
@@ -1029,6 +1426,181 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
         self.inner.create_merge_commit_for_namespaced(source_branch)
     }
 
+    /// Three-way merge that includes proximity (vector) sub-indexes.
+    ///
+    /// Compared to [`Self::merge`] (which only merges the primary KV tree per
+    /// namespace), this method also runs
+    /// [`crate::proximity::merge_proximity_index_sets`] on every proximity
+    /// index **currently loaded into memory** (via earlier
+    /// `NamespaceHandle::proximity_index` calls). Indexes that have never
+    /// been opened in this process are not auto-discovered yet — open them
+    /// first if you want them to participate in the merge.
+    ///
+    /// # Strategy
+    ///
+    /// 1. Pre-compute the proximity-merge result for every loaded index
+    ///    against the base and source commits. If any index has unresolved
+    ///    conflicts, the whole call fails with
+    ///    [`GitKvError::ProximityMergeConflictError`] before mutating the
+    ///    repository.
+    /// 2. Run the existing [`Self::merge`] (primary-tree three-way merge,
+    ///    creates a merge commit).
+    /// 3. Apply the pre-computed proximity merges into the in-memory indexes
+    ///    and create a **follow-up commit** that records the merged proximity
+    ///    state.
+    ///
+    /// The two-commit shape (primary merge commit + proximity follow-up) is a
+    /// known limitation; a future refactor can fold both into one commit by
+    /// extracting helpers from `merge`.
+    ///
+    /// Returns the object id of the proximity follow-up commit when any
+    /// proximity changes were applied, otherwise the primary merge commit.
+    #[cfg(feature = "proximity")]
+    pub fn merge_with_proximity_resolver<KR, PR>(
+        &mut self,
+        source_branch: &str,
+        kv_resolver: &KR,
+        proximity_resolver: &PR,
+    ) -> Result<gix::ObjectId, GitKvError>
+    where
+        KR: ConflictResolver,
+        PR: crate::proximity::ProximityConflictResolver,
+    {
+        let dest_branch = self.inner.current_branch.clone();
+        let base_commit = self.find_merge_base(&dest_branch, source_branch)?;
+        let source_commit = self.get_branch_commit(source_branch)?;
+
+        // -- 1. Pre-compute proximity merges; fail fast on unresolved conflicts.
+        let prox_keys: Vec<(String, String)> = self.proximity_indexes.keys().cloned().collect();
+        let mut prox_merged: Vec<((String, String), ProximityEntrySet)> = Vec::new();
+        let mut all_conflicts: Vec<crate::proximity::ProximityConflict> = Vec::new();
+
+        for (ns_name, idx_name) in &prox_keys {
+            let base = self
+                .load_proximity_entries_at_commit(&base_commit, ns_name, idx_name)?
+                .unwrap_or_default();
+            let source = self
+                .load_proximity_entries_at_commit(&source_commit, ns_name, idx_name)?
+                .unwrap_or_default();
+            let dest = self
+                .proximity_indexes
+                .get(&(ns_name.clone(), idx_name.clone()))
+                .map(|i| i.entries_snapshot())
+                .unwrap_or_default();
+
+            match crate::proximity::merge_proximity_index_sets(
+                &base,
+                &source,
+                &dest,
+                proximity_resolver,
+            ) {
+                Ok(merged) => {
+                    prox_merged.push(((ns_name.clone(), idx_name.clone()), merged));
+                }
+                Err(failure) => {
+                    all_conflicts.extend(failure.conflicts);
+                }
+            }
+        }
+
+        if !all_conflicts.is_empty() {
+            return Err(GitKvError::ProximityMergeConflictError(all_conflicts));
+        }
+
+        // -- 2. Run the existing primary-tree merge (creates the merge commit).
+        let primary_commit = self.merge(source_branch, kv_resolver)?;
+
+        // -- 3. Apply the pre-computed proximity merges + follow-up commit.
+        if prox_merged.is_empty() {
+            return Ok(primary_commit);
+        }
+
+        let mut any_changes = false;
+        for ((ns_name, idx_name), merged_entries) in prox_merged {
+            // Skip indexes whose three-way merge was a no-op (dest already
+            // matched the merged result). This keeps the follow-up commit
+            // empty in the no-op case.
+            let dest_unchanged = self
+                .proximity_indexes
+                .get(&(ns_name.clone(), idx_name.clone()))
+                .map(|i| i.entries_snapshot() == merged_entries)
+                .unwrap_or(false);
+            if dest_unchanged {
+                continue;
+            }
+            if let Some(idx) = self
+                .proximity_indexes
+                .get_mut(&(ns_name.clone(), idx_name.clone()))
+            {
+                idx.replace_entries(merged_entries).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Failed to install merged proximity entries for {ns_name}:{idx_name}: {e}"
+                    ))
+                })?;
+                self.dirty_proximity_indexes
+                    .insert((ns_name.clone(), idx_name.clone()));
+                any_changes = true;
+            }
+        }
+
+        if !any_changes {
+            return Ok(primary_commit);
+        }
+
+        self.commit("Proximity index merge follow-up")
+    }
+
+    /// Load the persisted `(id → vector)` entry set for a proximity sub-index
+    /// at a specific commit, by reading the canonical
+    /// `prolly_config_proximity:<ns>:<idx>:state` blob via git.
+    ///
+    /// Returns `Ok(None)` if the file doesn't exist at that commit (i.e. the
+    /// index didn't exist there yet).
+    #[cfg(feature = "proximity")]
+    fn load_proximity_entries_at_commit(
+        &self,
+        commit_id: &gix::ObjectId,
+        ns_name: &str,
+        idx_name: &str,
+    ) -> Result<Option<ProximityEntrySet>, GitKvError> {
+        let dataset_dir = self.inner.tree.storage.dataset_dir();
+        let git_root = self
+            .inner
+            .metadata
+            .work_dir()
+            .or_else(|| VersionedKvStore::<N, GitNodeStorage<N>>::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
+
+        let dataset_relative = dataset_dir
+            .strip_prefix(&git_root)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to get relative path: {e}")))?;
+        let rel_str = dataset_relative
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        let key = format!("proximity:{ns_name}:{idx_name}:state");
+        let path = if rel_str.is_empty() {
+            format!("prolly_config_{key}")
+        } else {
+            format!("{rel_str}/prolly_config_{key}")
+        };
+
+        match self.inner.metadata.read_file_at_commit(commit_id, &path) {
+            Ok(bytes) => {
+                let state =
+                    crate::proximity::deserialize_persisted_state::<N>(&bytes).map_err(|e| {
+                        GitKvError::GitObjectError(format!(
+                            "Failed to deserialize proximity state at commit: {e}"
+                        ))
+                    })?;
+                Ok(Some(state.entries))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Migrate a V1 (flat) store to V2 (namespaced) format.
     ///
     /// All existing key-value pairs are moved into the "default" namespace.
@@ -1375,6 +1947,19 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: StoreFormatVersion::V2,
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
+            externalize_threshold: None,
         };
 
         let default_tree = ProllyTree::new(store.inner.tree.storage.clone(), TreeConfig::default());
@@ -1404,6 +1989,19 @@ impl<const N: usize> NamespacedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBac
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: format_version.clone(),
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
+            externalize_threshold: None,
         };
 
         match format_version {
@@ -1445,6 +2043,19 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: StoreFormatVersion::V2,
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
+            externalize_threshold: None,
         };
 
         let default_tree = ProllyTree::new(store.inner.tree.storage.clone(), TreeConfig::default());
@@ -1474,6 +2085,19 @@ impl<const N: usize> NamespacedKvStore<N, FileNodeStorage<N>, GitMetadataBackend
             default_namespace: DEFAULT_NAMESPACE.to_string(),
             dirty_namespaces: HashSet::new(),
             format_version: format_version.clone(),
+            #[cfg(feature = "proximity")]
+            proximity_indexes: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            dirty_proximity_indexes: HashSet::new(),
+            #[cfg(feature = "proximity")]
+            text_embedders: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            cascade_lists: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_transformers: HashMap::new(),
+            #[cfg(feature = "proximity")]
+            text_chunkers: HashMap::new(),
+            externalize_threshold: None,
         };
 
         match format_version {
@@ -1639,5 +2263,811 @@ impl<const N: usize> ThreadSafeNamespacedKvStore<N, GitNodeStorage<N>, GitMetada
         self.inner
             .lock()
             .namespace_changed(prefix, commit_a, commit_b)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proximity (vector) sub-index integration — PR 3a
+// ---------------------------------------------------------------------------
+
+/// Canonical `(id → vector)` entry set for a proximity sub-index.
+/// Used during load + namespaced merge.
+#[cfg(feature = "proximity")]
+type ProximityEntrySet = std::collections::BTreeMap<Vec<u8>, Vec<f32>>;
+
+//
+// A namespace can own zero or more named proximity sub-indexes. Each lives in
+// its own [`ProximityIndex<N, S>`] cached in
+// [`NamespacedKvStore::proximity_indexes`] (keyed by `(namespace, index_name)`).
+// Mutations mark the pair as dirty; [`NamespacedKvStore::commit_impl`] flushes
+// every dirty index by calling [`ProximityIndex::persist`] under a namespaced
+// key — that writes the tree's root node and saves the canonical entries
+// `BTreeMap` (the source of truth for rebuilds) via
+// [`crate::storage::NodeStorage::save_config`].
+//
+// On reopen, [`NamespaceHandle::proximity_index`] calls
+// [`ProximityIndex::load`] with the same namespaced key to restore both the
+// entries map and the root hash, and then resumes mutation.
+//
+// PR 3b (next) will add per-namespace 3-way merge for proximity sub-indexes.
+
+#[cfg(feature = "proximity")]
+fn proximity_save_name(ns_name: &str, idx_name: &str) -> String {
+    format!("{ns_name}:{idx_name}")
+}
+
+/// Short-lived mutable handle on a proximity sub-index within a namespace.
+///
+/// Returned by [`NamespaceHandle::proximity_index`]. Holds a re-borrow of the
+/// parent [`NamespacedKvStore`] and the keys identifying which index this
+/// handle operates on.
+#[cfg(feature = "proximity")]
+pub struct ProximityNamespaceHandle<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> {
+    store: &'a mut NamespacedKvStore<N, S, M>,
+    ns_name: String,
+    idx_name: String,
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> std::fmt::Debug
+    for ProximityNamespaceHandle<'a, N, S, M>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProximityNamespaceHandle")
+            .field("ns_name", &self.ns_name)
+            .field("idx_name", &self.idx_name)
+            .finish()
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend>
+    ProximityNamespaceHandle<'a, N, S, M>
+{
+    fn key(&self) -> (String, String) {
+        (self.ns_name.clone(), self.idx_name.clone())
+    }
+
+    /// Insert or update `(id, vector)`.
+    pub fn insert(&mut self, id: Vec<u8>, vector: Vec<f32>) -> Result<(), ProximityError> {
+        let key = self.key();
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&key)
+            .expect("proximity index must be loaded by NamespaceHandle::proximity_index");
+        idx.insert(id, vector)?;
+        self.store.dirty_proximity_indexes.insert(key);
+        Ok(())
+    }
+
+    /// Remove an id. Returns `true` if an entry was removed.
+    pub fn remove(&mut self, id: &[u8]) -> bool {
+        let key = self.key();
+        let idx = match self.store.proximity_indexes.get_mut(&key) {
+            Some(i) => i,
+            None => return false,
+        };
+        let removed = idx.remove(id);
+        if removed {
+            self.store.dirty_proximity_indexes.insert(key);
+        }
+        removed
+    }
+
+    /// k-nearest-neighbour query. Triggers a rebuild if any mutation happened
+    /// since the last query.
+    pub fn knn(
+        &mut self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+    ) -> Result<Vec<(Vec<u8>, f32)>, ProximityError> {
+        let key = self.key();
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&key)
+            .expect("proximity index must be loaded");
+        idx.knn(query, k, ef)
+    }
+
+    /// Number of distinct ids in this index.
+    pub fn len(&self) -> usize {
+        self.store
+            .proximity_indexes
+            .get(&self.key())
+            .map_or(0, |i| i.len())
+    }
+
+    /// True when the index holds no entries.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Root hash of the materialised proximity tree. Triggers a rebuild if dirty.
+    pub fn root_hash(&mut self) -> Result<Option<ValueDigest<N>>, ProximityError> {
+        let key = self.key();
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&key)
+            .expect("proximity index must be loaded");
+        idx.root_hash().map(|opt| opt.cloned())
+    }
+
+    /// Read-only configuration view.
+    pub fn config(&self) -> ProximityConfig {
+        self.store
+            .proximity_indexes
+            .get(&self.key())
+            .expect("proximity index must be loaded")
+            .config()
+            .clone()
+    }
+
+    /// Index name (within its namespace).
+    pub fn name(&self) -> &str {
+        &self.idx_name
+    }
+
+    /// Namespace name.
+    pub fn namespace(&self) -> &str {
+        &self.ns_name
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<'a, N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Open or create a named proximity (vector) sub-index inside this
+    /// namespace.
+    ///
+    /// On first call for a given `(namespace, idx_name)` pair this either
+    /// loads the persisted state (if a prior commit recorded one) or creates
+    /// a fresh empty index using `config`.
+    ///
+    /// When loading, the supplied `config.dim` must match the persisted
+    /// dimension. Mismatch returns [`ProximityError::DimensionMismatch`].
+    pub fn proximity_index<'b>(
+        &'b mut self,
+        idx_name: &str,
+        config: ProximityConfig,
+    ) -> Result<ProximityNamespaceHandle<'b, N, S, M>, ProximityError>
+    where
+        'a: 'b,
+    {
+        let key = (self.ns_name.clone(), idx_name.to_string());
+
+        if !self.store.proximity_indexes.contains_key(&key) {
+            let save_name = proximity_save_name(&self.ns_name, idx_name);
+            let storage = self.store.inner.tree.storage.clone();
+
+            let idx = match ProximityIndex::load(storage.clone(), &save_name) {
+                Ok(loaded) => {
+                    if loaded.config().dim != config.dim {
+                        return Err(ProximityError::DimensionMismatch {
+                            expected: loaded.config().dim,
+                            got: config.dim,
+                        });
+                    }
+                    loaded
+                }
+                Err(ProximityError::NotFound(_)) => ProximityIndex::new(storage, config),
+                Err(e) => return Err(e),
+            };
+            self.store.proximity_indexes.insert(key.clone(), idx);
+        }
+
+        Ok(ProximityNamespaceHandle {
+            store: &mut *self.store,
+            ns_name: self.ns_name.clone(),
+            idx_name: idx_name.to_string(),
+        })
+    }
+
+    /// Drop a proximity sub-index. Returns whether an index was found and
+    /// dropped from the in-memory cache.
+    ///
+    /// The persisted state (entries + tree nodes) is **not** eagerly deleted —
+    /// content-addressed nodes become unreachable and are reclaimed by the
+    /// backend's own GC. Future calls to `proximity_index` with the same name
+    /// would create a fresh empty index.
+    pub fn drop_proximity_index(&mut self, idx_name: &str) -> bool {
+        let key = (self.ns_name.clone(), idx_name.to_string());
+        self.store.dirty_proximity_indexes.remove(&key);
+        self.store.proximity_indexes.remove(&key).is_some()
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespacedKvStore<N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Build a registry of `(namespace → {index_name → entry})` from the
+    /// in-memory proximity-index state. Used by tests and PR 3b's merge logic.
+    pub fn proximity_registry_snapshot(
+        &mut self,
+    ) -> Result<HashMap<String, HashMap<String, ProximityIndexEntry<N>>>, ProximityError> {
+        let mut out: HashMap<String, HashMap<String, ProximityIndexEntry<N>>> = HashMap::new();
+        let keys: Vec<(String, String)> = self.proximity_indexes.keys().cloned().collect();
+        for (ns, idx_name) in keys {
+            let entry = {
+                let idx = self
+                    .proximity_indexes
+                    .get_mut(&(ns.clone(), idx_name.clone()))
+                    .unwrap();
+                ProximityIndexEntry {
+                    root_hash: idx.root_hash()?.cloned(),
+                    config: idx.config().clone(),
+                }
+            };
+            out.entry(ns).or_default().insert(idx_name, entry);
+        }
+        Ok(out)
+    }
+
+    /// Flush every dirty proximity sub-index by calling
+    /// [`ProximityIndex::persist`] with a namespaced save key. Called from
+    /// [`Self::commit_impl`] before the inner commit.
+    pub(crate) fn flush_dirty_proximity_indexes(&mut self) -> Result<(), GitKvError> {
+        let dirty: Vec<(String, String)> = self.dirty_proximity_indexes.drain().collect();
+        for (ns_name, idx_name) in dirty {
+            let save_name = proximity_save_name(&ns_name, &idx_name);
+            if let Some(idx) = self
+                .proximity_indexes
+                .get_mut(&(ns_name.clone(), idx_name.clone()))
+            {
+                idx.persist(&save_name).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Failed to persist proximity index {ns_name}:{idx_name}: {e}"
+                    ))
+                })?;
+            }
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TextIndex sub-handle — PR 4a
+// ---------------------------------------------------------------------------
+//
+// A namespaced text index reuses the existing proximity-index machinery for
+// the underlying vector storage. The text-index identity (embedder id +
+// version + dim + tuning) is persisted as a separate `text:<ns>:<idx>:state`
+// blob via `NodeStorage::save_config`. The underlying vector tree lives in
+// `proximity_indexes[(ns, "__text__<idx>")]` (the `__text__` prefix keeps it
+// out of the user-facing proximity-index namespace).
+
+/// Storage key under which the namespaced text-index identity blob lives.
+#[cfg(feature = "proximity")]
+fn text_index_state_key(ns_name: &str, idx_name: &str) -> String {
+    text_state_key(&format!("{ns_name}:{idx_name}"))
+}
+
+/// Short-lived handle to a named text index inside a namespace.
+///
+/// Owns the [`Embedder`] for the duration of the handle. The underlying
+/// vector index is borrowed (via re-borrow of the parent
+/// [`NamespacedKvStore`]) for each operation.
+#[cfg(feature = "proximity")]
+pub struct TextNamespaceHandle<'a, const N: usize, S, M>
+where
+    S: NodeStorage<N>,
+    M: MetadataBackend,
+{
+    store: &'a mut NamespacedKvStore<N, S, M>,
+    ns_name: String,
+    idx_name: String,
+    /// Key into `store.proximity_indexes` — `(ns_name, "__text__<idx_name>")`.
+    inner_idx_key: (String, String),
+    /// Cheap reference into `store.text_embedders` (Arc bump only). PR 4d
+    /// changed embedder ownership from "by value on the handle" to
+    /// "centrally owned by the store", so the auto-cascade insert path
+    /// can reach the embedder.
+    embedder: Arc<dyn Embedder>,
+    /// Cheap reference into `store.text_chunkers` — same rationale as the
+    /// embedder. The chunker splits documents into one-or-more chunks on
+    /// insert; the auto-cascade path uses the same chunker per target.
+    chunker: Arc<dyn Chunker>,
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S, M> std::fmt::Debug for TextNamespaceHandle<'a, N, S, M>
+where
+    S: NodeStorage<N>,
+    M: MetadataBackend,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextNamespaceHandle")
+            .field("ns_name", &self.ns_name)
+            .field("idx_name", &self.idx_name)
+            .field("embedder_id", &self.embedder.id())
+            .field("dim", &self.embedder.dim())
+            .field("chunker_id", &self.chunker.id())
+            .finish()
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S, M> TextNamespaceHandle<'a, N, S, M>
+where
+    S: NodeStorage<N>,
+    M: MetadataBackend,
+{
+    /// Insert or update `(id, text)`. The text is split through the
+    /// configured chunker; each chunk is embedded and stored under its own
+    /// chunk-id. Previous chunks for this `id` are removed first so that a
+    /// re-insert with fewer chunks doesn't leak stale ones.
+    pub fn insert(&mut self, id: &[u8], text: &str) -> Result<(), TextIndexError> {
+        // Drop any previous chunks for this doc_id.
+        self.delete_chunks_for_doc(id);
+
+        let chunks = self.chunker.split(text);
+        if chunks.is_empty() {
+            return Ok(());
+        }
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&self.inner_idx_key)
+            .expect("inner proximity index must be loaded");
+        for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
+            let vec = self.embedder.embed(chunk_text)?;
+            let chunk_id = make_chunk_id(id, chunk_idx as u32);
+            idx.insert(chunk_id, vec)?;
+        }
+        self.store
+            .dirty_proximity_indexes
+            .insert(self.inner_idx_key.clone());
+        Ok(())
+    }
+
+    /// Remove every chunk associated with `id`. Returns whether anything
+    /// was removed.
+    pub fn delete(&mut self, id: &[u8]) -> bool {
+        self.delete_chunks_for_doc(id)
+    }
+
+    /// k-nearest-neighbour search by query text. Over-fetches chunks from
+    /// the underlying KNN, then dedups by doc-id (keeping each doc's best
+    /// chunk score). Returns top-k **documents**.
+    pub fn search(&mut self, query: &str, k: usize) -> Result<Vec<TextHit>, TextIndexError> {
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        let q = self.embedder.embed(query)?;
+        let raw_k = (k * OVERFETCH_MULTIPLIER).max(k);
+        let ef = (raw_k * 4).max(32);
+        let idx = self
+            .store
+            .proximity_indexes
+            .get_mut(&self.inner_idx_key)
+            .expect("inner proximity index must be loaded");
+        let chunk_hits = idx.knn(&q, raw_k, ef)?;
+        Ok(dedup_chunk_hits_by_doc(chunk_hits, k))
+    }
+
+    /// Number of stored **documents** (deduplicated across chunks). Under
+    /// the default [`IdentityChunker`] this equals `chunk_count`.
+    pub fn len(&self) -> usize {
+        let idx = match self.store.proximity_indexes.get(&self.inner_idx_key) {
+            Some(i) => i,
+            None => return 0,
+        };
+        let mut docs: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+        for k in idx.entries_snapshot().keys() {
+            match crate::proximity::text_index::parse_chunk_id(k) {
+                Some((doc, _)) => {
+                    docs.insert(doc);
+                }
+                None => {
+                    docs.insert(k.clone());
+                }
+            }
+        }
+        docs.len()
+    }
+
+    /// Total chunk count in the underlying proximity index.
+    pub fn chunk_count(&self) -> usize {
+        self.store
+            .proximity_indexes
+            .get(&self.inner_idx_key)
+            .map_or(0, |i| i.len())
+    }
+
+    /// True if the index is empty.
+    pub fn is_empty(&self) -> bool {
+        self.chunk_count() == 0
+    }
+
+    /// Internal: remove every chunk for `doc_id`. Returns whether any were
+    /// removed. Marks the underlying proximity index dirty on success.
+    fn delete_chunks_for_doc(&mut self, doc_id: &[u8]) -> bool {
+        let idx = match self.store.proximity_indexes.get_mut(&self.inner_idx_key) {
+            Some(i) => i,
+            None => return false,
+        };
+        let prefix = doc_id_prefix(doc_id);
+        let to_remove: Vec<Vec<u8>> = idx
+            .entries_snapshot()
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let mut any = false;
+        for cid in to_remove {
+            if idx.remove(&cid) {
+                any = true;
+            }
+        }
+        if any {
+            self.store
+                .dirty_proximity_indexes
+                .insert(self.inner_idx_key.clone());
+        }
+        any
+    }
+
+    /// Index name (within its namespace).
+    pub fn name(&self) -> &str {
+        &self.idx_name
+    }
+
+    /// Owning namespace name.
+    pub fn namespace(&self) -> &str {
+        &self.ns_name
+    }
+
+    /// Read-only access to the wrapped embedder (via dyn dispatch — the
+    /// concrete embedder type is type-erased on namespaced handles to enable
+    /// auto-cascade across multiple text indexes that may use different
+    /// embedder types).
+    pub fn embedder(&self) -> &dyn Embedder {
+        &*self.embedder
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<'a, N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Open or create a named **text** sub-index inside this namespace.
+    ///
+    /// On first call: persists the embedder identity blob via
+    /// `NodeStorage::save_config` (key `text:<ns>:<idx>:state`) and creates a
+    /// fresh underlying proximity index keyed
+    /// `proximity_indexes[(ns, "__text__<idx>")]`.
+    ///
+    /// On subsequent calls (including after re-opening the store): loads the
+    /// identity blob, validates the supplied embedder matches stored
+    /// `id`/`version`/`dim`, and (re-)loads the underlying proximity index
+    /// state from `NodeStorage::save_config`. Mismatch returns
+    /// [`TextIndexError::EmbedderMismatch`] or
+    /// [`TextIndexError::DimensionMismatch`] before mutating state.
+    pub fn text_index<'b, E: Embedder + 'static>(
+        &'b mut self,
+        idx_name: &str,
+        config: TextIndexConfig<E>,
+    ) -> Result<TextNamespaceHandle<'b, N, S, M>, TextIndexError>
+    where
+        'a: 'b,
+    {
+        let state_key = text_index_state_key(&self.ns_name, idx_name);
+        let storage = self.store.inner.tree.storage.clone();
+
+        validate_or_write_text_identity::<N, _, _>(
+            &storage,
+            &state_key,
+            &config.embedder,
+            config.metric,
+            config.level_bits,
+            config.max_bucket_size,
+        )?;
+
+        let inner_local_name = text_inner_proximity_name(idx_name);
+        let proximity_save_name_full = proximity_save_name(&self.ns_name, &inner_local_name);
+        let inner_idx_key = (self.ns_name.clone(), inner_local_name);
+        let embedder_key = (self.ns_name.clone(), idx_name.to_string());
+
+        if !self.store.proximity_indexes.contains_key(&inner_idx_key) {
+            let prox_config = ProximityConfig {
+                dim: config.embedder.dim(),
+                metric: config.metric,
+                level_bits: config.level_bits,
+                max_bucket_size: config.max_bucket_size,
+            };
+            let inner = match ProximityIndex::load(storage.clone(), &proximity_save_name_full) {
+                Ok(loaded) => {
+                    if loaded.config().dim != config.embedder.dim() {
+                        return Err(TextIndexError::DimensionMismatch {
+                            stored: loaded.config().dim,
+                            got: config.embedder.dim(),
+                        });
+                    }
+                    loaded
+                }
+                Err(ProximityError::NotFound(_)) => ProximityIndex::new(storage, prox_config),
+                Err(e) => return Err(TextIndexError::Proximity(e)),
+            };
+            self.store
+                .proximity_indexes
+                .insert(inner_idx_key.clone(), inner);
+        }
+
+        // Register the embedder centrally so the cascade insert path can
+        // reach it. Subsequent calls with the same `idx_name` replace the
+        // entry — by this point, identity validation has already confirmed
+        // the new embedder matches the persisted id/version, so swapping
+        // the Arc is safe.
+        let arc_embedder: Arc<dyn Embedder> = Arc::new(config.embedder);
+        self.store
+            .text_embedders
+            .insert(embedder_key.clone(), arc_embedder.clone());
+        // Register the chunker too — used by both this handle's insert and
+        // the cascade insert path.
+        let arc_chunker: Arc<dyn Chunker> = config.chunker;
+        self.store
+            .text_chunkers
+            .insert(embedder_key, arc_chunker.clone());
+
+        Ok(TextNamespaceHandle {
+            store: &mut *self.store,
+            ns_name: self.ns_name.clone(),
+            idx_name: idx_name.to_string(),
+            inner_idx_key,
+            embedder: arc_embedder,
+            chunker: arc_chunker,
+        })
+    }
+
+    /// Drop a text sub-index from the in-memory cache. The persisted state
+    /// (entries + identity blob + tree nodes) is **not** eagerly deleted —
+    /// content-addressed nodes become unreachable for backend GC. A future
+    /// call to `text_index` with the same name re-loads the same state.
+    pub fn drop_text_index(&mut self, idx_name: &str) -> bool {
+        let inner_idx_key = (self.ns_name.clone(), text_inner_proximity_name(idx_name));
+        let embedder_key = (self.ns_name.clone(), idx_name.to_string());
+        self.store.dirty_proximity_indexes.remove(&inner_idx_key);
+        self.store.text_embedders.remove(&embedder_key);
+        self.store.text_chunkers.remove(&embedder_key);
+        self.store.text_transformers.remove(&embedder_key);
+        self.store
+            .proximity_indexes
+            .remove(&inner_idx_key)
+            .is_some()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cascade configuration — PR 4d
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "proximity")]
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespacedKvStore<N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Configure auto-cascade for a namespace. Every subsequent
+    /// `NamespaceHandle::insert` against `ns_name` will additionally embed
+    /// the value (interpreted as UTF-8) and upsert into every listed text
+    /// sub-index. `NamespaceHandle::delete` cascades deletions to the same
+    /// list.
+    ///
+    /// Targets that have not been loaded (no `text_index<E>()` call yet in
+    /// this process) are silently skipped. Use
+    /// [`Self::audit_text_index`] / [`Self::purge_text_index_orphans`] to
+    /// detect and repair drift after the fact.
+    ///
+    /// Values that are not valid UTF-8 are silently skipped for cascade —
+    /// a future PR will add a `value_transformer` hook for binary-to-text
+    /// extraction.
+    ///
+    /// Runtime configuration only: not persisted in the namespace registry,
+    /// so callers must set it each time they open the store.
+    pub fn set_cascade(&mut self, ns_name: &str, text_indexes: Vec<String>) {
+        self.cascade_lists.insert(ns_name.to_string(), text_indexes);
+    }
+
+    /// Clear any cascade configuration for the given namespace.
+    pub fn clear_cascade(&mut self, ns_name: &str) {
+        self.cascade_lists.remove(ns_name);
+    }
+
+    /// Current cascade list for a namespace, if any.
+    pub fn cascade_for_namespace(&self, ns_name: &str) -> Option<&[String]> {
+        self.cascade_lists.get(ns_name).map(|v| v.as_slice())
+    }
+
+    /// Register a value transformer for a `(namespace, text_index)` target.
+    ///
+    /// During cascade, the transformer runs on the raw primary-tree value
+    /// bytes for each id. It returns either:
+    ///
+    /// - `Some(text)` — the text to embed and upsert into this index.
+    /// - `None` — opt this id out of cascade for this index. The primary
+    ///   tree still gets the bytes; only the named text index is skipped.
+    ///
+    /// Without a registered transformer, cascade falls back to interpreting
+    /// the bytes as UTF-8 (and silently skips non-UTF-8 values).
+    ///
+    /// Runtime configuration only — not persisted; users register their
+    /// transformers each process. Typical use: extract a field from a JSON
+    /// payload, or stringify a Protobuf message.
+    pub fn set_value_transformer<F>(&mut self, ns_name: &str, idx_name: &str, transformer: F)
+    where
+        F: Fn(&[u8]) -> Option<String> + Send + Sync + 'static,
+    {
+        self.text_transformers.insert(
+            (ns_name.to_string(), idx_name.to_string()),
+            Arc::new(transformer),
+        );
+    }
+
+    /// Remove the value transformer for a `(namespace, text_index)` target.
+    /// Returns whether one was registered.
+    pub fn clear_value_transformer(&mut self, ns_name: &str, idx_name: &str) -> bool {
+        self.text_transformers
+            .remove(&(ns_name.to_string(), idx_name.to_string()))
+            .is_some()
+    }
+
+    /// True when a value transformer is registered for the given target.
+    pub fn has_value_transformer(&self, ns_name: &str, idx_name: &str) -> bool {
+        self.text_transformers
+            .contains_key(&(ns_name.to_string(), idx_name.to_string()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Drift management — PR 4c
+// ---------------------------------------------------------------------------
+
+/// Report returned by [`NamespacedKvStore::gc_blobs`] (PR 0c).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlobGcReport {
+    /// Total blobs found in storage before GC.
+    pub total: usize,
+    /// Blobs found to be referenced by at least one envelope in some loaded
+    /// namespace tree.
+    pub referenced: usize,
+    /// Blobs successfully deleted as orphans.
+    pub removed: usize,
+    /// Per-blob delete errors, formatted as `"hex_hash: error_message"`.
+    pub errors: Vec<String>,
+}
+
+impl BlobGcReport {
+    /// Convenience: count of blobs left after GC (`total - removed`).
+    pub fn remaining(&self) -> usize {
+        self.total - self.removed
+    }
+}
+
+/// Report returned by [`NamespacedKvStore::audit_text_index`].
+///
+/// `orphans` and `missing` are ordered for stable iteration and for
+/// deterministic test assertions.
+#[cfg(feature = "proximity")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextIndexAudit {
+    /// Ids present in the text index but **not** in the primary KV tree.
+    /// Result of (a) a delete that didn't cascade, (b) a manual primary-tree
+    /// removal, or (c) the index was loaded from disk with stale state.
+    pub orphans_in_index: Vec<Vec<u8>>,
+    /// Ids present in the primary KV tree but **not** in the text index.
+    /// Result of (a) primary inserts that weren't mirrored into the index,
+    /// or (b) an index that was created after some primary writes already
+    /// happened.
+    pub missing_from_index: Vec<Vec<u8>>,
+}
+
+#[cfg(feature = "proximity")]
+impl TextIndexAudit {
+    /// True when the index is in perfect sync with the primary tree.
+    pub fn is_in_sync(&self) -> bool {
+        self.orphans_in_index.is_empty() && self.missing_from_index.is_empty()
+    }
+}
+
+#[cfg(feature = "proximity")]
+impl<const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespacedKvStore<N, S, M>
+where
+    VersionedKvStore<N, S, M>: TreeConfigSaver<N>,
+{
+    /// Compare the id set of a named text sub-index against the primary KV
+    /// tree of the same namespace and report orphans + missing entries.
+    ///
+    /// Both namespace and index must already be loaded into memory (i.e. the
+    /// user has called `namespace(ns)` and `text_index(idx, ...)` earlier in
+    /// this process). Returns an error if either is missing.
+    pub fn audit_text_index(
+        &mut self,
+        ns_name: &str,
+        idx_name: &str,
+    ) -> Result<TextIndexAudit, TextIndexError> {
+        let inner_idx_key = (ns_name.to_string(), text_inner_proximity_name(idx_name));
+        if !self.proximity_indexes.contains_key(&inner_idx_key) {
+            return Err(TextIndexError::NotFound(format!("{ns_name}:{idx_name}")));
+        }
+        // Snapshot the *document* ids on the index side — `entries_snapshot()`
+        // returns one entry per chunk under the multi-chunk plumbing, so we
+        // strip the chunk-envelope and dedup back to the doc id.
+        let index_ids: std::collections::BTreeSet<Vec<u8>> = self
+            .proximity_indexes
+            .get(&inner_idx_key)
+            .unwrap()
+            .entries_snapshot()
+            .keys()
+            .map(|chunk_id| {
+                crate::proximity::text_index::parse_chunk_id(chunk_id)
+                    .map(|(doc_id, _)| doc_id)
+                    .unwrap_or_else(|| chunk_id.clone())
+            })
+            .collect();
+
+        // Ensure the primary tree is loaded so we can list its keys.
+        let handle = self.namespace(ns_name);
+        let primary_ids: std::collections::BTreeSet<Vec<u8>> =
+            handle.list_keys().into_iter().collect();
+        // `handle` borrows `self`; drop before continuing.
+        drop(handle);
+
+        let mut orphans: Vec<Vec<u8>> = index_ids.difference(&primary_ids).cloned().collect();
+        let mut missing: Vec<Vec<u8>> = primary_ids.difference(&index_ids).cloned().collect();
+        orphans.sort();
+        missing.sort();
+
+        Ok(TextIndexAudit {
+            orphans_in_index: orphans,
+            missing_from_index: missing,
+        })
+    }
+
+    /// Remove every text-index id that is not present in the primary KV tree
+    /// of the same namespace. Returns the number of ids purged.
+    ///
+    /// Equivalent to "delete all `audit_text_index(...).orphans_in_index`
+    /// entries from the text index" but does the audit + delete in one
+    /// shot. Marks the underlying proximity index dirty so the deletions
+    /// land on the next `commit()`.
+    pub fn purge_text_index_orphans(
+        &mut self,
+        ns_name: &str,
+        idx_name: &str,
+    ) -> Result<usize, TextIndexError> {
+        let report = self.audit_text_index(ns_name, idx_name)?;
+        if report.orphans_in_index.is_empty() {
+            return Ok(0);
+        }
+
+        let inner_idx_key = (ns_name.to_string(), text_inner_proximity_name(idx_name));
+        let count = report.orphans_in_index.len();
+        let idx = self
+            .proximity_indexes
+            .get_mut(&inner_idx_key)
+            .expect("loaded by audit_text_index");
+        // Audit returns *doc* ids — translate each into the matching chunk
+        // ids via the length-prefixed envelope and delete every chunk.
+        for orphan_doc_id in &report.orphans_in_index {
+            let prefix = crate::proximity::text_index::doc_id_prefix(orphan_doc_id);
+            let chunk_ids: Vec<Vec<u8>> = idx
+                .entries_snapshot()
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned()
+                .collect();
+            for chunk_id in chunk_ids {
+                idx.remove(&chunk_id);
+            }
+        }
+        self.dirty_proximity_indexes.insert(inner_idx_key);
+        Ok(count)
     }
 }

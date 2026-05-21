@@ -187,7 +187,6 @@ async fn main() -> Result<()> {
     let verify_query = "SELECT name, age FROM users WHERE name = 'Alice Johnson'";
     let result = glue.execute(verify_query).await?;
     print_results("Alice's updated info:", &result);
-    glue.storage.commit().await?;
 
     // 7. Advanced queries with subqueries
     println!("7. Running advanced queries...");
@@ -199,6 +198,13 @@ async fn main() -> Result<()> {
     "#;
     let result = glue.execute(multi_order_customers).await?;
     print_results("Customers with multiple orders:", &result);
+
+    // Commit step-6 UPDATE/DELETE here, AFTER step 7's reads finish. Running
+    // commit() between two read-only steps leaves GlueSQL with stale table
+    // metadata under the current adapter, and the next SELECT fails with
+    // TableNotFound. Step 7 is read-only, so deferring the commit doesn't
+    // change what lands in git history.
+    glue.storage.commit().await?;
 
     println!("\n🎉 SQL example completed successfully!");
     println!("This demonstrates how ProllyTree can serve as a backend for SQL queries");
