@@ -33,7 +33,7 @@ limitations under the License.
 //! All namespace trees share the same [`NodeStorage`] backend (content-addressed,
 //! so there is no collision risk).
 
-use super::{TreeConfigSaver, VersionedKvStore};
+use super::{TreeConfigSaver, VersionedKvStore, NAMESPACED_TREE_CONFIG_FILENAME};
 use crate::config::TreeConfig;
 use crate::diff::{ConflictResolver, IgnoreConflictsResolver, MergeConflict};
 use crate::digest::ValueDigest;
@@ -999,9 +999,24 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
     }
 
     /// Initialize a new namespaced store with Git storage.
+    ///
+    /// Idempotent: dispatches to [`open`] if the dataset already has a
+    /// namespaced layout, so callers don't accumulate "Initial namespaced
+    /// store" commits on re-init. Detection only looks at namespace-specific
+    /// markers — a sibling `VersionedKvStore` in the same dataset_dir does
+    /// not count as "already initialized" for the namespaced store.
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
-        // Delegate to VersionedKvStore for git setup
-        let inner = VersionedKvStore::<N, GitNodeStorage<N>>::init(&path)?;
+        let path_ref = path.as_ref();
+        if path_ref.join(NAMESPACED_TREE_CONFIG_FILENAME).exists()
+            || path_ref.join("prolly_namespace_registry").exists()
+        {
+            return Self::open(path);
+        }
+
+        let inner = VersionedKvStore::<N, GitNodeStorage<N>>::init_with_config_filename(
+            &path,
+            NAMESPACED_TREE_CONFIG_FILENAME,
+        )?;
 
         let mut store = NamespacedKvStore {
             inner,
@@ -1026,21 +1041,25 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             externalize_threshold: None,
         };
 
-        // Create the default namespace with an empty tree
         let default_tree = ProllyTree::new(store.inner.tree.storage.clone(), TreeConfig::default());
         store
             .namespaces
             .insert(DEFAULT_NAMESPACE.to_string(), default_tree);
 
-        // Commit initial state (writes V2 marker + registry)
+        // Writes the V2 marker + registry.
         store.commit("Initial namespaced store")?;
 
         Ok(store)
     }
 
-    /// Open an existing store. Automatically detects V1/V2 format.
+    /// Open an existing store. Auto-detects V1/V2 format and silently
+    /// migrates pre-split (default-filename) stores via the open-side
+    /// fallback in `VersionedKvStore::open_with_config_filename`.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
-        let inner = VersionedKvStore::<N, GitNodeStorage<N>>::open(&path)?;
+        let inner = VersionedKvStore::<N, GitNodeStorage<N>>::open_with_config_filename(
+            &path,
+            NAMESPACED_TREE_CONFIG_FILENAME,
+        )?;
 
         let dataset_dir = inner
             .dataset_dir
