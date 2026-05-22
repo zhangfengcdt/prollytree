@@ -91,4 +91,4 @@ if proximity_available:
 if proximity_text_available:
     __all__.append("MiniLmEmbedder")
 
-__version__ = "0.4.0"
+__version__ = "0.4.1-beta"

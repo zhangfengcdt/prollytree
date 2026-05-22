@@ -31,7 +31,7 @@ A prolly tree's shape is a deterministic function of its contents, so two replic
 
 ```toml
 [dependencies]
-prollytree = { version = "0.4.0", features = ["git", "sql"] }
+prollytree = { version = "0.4.1-beta", features = ["git", "sql"] }
 # Add `proximity` for the text-search surface, `proximity_text` for bundled MiniLM.
 ```
 
@@ -152,7 +152,7 @@ Python PyPI wheels ship `git`, `sql`, `rocksdb_storage`, `proximity`, and `proxi
 
 ```toml
 [dependencies.prollytree]
-version = "0.4.0"
+version = "0.4.1-beta"
 features = ["git", "sql", "proximity", "proximity_text"]
 ```
 
