@@ -88,8 +88,8 @@ flowchart LR
     Out["canonical root<br/>(possibly multi-level)"]
 
     KV --> C0
-    C0 -->|on emit:<br/>(firstKey, leaf_hash)| C1
-    C1 -->|on emit:<br/>(firstKey, internal_hash)| Cn
+    C0 -->|"on emit:<br/>(firstKey, leaf_hash)"| C1
+    C1 -->|"on emit:<br/>(firstKey, internal_hash)"| Cn
     Cn --> Out
 ```
 
@@ -130,7 +130,7 @@ flowchart TD
     pure -->|no| cursor
     cursor --> ff
     ff -->|yes| ffend
-    ff -->|no, continue| cursor
+    ff -->|"no, continue"| cursor
     fast --> done
     ffend --> done
     done --> out
@@ -199,16 +199,16 @@ splitter.
 ```mermaid
 sequenceDiagram
     participant C as Cursor
-    participant CK as Chunker (level 0)
-    participant P as Chunker (level 1)
+    participant CK as Chunker_L0
+    participant P as Chunker_L1
 
     Note over C,CK: cursor at end of an old leaf, no muts pending
     C->>CK: feed last item
     CK->>CK: splitter fires boundary
-    CK->>P: (firstKey, new_leaf_hash)
-    Note over CK: take_last_emit_hash() == old_leaf_hash<br/>+ chunker.is_at_boundary() ⇒ in sync
+    CK->>P: emit firstKey + new_leaf_hash
+    Note over CK: take_last_emit_hash == old_leaf_hash<br/>+ is_at_boundary ⇒ in sync
     loop for each remaining old leaf
-        CK->>P: append_subtree_at_parent_level(firstKey, old_leaf_hash)
+        CK->>P: append_subtree_at_parent_level
     end
     Note over CK,P: items inside remaining leaves are never re-read
 ```
