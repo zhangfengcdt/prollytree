@@ -1080,61 +1080,11 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         None
     }
 
-    /// Walk all leaves in key order and return their `(key, value)` pairs.
-    ///
-    /// Used by `canonicalize` to capture the tree's logical state before
-    /// rebuilding from scratch.
-    fn collect_pairs(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let mut pairs = Vec::new();
-        self.collect_pairs_recursive(&self.root, &mut pairs);
-        pairs
-    }
-
-    fn collect_pairs_recursive(&self, node: &ProllyNode<N>, pairs: &mut Vec<(Vec<u8>, Vec<u8>)>) {
-        if node.is_leaf {
-            for (k, v) in node.keys.iter().zip(node.values.iter()) {
-                pairs.push((k.clone(), v.clone()));
-            }
-        } else {
-            for child_node in node.children(&self.storage) {
-                self.collect_pairs_recursive(&child_node, pairs);
-            }
-        }
-    }
-
-    /// Rebuild the tree from its current logical state so the resulting
-    /// shape and root hash depend only on the (key, value) set and the
-    /// `TreeConfig`, never on the operation history.
-    ///
-    /// Implementation: collects the current sorted `(key, value)` pairs
-    /// and streams them through `streaming_chunker::Chunker`, which is
-    /// the Rust port of Dolt's streaming-chunker pipeline. The chunker
-    /// resets its splitter state at every chunk boundary, so the same
-    /// final sorted sequence always yields the same chunks and hashes.
-    ///
-    /// This is still O(N) per call (it walks all leaves), but it is now
-    /// correct *by construction* rather than by post-hoc rebuild. Phase
-    /// 2 of the streaming-chunker work adds a `NodeCursor` so unchanged
-    /// subtrees can be skipped, restoring O(log N + edits) per op.
-    fn canonicalize(&mut self) {
-        let pairs = self.collect_pairs();
-        // Leaves are already walked in sorted order; no resort needed.
-        let new_root = crate::streaming_chunker::build_tree_from_sorted_pairs(
-            pairs,
-            &self.config,
-            &mut self.storage,
-        );
-        let _ = self
-            .storage
-            .insert_node(new_root.get_hash(), new_root.clone());
-        self.root = new_root;
-    }
-
     /// Apply a batch of insert/delete operations in a single streaming pass.
     /// `Some(value)` is an insert/upsert; `None` is a delete.
     ///
     /// Implementation: sort the mutations into a `BTreeMap` for ordering
-    /// + duplicate-key collapsing, then drive them through
+    /// and duplicate-key collapsing, then drive them through
     /// `streaming_chunker::apply_mutations`, which walks the existing
     /// tree with a `NodeCursor` and emits a new canonical tree without
     /// materializing every existing pair into memory.
