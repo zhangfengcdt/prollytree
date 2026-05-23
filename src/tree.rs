@@ -350,12 +350,14 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
         // Root node does not have a parent hash
         self.root.insert(key, value, &mut self.storage, Vec::new());
+        self.canonicalize();
         self.persist_root();
     }
 
     fn insert_batch(&mut self, keys: &[Vec<u8>], values: &[Vec<u8>]) {
         self.root
             .insert_batch(keys, values, &mut self.storage, Vec::new());
+        self.canonicalize();
     }
 
     fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool {
@@ -370,6 +372,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     fn delete(&mut self, key: &[u8]) -> bool {
         let deleted = self.root.delete(key, &mut self.storage, Vec::new());
         if deleted {
+            self.canonicalize();
             self.persist_root();
         }
         deleted
@@ -377,6 +380,7 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
 
     fn delete_batch(&mut self, keys: &[Vec<u8>]) {
         self.root.delete_batch(keys, &mut self.storage, Vec::new());
+        self.canonicalize();
     }
 
     fn find(&self, key: &[u8]) -> Option<ProllyNode<N>> {
@@ -1071,6 +1075,49 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
             }
         }
         None
+    }
+
+    /// Walk all leaves in key order and return their `(key, value)` pairs.
+    ///
+    /// Used by `canonicalize` to capture the tree's logical state before
+    /// rebuilding from scratch.
+    fn collect_pairs(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let mut pairs = Vec::new();
+        self.collect_pairs_recursive(&self.root, &mut pairs);
+        pairs
+    }
+
+    fn collect_pairs_recursive(&self, node: &ProllyNode<N>, pairs: &mut Vec<(Vec<u8>, Vec<u8>)>) {
+        if node.is_leaf {
+            for (k, v) in node.keys.iter().zip(node.values.iter()) {
+                pairs.push((k.clone(), v.clone()));
+            }
+        } else {
+            for child_node in node.children(&self.storage) {
+                self.collect_pairs_recursive(&child_node, pairs);
+            }
+        }
+    }
+
+    /// Rebuild the tree from its current logical state so the resulting
+    /// shape and root hash depend only on the (key, value) set and the
+    /// `TreeConfig`, never on the operation history.
+    ///
+    /// This is the correctness-first stop-gap for the history-independence
+    /// guarantee: after every mutation the tree is recomputed from the
+    /// canonical chunked layout of its leaves. It is O(N) per operation.
+    /// Once the incremental balance path is fixed to maintain this
+    /// invariant by construction, this call can be elided.
+    fn canonicalize(&mut self) {
+        let pairs = self.collect_pairs();
+        // Leaves are already walked in sorted order; no resort needed.
+        let new_root =
+            ProllyNode::<N>::build_canonical_from_pairs(pairs, &self.config, &mut self.storage);
+        // Persist the new root so children referenced from it are reachable.
+        let _ = self
+            .storage
+            .insert_node(new_root.get_hash(), new_root.clone());
+        self.root = new_root;
     }
 
     /// Collect all keys from the tree
@@ -2186,6 +2233,144 @@ mod tests {
             let key_idx = node.keys.iter().position(|k| k == b"conflict_key").unwrap();
             let value = node.values[key_idx].clone();
             assert_eq!(value, b"dest_value".to_vec());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // History-independence tests at the ProllyTree (public API) layer.
+    //
+    // Mirrors the structure of the node-level tests in `src/node.rs`:
+    // one always-on baseline that exercises the narrow case the
+    // implementation supports today, and a small set of `#[ignore]`d
+    // tests that probe broader guarantees (root-hash equality across
+    // orders, root-hash equality after updates/deletes) which currently
+    // fail. See the module header in `src/node.rs` for the underlying
+    // bugs these expose; the integration test in
+    // `tests/history_independence.rs` runs the full config × order ×
+    // op-mix matrix.
+    // ------------------------------------------------------------------
+    mod history_independence_tests {
+        use super::*;
+        use rand::prelude::StdRng;
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+
+        fn k8(i: u64) -> Vec<u8> {
+            i.to_be_bytes().to_vec()
+        }
+        fn v16(i: u64) -> Vec<u8> {
+            let mut v = Vec::with_capacity(16);
+            v.extend_from_slice(&i.to_be_bytes());
+            v.extend_from_slice(&(!i).to_be_bytes());
+            v
+        }
+
+        /// Five insertion orders for the same key set 0..n.
+        fn orders(n: u64) -> Vec<(&'static str, Vec<u64>)> {
+            let asc: Vec<u64> = (0..n).collect();
+            let desc: Vec<u64> = (0..n).rev().collect();
+            let alt: Vec<u64> = (0..n).step_by(2).chain((1..n).step_by(2)).collect();
+            let mut s0: Vec<u64> = (0..n).collect();
+            s0.shuffle(&mut StdRng::from_seed([0u8; 32]));
+            let mut s42: Vec<u64> = (0..n).collect();
+            s42.shuffle(&mut StdRng::from_seed([42u8; 32]));
+            vec![
+                ("ascending", asc),
+                ("descending", desc),
+                ("alt-odd-even", alt),
+                ("shuffled(0)", s0),
+                ("shuffled(42)", s42),
+            ]
+        }
+
+        fn build_tree(order: &[u64]) -> ProllyTree<32, InMemoryNodeStorage<32>> {
+            let storage = InMemoryNodeStorage::<32>::default();
+            let mut tree = ProllyTree::new(storage, TreeConfig::default());
+            for &i in order {
+                tree.insert(k8(i), v16(i));
+            }
+            tree
+        }
+
+        /// Pure inserts under the default TreeConfig produce the same
+        /// leaf-level traversal regardless of insertion order. This is
+        /// the equivalent of `test_history_independence_default_config_traversal`
+        /// from `src/node.rs` but at the public ProllyTree API.
+        #[test]
+        fn prollytree_traversal_independent_of_order() {
+            const N: u64 = 256;
+            let orders = orders(N);
+            let baseline_label = orders[0].0;
+            let baseline_trav = build_tree(&orders[0].1).traverse();
+            for (label, order) in orders.iter().skip(1) {
+                let t = build_tree(order).traverse();
+                assert_eq!(
+                    t, baseline_trav,
+                    "order={} leaf content diverged from order={}",
+                    label, baseline_label
+                );
+            }
+        }
+
+        #[test]
+        fn prollytree_root_hash_independent_of_order() {
+            const N: u64 = 256;
+            let orders = orders(N);
+            let baseline_label = orders[0].0;
+            let baseline_hash = build_tree(&orders[0].1).get_root_hash().unwrap();
+            for (label, order) in orders.iter().skip(1) {
+                let h = build_tree(order).get_root_hash().unwrap();
+                assert_eq!(
+                    h, baseline_hash,
+                    "order={} root hash diverged from order={}",
+                    label, baseline_label
+                );
+            }
+        }
+
+        #[test]
+        fn prollytree_root_hash_independent_under_updates() {
+            const N: u64 = 256;
+            // Baseline: insert ascending with the real values.
+            let asc: Vec<u64> = (0..N).collect();
+            let baseline = build_tree(&asc).get_root_hash().unwrap();
+
+            // Variant: insert all with placeholder, then overwrite all in reverse.
+            let storage = InMemoryNodeStorage::<32>::default();
+            let mut tree = ProllyTree::new(storage, TreeConfig::default());
+            for &i in &asc {
+                tree.insert(k8(i), vec![0u8]);
+            }
+            for i in (0..N).rev() {
+                tree.insert(k8(i), v16(i));
+            }
+            let h = tree.get_root_hash().unwrap();
+            assert_eq!(
+                h, baseline,
+                "update-then-final root hash diverged from baseline"
+            );
+        }
+
+        #[test]
+        fn prollytree_root_hash_independent_under_deletes() {
+            const SURVIVE: u64 = 256;
+            const EXTRA: u64 = 256;
+            let survivors: Vec<u64> = (0..SURVIVE).collect();
+            let baseline = build_tree(&survivors).get_root_hash().unwrap();
+
+            let storage = InMemoryNodeStorage::<32>::default();
+            let mut tree = ProllyTree::new(storage, TreeConfig::default());
+            for i in 0..SURVIVE + EXTRA {
+                tree.insert(k8(i), v16(i));
+            }
+            for i in SURVIVE..SURVIVE + EXTRA {
+                tree.delete(&k8(i));
+            }
+            let h = tree.get_root_hash().unwrap();
+            assert_eq!(
+                h, baseline,
+                "delete-then-final root hash diverged from baseline"
+            );
         }
     }
 }
