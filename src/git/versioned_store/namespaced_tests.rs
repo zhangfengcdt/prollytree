@@ -881,10 +881,11 @@ mod namespaced_tests {
     // =====================================================================
     // History independence
     //
-    // Each namespace is backed by its own ProllyTree, so the
-    // ProllyTree::canonicalize fix should produce per-namespace root hashes
-    // that depend only on the final (key, value) set in that namespace -
-    // never on insert/delete order or cross-namespace interleaving.
+    // Each namespace is backed by its own ProllyTree, so the streaming
+    // canonical chunker (driven by ProllyTree::apply_changes on every
+    // commit) should produce per-namespace root hashes that depend only
+    // on the final (key, value) set in that namespace - never on
+    // insert/delete order or cross-namespace interleaving.
     // =====================================================================
 
     use rand::prelude::StdRng;

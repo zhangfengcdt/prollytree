@@ -32,10 +32,11 @@ limitations under the License.
 //!     insert-extras-then-delete.
 //!
 //! All tests assert root hash equality (the canonical fingerprint of the
-//! final key/value set). The fix that makes this work lives in
-//! `ProllyTree::canonicalize`, called after every mutation. Tests that
-//! probe the unfixed lower-level `ProllyNode` API directly remain
-//! `#[ignore]`d in `src/node.rs` - see the module header there.
+//! final key/value set). The fix that makes this work lives in the
+//! streaming chunker in `src/streaming_chunker.rs`, which
+//! `ProllyTree::apply_changes` drives on every mutation. Tests that
+//! probe the lower-level `ProllyNode` API directly (which still runs
+//! the legacy in-place balance) remain `#[ignore]`d in `src/node.rs`.
 
 use prollytree::config::TreeConfig;
 use prollytree::storage::InMemoryNodeStorage;
@@ -88,10 +89,10 @@ fn config_variants() -> Vec<ConfigVariant> {
 }
 
 /// N values exercised by the matrix tests. Capped at 256 so the full
-/// (config × N × key-pattern × order × op-mix) matrix - which builds 100+
-/// trees through the O(N) canonicalize - completes well under the 30s
-/// CI budget. The simpler `traversal_independent_of_order_default_config`
-/// test still exercises N up to 1000 since it only builds 4 trees per N.
+/// (config × N × key-pattern × order × op-mix) matrix completes well
+/// under the 30s CI budget. The simpler
+/// `traversal_independent_of_order_default_config` test still exercises
+/// N up to 1000 since it only builds 4 trees per N.
 fn key_counts() -> &'static [u64] {
     &[8, 32, 256]
 }
@@ -237,7 +238,7 @@ fn edge_cases_empty_and_singleton() {
     assert_eq!(h1, h2, "singleton tree built twice has identical root hash");
 }
 
-// -- Always-on matrix tests (rely on ProllyTree::canonicalize) -----------
+// -- Always-on matrix tests (rely on the streaming canonical chunker) ----
 
 /// Full matrix on root hash: every (config, N, key-pattern) cell must
 /// produce identical root hashes across all insertion orders.

@@ -43,8 +43,7 @@ limitations under the License.
 //!
 //! - **Phase 1**: `Chunker` + `Splitter` + `NodeBuilder` +
 //!   `build_tree_from_sorted_pairs`. Streams a full sorted sequence
-//!   through the chunker to produce a canonical tree. Used as the
-//!   backend for `ProllyTree::canonicalize`.
+//!   through the chunker to produce a canonical tree.
 //! - **Phase 2**: `NodeCursor` + `apply_mutations`. Walks an existing
 //!   tree's leaves with a cursor and merges in a sorted batch of
 //!   mutations through the same chunker. Replaces the legacy
@@ -455,10 +454,10 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
 /// by streaming the items through a fresh `Chunker`. The resulting root
 /// is persisted to storage and returned.
 ///
-/// This is the Phase-1 entry point (no cursor optimization). It's
-/// equivalent to `ProllyNode::build_canonical_from_pairs` but expressed
-/// in terms of the streaming chunker pipeline, which is what makes the
-/// algorithm history-independent by construction.
+/// This is the foundational entry point (no cursor / no fast paths):
+/// it just feeds the entire sequence to the chunker. `apply_mutations`
+/// is the cursor-aware path that handles incremental edits against an
+/// existing tree.
 pub fn build_tree_from_sorted_pairs<const N: usize, S: NodeStorage<N>>(
     pairs: impl IntoIterator<Item = (Vec<u8>, Vec<u8>)>,
     config: &TreeConfig<N>,

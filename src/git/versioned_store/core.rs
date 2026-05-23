@@ -278,8 +278,8 @@ where
 
     /// Commit staged changes
     pub fn commit(&mut self, message: &str) -> Result<gix::ObjectId, GitKvError> {
-        // Apply staged changes in a single batch so we canonicalize once
-        // instead of once per staged item (each canonicalize is O(tree size)).
+        // Apply staged changes in a single batch so we run the streaming
+        // canonical chunker once per commit instead of once per staged item.
         let changes: Vec<(Vec<u8>, Option<Vec<u8>>)> = self.staging_area.drain().collect();
         self.tree.apply_changes(changes);
 

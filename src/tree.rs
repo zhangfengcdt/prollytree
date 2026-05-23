@@ -2379,9 +2379,10 @@ mod tests {
     ///
     /// `apply_merge_results` (and `merge_trees`) start from a destination
     /// tree and apply added / modified / removed entries via
-    /// `ProllyTree::insert` / `delete` - both of which call
-    /// `canonicalize()`. So the merge result should be a canonical tree
-    /// that depends only on the final key/value set.
+    /// `ProllyTree::insert` / `delete`, both of which route through the
+    /// streaming chunker in `crate::streaming_chunker`. So the merge
+    /// result is a canonical tree that depends only on the final
+    /// key/value set.
     mod merge_canonicality_tests {
         use super::*;
         use crate::diff::IgnoreConflictsResolver;
@@ -2457,8 +2458,8 @@ mod tests {
 
         /// Same three input roots, but the merge is applied twice with the
         /// merge results in different orders. Because `apply_merge_results`
-        /// goes through `insert`/`delete` which both canonicalize, the
-        /// final root hash should be identical.
+        /// goes through `insert`/`delete` which both stream through the
+        /// canonical chunker, the final root hash should be identical.
         #[test]
         fn apply_merge_results_independent_of_result_order() {
             let mut storage = InMemoryNodeStorage::<32>::default();

@@ -807,8 +807,8 @@ where
                 if let Some(tree) = self.namespaces.get_mut(ns_name) {
                     // Build the batch first (applies externalize threshold per
                     // value); then drive it through `apply_changes` so we
-                    // canonicalize once for this namespace's commit instead
-                    // of once per staged item.
+                    // run the streaming canonical chunker once for this
+                    // namespace's commit instead of once per staged item.
                     let mut batch: Vec<(Vec<u8>, Option<Vec<u8>>)> =
                         Vec::with_capacity(staging.len());
                     for (key, value) in staging.drain() {
@@ -940,7 +940,8 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
                 if let Some(tree) = self.namespaces.get_mut(ns_name) {
                     // Build the batch first (applies externalize threshold per
                     // value); then drive it through `apply_changes` so we
-                    // canonicalize once per namespace per commit.
+                    // run the streaming canonical chunker once per namespace
+                    // per commit.
                     let mut batch: Vec<(Vec<u8>, Option<Vec<u8>>)> =
                         Vec::with_capacity(staging.len());
                     for (key, value) in staging.drain() {

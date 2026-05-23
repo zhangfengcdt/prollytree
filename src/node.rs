@@ -500,7 +500,14 @@ impl<const N: usize> ProllyNode<N> {
         output
     }
 
-    /// Build a canonical tree from a sorted sequence of (key, value) pairs.
+    /// Build a canonical tree from a sorted sequence of (key, value) pairs
+    /// using the batch chunker built on top of `chunk_content`.
+    ///
+    /// This is an alternate canonical builder kept as an independent
+    /// oracle: the streaming chunker in `crate::streaming_chunker` is
+    /// the production path used by `ProllyTree`, and the
+    /// `matches_node_build_canonical_from_pairs` unit test compares the
+    /// two builders' root hashes to catch regressions in either path.
     ///
     /// "Canonical" means the resulting tree depends only on the (key, value)
     /// set and the `TreeConfig`, never on the order operations were applied.
@@ -1873,21 +1880,21 @@ mod tests {
     // History-independence tests at the ProllyNode layer.
     //
     // History independence at the public `ProllyTree` API is guaranteed
-    // by `ProllyTree::canonicalize`, which rebuilds a canonical chunked
-    // tree from the leaf-level (key, value) sequence after every
-    // mutation. The integration tests in `tests/history_independence.rs`
-    // cover the full matrix at that layer.
+    // by the streaming-chunker pipeline in `crate::streaming_chunker`,
+    // which `ProllyTree::apply_changes` drives on every mutation. The
+    // integration tests in `tests/history_independence.rs` cover the
+    // full matrix at that layer.
     //
-    // The tests below exercise `ProllyNode` directly, *without* going
-    // through `ProllyTree::canonicalize`. The lower-level incremental
-    // `balance` path still has insertion-order-dependent behavior
-    // (chunker emits different leaf boundaries for the same final keys
-    // under non-default configs; deletes can leave empty trailing
-    // leaves; internal node structure varies). The `#[ignore]`d tests
-    // here document those gaps - run with `--include-ignored` to surface
-    // them. They serve as the acceptance suite for a future incremental
-    // rebalance that maintains canonicality without needing the
-    // tree-level rebuild.
+    // The tests below exercise `ProllyNode` directly, bypassing the
+    // streaming chunker. The legacy in-place `Balanced::balance` path
+    // still has insertion-order-dependent behavior (chunker emits
+    // different leaf boundaries for the same final keys under
+    // non-default configs; deletes can leave empty trailing leaves;
+    // internal node structure varies). The `#[ignore]`d tests here
+    // document those gaps - run with `--include-ignored` to surface
+    // them. They serve as the acceptance suite for a future rewrite
+    // of `ProllyNode`'s primitive mutation API to route through the
+    // streaming chunker.
     // ------------------------------------------------------------------
 
     /// Build the four insertion orders used by the node-level tests for a

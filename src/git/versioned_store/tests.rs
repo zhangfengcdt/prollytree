@@ -2240,9 +2240,9 @@ mod tests {
 /// History-independence tests at the `GitVersionedKvStore` layer.
 ///
 /// `VersionedKvStore::insert/delete` stages changes; `commit` drains the
-/// staging area into the inner `ProllyTree`, which auto-canonicalizes.
-/// These tests verify that the staged order does not affect the final
-/// committed tree's root hash.
+/// staging area into the inner `ProllyTree` via `apply_changes`, which
+/// drives the streaming canonical chunker. These tests verify that the
+/// staged order does not affect the final committed tree's root hash.
 #[cfg(test)]
 mod history_independence_tests {
     use crate::git::versioned_store::GitVersionedKvStore;
