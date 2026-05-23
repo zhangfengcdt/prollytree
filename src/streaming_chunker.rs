@@ -410,6 +410,267 @@ pub fn build_tree_from_sorted_pairs<const N: usize, S: NodeStorage<N>>(
 }
 
 // --------------------------------------------------------------------------
+// NodeCursor: lazy traversal of an existing tree
+// --------------------------------------------------------------------------
+
+/// A stateful position into an existing tree.
+///
+/// Mirrors Dolt's `tree.cursor` (`node_cursor.go`): a linked list of
+/// cursors, one per tree level, each pointing at a `(node, idx)` pair.
+/// `advance` moves the leaf cursor forward, recursively bumping parents
+/// when a leaf is exhausted; `seek` re-positions for a target key by
+/// walking up to the lowest covering ancestor and then back down.
+///
+/// The cursor holds nodes by value (cloned from storage on read) - this
+/// matches our existing `NodeStorage::get_node_by_hash` returning
+/// `Arc<ProllyNode>`. Cloning the inner node is acceptable here because
+/// the cursor only holds one node per level at a time.
+#[derive(Clone)]
+pub struct NodeCursor<const N: usize> {
+    pub nd: ProllyNode<N>,
+    /// Current index within `nd.keys` / `nd.values`. May be `-1` (before
+    /// start) or `nd.keys.len() as i32` (past end) when the cursor is
+    /// being advanced/retreated across node boundaries.
+    pub idx: i32,
+    pub parent: Option<Box<NodeCursor<N>>>,
+}
+
+impl<const N: usize> NodeCursor<N> {
+    /// Construct a cursor positioned at the first key in the leftmost
+    /// leaf of `root`'s subtree.
+    pub fn at_start<S: NodeStorage<N>>(root: ProllyNode<N>, storage: &S) -> Self {
+        let mut cur = Self {
+            nd: root,
+            idx: 0,
+            parent: None,
+        };
+        while !cur.nd.is_leaf {
+            let child_hash_bytes = cur.nd.values[cur.idx as usize].clone();
+            let child = storage
+                .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(&child_hash_bytes))
+                .map(|arc| (*arc).clone())
+                .expect("child reachable from cursor");
+            let parent = std::mem::replace(
+                &mut cur,
+                Self {
+                    nd: child,
+                    idx: 0,
+                    parent: None,
+                },
+            );
+            cur.parent = Some(Box::new(parent));
+        }
+        cur
+    }
+
+    /// Construct a cursor positioned at the first key >= `target_key`.
+    /// If `target_key` is greater than every key, the cursor is invalid
+    /// (idx == count).
+    pub fn at_key<S: NodeStorage<N>>(root: ProllyNode<N>, target_key: &[u8], storage: &S) -> Self {
+        // Walk down from the root following the pivot that "contains" the key.
+        // At each internal level, find the rightmost pivot <= target_key
+        // (matching the existing `ProllyTree::find` walk in src/node.rs).
+        let mut cur = Self {
+            nd: root,
+            idx: 0,
+            parent: None,
+        };
+        loop {
+            if cur.nd.is_leaf {
+                // Leaf: binary search for >= target_key.
+                let pos = match cur
+                    .nd
+                    .keys
+                    .binary_search_by(|k| k.as_slice().cmp(target_key))
+                {
+                    Ok(i) => i as i32,
+                    Err(i) => i as i32,
+                };
+                cur.idx = pos;
+                return cur;
+            }
+            // Internal: descend into the child whose pivot covers target_key.
+            let i = cur
+                .nd
+                .keys
+                .iter()
+                .rposition(|k| target_key >= k.as_slice())
+                .unwrap_or(0);
+            cur.idx = i as i32;
+            let child_hash_bytes = cur.nd.values[i].clone();
+            let child = storage
+                .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(&child_hash_bytes))
+                .map(|arc| (*arc).clone())
+                .expect("child reachable from cursor");
+            let parent = std::mem::replace(
+                &mut cur,
+                Self {
+                    nd: child,
+                    idx: 0,
+                    parent: None,
+                },
+            );
+            cur.parent = Some(Box::new(parent));
+        }
+    }
+
+    pub fn valid(&self) -> bool {
+        !self.nd.keys.is_empty() && self.idx >= 0 && (self.idx as usize) < self.nd.keys.len()
+    }
+
+    pub fn current_key(&self) -> &[u8] {
+        &self.nd.keys[self.idx as usize]
+    }
+
+    pub fn current_value(&self) -> &[u8] {
+        &self.nd.values[self.idx as usize]
+    }
+
+    pub fn at_node_end(&self) -> bool {
+        (self.idx as usize) + 1 >= self.nd.keys.len()
+    }
+
+    fn has_next_in_node(&self) -> bool {
+        (self.idx as usize) + 1 < self.nd.keys.len()
+    }
+
+    fn invalidate_at_end(&mut self) {
+        self.idx = self.nd.keys.len() as i32;
+    }
+
+    fn out_of_bounds(&self) -> bool {
+        self.idx < 0 || (self.idx as usize) >= self.nd.keys.len()
+    }
+
+    fn skip_to_node_start(&mut self) {
+        self.idx = 0;
+    }
+
+    /// Advance to the next leaf-level item. Recursively bumps parents
+    /// when a leaf is exhausted, then re-descends into the new leaf.
+    pub fn advance<S: NodeStorage<N>>(&mut self, storage: &S) {
+        if self.has_next_in_node() {
+            self.idx += 1;
+            return;
+        }
+        if self.parent.is_none() {
+            self.invalidate_at_end();
+            return;
+        }
+        // Recurse: bump the parent.
+        let parent = self.parent.as_mut().expect("parent present");
+        parent.advance(storage);
+        if parent.out_of_bounds() {
+            self.invalidate_at_end();
+            return;
+        }
+        // The parent now points at a new child. Fetch it.
+        let child_hash_bytes = parent.nd.values[parent.idx as usize].clone();
+        let child = storage
+            .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(&child_hash_bytes))
+            .map(|arc| (*arc).clone())
+            .expect("child reachable from cursor");
+        // The new child may itself be an internal node if our parent is
+        // more than one level up - but for a single-level advance,
+        // parent's child is always at our level.
+        self.nd = child;
+        self.skip_to_node_start();
+    }
+}
+
+// --------------------------------------------------------------------------
+// apply_mutations: cursor-aware streaming over an existing tree
+// --------------------------------------------------------------------------
+
+/// Apply a sorted batch of mutations to `root`, producing a new tree.
+///
+/// `mutations` is an iterator of `(key, Option<value>)` in ascending key
+/// order. `None` means delete. The function walks the old tree with a
+/// cursor and feeds unchanged items + mutated items through a fresh
+/// chunker. The chunker's deterministic splitter ensures the output is
+/// canonical regardless of the old tree's shape or the mutation order
+/// (within the sorted batch).
+///
+/// This is the Phase-2 cursor-driven entry point. It's O(tree size +
+/// edits) - one pass over the existing leaves - which is the same
+/// big-O as Phase 1 but avoids materializing every pair into a
+/// `BTreeMap` first.
+pub fn apply_mutations<const N: usize, S, I>(
+    root: ProllyNode<N>,
+    mutations: I,
+    config: &TreeConfig<N>,
+    storage: &mut S,
+) -> ProllyNode<N>
+where
+    S: NodeStorage<N>,
+    I: IntoIterator<Item = (Vec<u8>, Option<Vec<u8>>)>,
+{
+    // If the root is an empty leaf, the old tree contributes nothing -
+    // just stream the mutations through a fresh chunker.
+    if root.is_leaf && root.keys.is_empty() {
+        let mut chunker = Chunker::<N, S>::new(config, 0);
+        for (k, opt_v) in mutations {
+            if let Some(v) = opt_v {
+                chunker.add_pair(storage, k, v);
+            }
+            // deletes against empty tree are no-ops
+        }
+        return chunker.done(storage);
+    }
+
+    let mut cur = NodeCursor::at_start(root, storage);
+    let mut chunker = Chunker::<N, S>::new(config, 0);
+
+    let mut muts = mutations.into_iter().peekable();
+
+    while cur.valid() {
+        // Are there mutations that apply at or before the cursor's
+        // current key?
+        let cur_key = cur.current_key().to_vec();
+        let mut consumed_cur = false;
+        while let Some((mk, _)) = muts.peek() {
+            match mk.as_slice().cmp(&cur_key) {
+                std::cmp::Ordering::Less => {
+                    // Insert this new key before cur_key.
+                    let (mk, mv) = muts.next().expect("peeked");
+                    if let Some(v) = mv {
+                        chunker.add_pair(storage, mk, v);
+                    }
+                    // Delete of a non-existent key: no-op.
+                }
+                std::cmp::Ordering::Equal => {
+                    // Update or delete of cur_key.
+                    let (_, mv) = muts.next().expect("peeked");
+                    match mv {
+                        Some(v) => chunker.add_pair(storage, cur_key.clone(), v),
+                        None => { /* delete: skip cur_key */ }
+                    }
+                    consumed_cur = true;
+                    break;
+                }
+                std::cmp::Ordering::Greater => break,
+            }
+        }
+
+        if !consumed_cur {
+            // Pass the existing cur_key/value through unchanged.
+            let v = cur.current_value().to_vec();
+            chunker.add_pair(storage, cur_key, v);
+        }
+        cur.advance(storage);
+    }
+
+    // Drain any remaining mutations that fall past the end of the old tree.
+    for (k, opt_v) in muts {
+        if let Some(v) = opt_v {
+            chunker.add_pair(storage, k, v);
+        }
+    }
+
+    chunker.done(storage)
+}
+
+// --------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -494,5 +755,96 @@ mod tests {
             root_batch.get_hash(),
             "streaming chunker produced a different canonical root than ProllyNode::build_canonical_from_pairs"
         );
+    }
+
+    // -- apply_mutations (cursor-driven) tests --
+
+    #[test]
+    fn apply_mutations_against_empty_tree() {
+        let cfg = TreeConfig::<32>::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+        let empty = NodeBuilder::<32>::new(&cfg, 0).build();
+
+        let muts: Vec<(Vec<u8>, Option<Vec<u8>>)> =
+            (0..200u64).map(|i| (key(i), Some(val(i)))).collect();
+        let root = apply_mutations(empty, muts, &cfg, &mut storage);
+
+        let mut s2 = InMemoryNodeStorage::<32>::default();
+        let pairs: Vec<_> = (0..200u64).map(|i| (key(i), val(i))).collect();
+        let expected = build_tree_from_sorted_pairs::<32, _>(pairs, &cfg, &mut s2);
+
+        assert_eq!(root.get_hash(), expected.get_hash());
+    }
+
+    #[test]
+    fn apply_mutations_passes_through_unchanged_tree() {
+        let cfg = TreeConfig::<32>::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+        let pairs: Vec<_> = (0..500u64).map(|i| (key(i), val(i))).collect();
+        let original = build_tree_from_sorted_pairs::<32, _>(pairs, &cfg, &mut storage);
+        let original_hash = original.get_hash();
+
+        let no_muts: Vec<(Vec<u8>, Option<Vec<u8>>)> = vec![];
+        let result = apply_mutations(original, no_muts, &cfg, &mut storage);
+        assert_eq!(result.get_hash(), original_hash);
+    }
+
+    #[test]
+    fn apply_mutations_insert_into_middle() {
+        let cfg = TreeConfig::<32>::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        let evens: Vec<_> = (0..100u64).map(|i| (key(2 * i), val(2 * i))).collect();
+        let original = build_tree_from_sorted_pairs::<32, _>(evens, &cfg, &mut storage);
+
+        let odds: Vec<(Vec<u8>, Option<Vec<u8>>)> = (0..100u64)
+            .map(|i| (key(2 * i + 1), Some(val(2 * i + 1))))
+            .collect();
+        let result = apply_mutations(original, odds, &cfg, &mut storage);
+
+        let mut s2 = InMemoryNodeStorage::<32>::default();
+        let pairs: Vec<_> = (0..200u64).map(|i| (key(i), val(i))).collect();
+        let expected = build_tree_from_sorted_pairs::<32, _>(pairs, &cfg, &mut s2);
+
+        assert_eq!(result.get_hash(), expected.get_hash());
+    }
+
+    #[test]
+    fn apply_mutations_delete_some_keys() {
+        let cfg = TreeConfig::<32>::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        let all: Vec<_> = (0..200u64).map(|i| (key(i), val(i))).collect();
+        let original = build_tree_from_sorted_pairs::<32, _>(all, &cfg, &mut storage);
+
+        let dels: Vec<(Vec<u8>, Option<Vec<u8>>)> =
+            (0..100u64).map(|i| (key(2 * i + 1), None)).collect();
+        let result = apply_mutations(original, dels, &cfg, &mut storage);
+
+        let mut s2 = InMemoryNodeStorage::<32>::default();
+        let evens: Vec<_> = (0..100u64).map(|i| (key(2 * i), val(2 * i))).collect();
+        let expected = build_tree_from_sorted_pairs::<32, _>(evens, &cfg, &mut s2);
+
+        assert_eq!(result.get_hash(), expected.get_hash());
+    }
+
+    #[test]
+    fn apply_mutations_update_some_values() {
+        let cfg = TreeConfig::<32>::default();
+        let mut storage = InMemoryNodeStorage::<32>::default();
+
+        let pairs: Vec<_> = (0..200u64).map(|i| (key(i), val(i))).collect();
+        let original = build_tree_from_sorted_pairs::<32, _>(pairs, &cfg, &mut storage);
+
+        let updates: Vec<(Vec<u8>, Option<Vec<u8>>)> = (0..200u64)
+            .map(|i| (key(i), Some(val(i + 1_000_000))))
+            .collect();
+        let result = apply_mutations(original, updates, &cfg, &mut storage);
+
+        let mut s2 = InMemoryNodeStorage::<32>::default();
+        let expected_pairs: Vec<_> = (0..200u64).map(|i| (key(i), val(i + 1_000_000))).collect();
+        let expected = build_tree_from_sorted_pairs::<32, _>(expected_pairs, &cfg, &mut s2);
+
+        assert_eq!(result.get_hash(), expected.get_hash());
     }
 }

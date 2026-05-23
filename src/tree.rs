@@ -348,16 +348,17 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         tree
     }
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
-        // Root node does not have a parent hash
-        self.root.insert(key, value, &mut self.storage, Vec::new());
-        self.canonicalize();
+        // Stream the single mutation through the cursor-driven chunker.
+        // This bypasses the legacy in-place balance code (which doesn't
+        // maintain history independence) and produces a canonical tree
+        // by construction.
+        self.apply_changes(std::iter::once((key, Some(value))));
         self.persist_root();
     }
 
     fn insert_batch(&mut self, keys: &[Vec<u8>], values: &[Vec<u8>]) {
-        self.root
-            .insert_batch(keys, values, &mut self.storage, Vec::new());
-        self.canonicalize();
+        let batch = keys.iter().cloned().zip(values.iter().cloned().map(Some));
+        self.apply_changes(batch);
     }
 
     fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool {
@@ -370,17 +371,19 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn delete(&mut self, key: &[u8]) -> bool {
-        let deleted = self.root.delete(key, &mut self.storage, Vec::new());
-        if deleted {
-            self.canonicalize();
-            self.persist_root();
+        // Pre-check: was the key present? Same answer as before but
+        // computed via the cursor walk inside apply_changes' probe path.
+        if self.find(key).is_none() {
+            return false;
         }
-        deleted
+        self.apply_changes(std::iter::once((key.to_vec(), None)));
+        self.persist_root();
+        true
     }
 
     fn delete_batch(&mut self, keys: &[Vec<u8>]) {
-        self.root.delete_batch(keys, &mut self.storage, Vec::new());
-        self.canonicalize();
+        let batch = keys.iter().map(|k| (k.clone(), None));
+        self.apply_changes(batch);
     }
 
     fn find(&self, key: &[u8]) -> Option<ProllyNode<N>> {
@@ -1127,36 +1130,36 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         self.root = new_root;
     }
 
-    /// Apply a batch of insert/delete operations with a single canonicalize
-    /// pass at the end. `Some(value)` is an insert/upsert; `None` is a delete.
+    /// Apply a batch of insert/delete operations in a single streaming pass.
+    /// `Some(value)` is an insert/upsert; `None` is a delete.
     ///
-    /// Use this from any code path that drains a staging area (e.g.
-    /// `GitVersionedKvStore::commit`) - it replaces N canonicalize calls
-    /// (one per item, each O(tree size)) with a single one at the end.
-    /// Returns the number of deletes that hit a non-existent key.
+    /// Implementation: sort the mutations into a `BTreeMap` for ordering
+    /// + duplicate-key collapsing, then drive them through
+    /// `streaming_chunker::apply_mutations`, which walks the existing
+    /// tree with a `NodeCursor` and emits a new canonical tree without
+    /// materializing every existing pair into memory.
+    ///
+    /// Returns the number of deletes that hit a non-existent key
+    /// (callers may use this to set return values).
     pub fn apply_changes<I>(&mut self, changes: I) -> usize
     where
         I: IntoIterator<Item = (Vec<u8>, Option<Vec<u8>>)>,
     {
-        // Materialize the current state into a BTreeMap so applying changes is
-        // O(log N) per item. Then rebuild the tree once from the final state
-        // by streaming the sorted pairs through the chunker.
-        let mut map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> =
-            self.collect_pairs().into_iter().collect();
+        // Sort + dedupe the input. Last-write-wins per key within the batch.
+        let map: std::collections::BTreeMap<Vec<u8>, Option<Vec<u8>>> =
+            changes.into_iter().collect();
+        // For accurate `missing_deletes`, we need to know which delete
+        // targets weren't in the old tree. Cheap pre-pass: probe the
+        // existing tree.
         let mut missing_deletes = 0usize;
-        for (key, value) in changes {
-            match value {
-                Some(v) => {
-                    map.insert(key, v);
-                }
-                None => {
-                    if map.remove(&key).is_none() {
-                        missing_deletes += 1;
-                    }
-                }
+        for (k, v) in map.iter() {
+            if v.is_none() && self.find(k).is_none() {
+                missing_deletes += 1;
             }
         }
-        let new_root = crate::streaming_chunker::build_tree_from_sorted_pairs(
+
+        let new_root = crate::streaming_chunker::apply_mutations(
+            self.root.clone(),
             map,
             &self.config,
             &mut self.storage,
