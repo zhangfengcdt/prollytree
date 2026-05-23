@@ -28,6 +28,8 @@ If you've used a B-tree, a Merkle tree, or Git, each of the pieces below will al
 
 ## Related reading
 
-- The academic and engineering roots: Dolt's [blog post on prolly trees](https://www.dolthub.com/blog/2020-04-01-how-dolt-stores-table-data/) is a readable intro from a different implementation. The construction here is the same family with a few practical differences noted in [Probabilistic Balancing](rolling_hash.md).
+- The construction here belongs to the family of probabilistic
+  B-trees / content-defined Merkle search trees; a few practical
+  differences are noted in [Probabilistic Balancing](rolling_hash.md).
 - Merkle trees in general: the Wikipedia entry is the most concise reference.
 - Prolly trees used as an AI-agent memory substrate: see [Memoir](https://github.com/zhangfengcdt/memoir), which builds semantic memory on top of this library.

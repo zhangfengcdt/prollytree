@@ -102,7 +102,7 @@ If the roots differ:
 3. Recurse into the children that differ.
 ```
 
-You exchange only the *differing* subtrees. This is the pattern behind systems like [Dolt](https://github.com/dolthub/dolt) and our own `VersionedKvStore` diff.
+You exchange only the *differing* subtrees. This is the pattern behind our `VersionedKvStore` diff.
 
 ### As an audit trail
 

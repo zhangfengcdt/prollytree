@@ -115,7 +115,7 @@ The binding is a thin wrapper — Rust objects are held behind `Arc<Mutex<…>>`
 
 ### 7. Proximity / text-search layer
 
-Each namespace of a `NamespacedKvStore` can own zero or more **text sub-indexes** that ride on top of the same `NodeStorage<N>` the primary tree uses. Documents go through a pluggable `Embedder` (and optional `Chunker`) to produce vectors, which are stored in a content-addressed **proximity tree** — a Dolt-style Merkle ANN structure ([design discussion](https://www.dolthub.com/blog/2025-06-23-vector-index-deep-dive/)) whose shape is a pure function of the current `(id, vector)` set.
+Each namespace of a `NamespacedKvStore` can own zero or more **text sub-indexes** that ride on top of the same `NodeStorage<N>` the primary tree uses. Documents go through a pluggable `Embedder` (and optional `Chunker`) to produce vectors, which are stored in a content-addressed **proximity tree** — a Merkle ANN structure whose shape is a pure function of the current `(id, vector)` set.
 
 ```mermaid
 flowchart LR

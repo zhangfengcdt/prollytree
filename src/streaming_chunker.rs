@@ -14,11 +14,8 @@ limitations under the License.
 
 //! Streaming chunker for building canonical prolly trees.
 //!
-//! This is a Rust port of Dolt's
-//! `github.com/dolthub/dolt/go/store/prolly/tree/{chunker, node_splitter,
-//! node_builder}.go`. The architecture replaces the in-place
-//! `Balanced::balance` mutation loop, which cannot maintain history
-//! independence, with a streaming pipeline:
+//! This replaces the in-place `Balanced::balance` mutation loop, which
+//! cannot maintain history independence, with a streaming pipeline:
 //!
 //! ```text
 //!   sorted (key, value) stream
@@ -352,9 +349,9 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
         self.splitter.append(&key, &value);
         self.builder.add(key, value);
 
-        // Dolt's "constraint (3)": an internal-level chunk must contain
-        // at least 2 entries. A single-entry internal node would be a
-        // degenerate tower - emitting a boundary at level L on one
+        // Minimum-internal-fanout rule: an internal-level chunk must
+        // contain at least 2 entries. A single-entry internal node would
+        // be a degenerate tower - emitting a boundary at level L on one
         // entry creates a level-(L+1) chunker that also sees one entry
         // and (with the same splitter config) also fires a boundary,
         // cascading infinitely. Defer emission until the in-progress
@@ -371,13 +368,12 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
     /// Emit the current in-progress chunk as a sealed node and feed
     /// `(firstKey, hash)` to the parent chunker (creating one if needed).
     ///
-    /// Note: Dolt uses *last-key* as the parent pivot in its port. We
-    /// use *first-key* to match the existing ProllyTree convention -
-    /// `Balanced::balance` and `ProllyTree::find` both treat internal
-    /// node keys as "first key of this child's subtree." This affects
-    /// the rolling-hash content fed into the parent chunker but not
-    /// history-independence: the same final state always yields the
-    /// same first-keys and hashes.
+    /// Pivot convention: we use *first-key* (the first key of each
+    /// child's subtree) to match `Balanced::balance` and
+    /// `ProllyTree::find`. Some other prolly-tree implementations use
+    /// *last-key* instead; the choice affects the rolling-hash content
+    /// fed into the parent chunker but not history-independence — the
+    /// same final state always yields the same first-keys and hashes.
     fn handle_boundary(&mut self, storage: &mut S) {
         debug_assert!(
             self.builder.count() > 0,
@@ -420,10 +416,10 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
         // pending OR this level has more than one entry's worth of data,
         // emit a final chunk and recurse.
         //
-        // The "canonical root" rule (matching Dolt): if at this level
-        // we have exactly one chunk *and* there is no parent yet, that
-        // single chunk IS the root. If we have multiple chunks, we still
-        // need to seal the trailing chunk and the parent assembles them.
+        // The "canonical root" rule: if at this level we have exactly
+        // one chunk *and* there is no parent yet, that single chunk IS
+        // the root. If we have multiple chunks, we still need to seal
+        // the trailing chunk and the parent assembles them.
         if self.builder.count() == 0 {
             // Possible at any level except level 0 fresh start: we hit a
             // boundary exactly at the end of the input, so nothing is
@@ -487,11 +483,11 @@ pub fn build_tree_from_sorted_pairs<const N: usize, S: NodeStorage<N>>(
 
 /// A stateful position into an existing tree.
 ///
-/// Mirrors Dolt's `tree.cursor` (`node_cursor.go`): a linked list of
-/// cursors, one per tree level, each pointing at a `(node, idx)` pair.
-/// `advance` moves the leaf cursor forward, recursively bumping parents
-/// when a leaf is exhausted; `seek` re-positions for a target key by
-/// walking up to the lowest covering ancestor and then back down.
+/// Internally a linked list of cursors, one per tree level, each
+/// pointing at a `(node, idx)` pair. `advance` moves the leaf cursor
+/// forward, recursively bumping parents when a leaf is exhausted;
+/// `seek` re-positions for a target key by walking up to the lowest
+/// covering ancestor and then back down.
 ///
 /// The cursor holds nodes by value (cloned from storage on read) - this
 /// matches our existing `NodeStorage::get_node_by_hash` returning
