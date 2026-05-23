@@ -1711,8 +1711,8 @@ mod tests {
         let mut node = ProllyNode::<32>::default();
         node.split = true;
         node.merged = true;
-        let bytes = bincode::serialize(&node).unwrap();
-        let de: ProllyNode<32> = bincode::deserialize(&bytes).unwrap();
+        let bytes = crate::serde_bincode::serialize(&node).unwrap();
+        let de: ProllyNode<32> = crate::serde_bincode::deserialize(&bytes).unwrap();
         assert!(
             !de.split && !de.merged,
             "Split/merged flags should not be serialized"

@@ -76,6 +76,7 @@ pub mod proximity;
 pub mod python;
 #[cfg(feature = "rocksdb_storage")]
 pub mod rocksdb;
+pub(crate) mod serde_bincode;
 #[cfg(feature = "sql")]
 pub mod sql;
 pub mod storage;

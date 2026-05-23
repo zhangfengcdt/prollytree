@@ -600,9 +600,10 @@ impl<const N: usize> GitOperations<N> {
             .ok_or_else(|| GitKvError::GitObjectError("Root object is not a blob".to_string()))?;
 
         // Deserialize the prolly node
-        let root_node: ProllyNode<N> = bincode::deserialize(blob_ref.data).map_err(|e| {
-            GitKvError::GitObjectError(format!("Failed to deserialize root node: {e}"))
-        })?;
+        let root_node: ProllyNode<N> =
+            crate::serde_bincode::deserialize(blob_ref.data).map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to deserialize root node: {e}"))
+            })?;
 
         // Traverse the tree and collect all key-value pairs
         let mut result = HashMap::new();
@@ -652,7 +653,7 @@ impl<const N: usize> GitOperations<N> {
                         })?;
 
                     let child_node: ProllyNode<N> =
-                        bincode::deserialize(blob_ref.data).map_err(|e| {
+                        crate::serde_bincode::deserialize(blob_ref.data).map_err(|e| {
                             GitKvError::GitObjectError(format!(
                                 "Failed to deserialize child node: {e}"
                             ))

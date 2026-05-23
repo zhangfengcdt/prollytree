@@ -262,7 +262,7 @@ where
     S: NodeStorage<N>,
 {
     if let Some(bytes) = storage.get_config(state_key) {
-        let state: SavedTextIndexState = bincode::deserialize(&bytes)
+        let state: SavedTextIndexState = crate::serde_bincode::deserialize(&bytes)
             .map_err(|e| TextIndexError::InvalidSavedState(e.to_string()))?;
         if state.embedder_id != embedder.id() || state.embedder_version != embedder.version() {
             return Err(TextIndexError::EmbedderMismatch {
@@ -288,8 +288,8 @@ where
             level_bits,
             max_bucket_size,
         };
-        let bytes =
-            bincode::serialize(&state).map_err(|e| TextIndexError::Serialize(e.to_string()))?;
+        let bytes = crate::serde_bincode::serialize(&state)
+            .map_err(|e| TextIndexError::Serialize(e.to_string()))?;
         storage.save_config(state_key, &bytes);
         Ok(())
     }
@@ -401,8 +401,8 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
             level_bits: cfg.level_bits,
             max_bucket_size: cfg.max_bucket_size,
         };
-        let bytes =
-            bincode::serialize(&state).map_err(|e| TextIndexError::Serialize(e.to_string()))?;
+        let bytes = crate::serde_bincode::serialize(&state)
+            .map_err(|e| TextIndexError::Serialize(e.to_string()))?;
         self.inner
             .storage()
             .save_config(&text_state_key(name), &bytes);

@@ -144,7 +144,7 @@ impl<const N: usize> GitNodeStorage<N> {
 
     /// Store a node as a Git blob
     fn store_node_as_blob(&self, node: &ProllyNode<N>) -> Result<gix::ObjectId, GitKvError> {
-        let serialized = bincode::serialize(node)?;
+        let serialized = crate::serde_bincode::serialize(node)?;
 
         // Write the serialized node as a Git blob
         let repo = self._repository.lock();
@@ -168,8 +168,8 @@ impl<const N: usize> GitNodeStorage<N> {
         })?;
 
         // Deserialize the blob data back to a ProllyNode
-        let node: ProllyNode<N> =
-            bincode::deserialize(object.data).map_err(GitKvError::SerializationError)?;
+        let node: ProllyNode<N> = crate::serde_bincode::deserialize(object.data)
+            .map_err(GitKvError::SerializationDecodeError)?;
 
         Ok(node)
     }

@@ -39,9 +39,13 @@ pub enum StorageError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// A serialization or deserialization error occurred.
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    /// A serialization error occurred while encoding a value.
+    #[error("Serialization encode error: {0}")]
+    SerializationEncode(#[from] bincode::error::EncodeError),
+
+    /// A deserialization error occurred while decoding bytes.
+    #[error("Serialization decode error: {0}")]
+    SerializationDecode(#[from] bincode::error::DecodeError),
 
     /// A storage-specific error with a descriptive message.
     #[error("Storage error: {0}")]

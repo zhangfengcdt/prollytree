@@ -153,7 +153,7 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
         match self.db.get(&key) {
             Ok(Some(data)) => {
                 // split/merged are #[serde(skip)] so they deserialize as false.
-                match bincode::deserialize::<ProllyNode<N>>(&data) {
+                match crate::serde_bincode::deserialize::<ProllyNode<N>>(&data) {
                     Ok(node) => {
                         let node = Arc::new(node);
 
@@ -178,7 +178,7 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
         self.cache.lock().put(hash.clone(), Arc::new(node.clone()));
 
         // Serialize and store in RocksDB
-        let data = bincode::serialize(&node)?;
+        let data = crate::serde_bincode::serialize(&node)?;
         let key = Self::node_key(&hash);
         self.db
             .put(&key, data)
@@ -270,7 +270,7 @@ impl<const N: usize> RocksDBNodeStorage<N> {
             cache.put(hash.clone(), Arc::new(node.clone()));
 
             // Add to batch
-            match bincode::serialize(&node) {
+            match crate::serde_bincode::serialize(&node) {
                 Ok(data) => {
                     let key = Self::node_key(&hash);
                     batch.put(&key, data);

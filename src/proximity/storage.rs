@@ -35,7 +35,8 @@ const PROX_SENTINEL: &[u8] = b"\x01prox";
 pub(crate) fn wrap_proximity_node<const N: usize>(
     node: &ProximityNode<N>,
 ) -> Result<ProllyNode<N>, ProximityError> {
-    let payload = bincode::serialize(node).map_err(|e| ProximityError::Serialize(e.to_string()))?;
+    let payload = crate::serde_bincode::serialize(node)
+        .map_err(|e| ProximityError::Serialize(e.to_string()))?;
     // Start from `Default` to inherit the chunking-config defaults (base,
     // modulus, pattern), then overwrite the fields we care about. Both
     // chunk-size bounds at usize::MAX make the rolling-hash chunker treat the
@@ -63,7 +64,7 @@ pub(crate) fn unwrap_proximity_node<const N: usize>(
             "wrapper is not a proximity node".into(),
         ));
     }
-    bincode::deserialize::<ProximityNode<N>>(&wrapper.values[0])
+    crate::serde_bincode::deserialize::<ProximityNode<N>>(&wrapper.values[0])
         .map_err(|e| ProximityError::Corrupted(format!("bincode: {e}")))
 }
 

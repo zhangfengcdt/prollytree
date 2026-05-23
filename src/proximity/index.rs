@@ -162,7 +162,7 @@ pub struct PersistedProximityState<const N: usize> {
 pub fn deserialize_persisted_state<const N: usize>(
     bytes: &[u8],
 ) -> Result<PersistedProximityState<N>, ProximityError> {
-    let state: SavedProximityState<N> = bincode::deserialize(bytes)
+    let state: SavedProximityState<N> = crate::serde_bincode::deserialize(bytes)
         .map_err(|e| ProximityError::InvalidSavedState(e.to_string()))?;
     Ok(PersistedProximityState {
         config: state.config,
@@ -322,8 +322,8 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
             entries: self.entries.clone(),
             root: self.root.clone(),
         };
-        let bytes =
-            bincode::serialize(&state).map_err(|e| ProximityError::Serialize(e.to_string()))?;
+        let bytes = crate::serde_bincode::serialize(&state)
+            .map_err(|e| ProximityError::Serialize(e.to_string()))?;
         self.storage.save_config(&Self::state_key(name), &bytes);
         self.storage.sync()?;
         Ok(self.root.clone())
@@ -335,7 +335,7 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
         let bytes = storage
             .get_config(&Self::state_key(name))
             .ok_or_else(|| ProximityError::NotFound(name.to_string()))?;
-        let state: SavedProximityState<N> = bincode::deserialize(&bytes)
+        let state: SavedProximityState<N> = crate::serde_bincode::deserialize(&bytes)
             .map_err(|e| ProximityError::InvalidSavedState(e.to_string()))?;
         Ok(Self {
             entries: state.entries,
