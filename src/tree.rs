@@ -2525,5 +2525,123 @@ mod tests {
                 "merge_trees output's root hash differs from a fresh canonical build"
             );
         }
+
+        /// `merge_trees` with `TakeSourceResolver`: when source and
+        /// destination both modified key `5` with different values, the
+        /// merged tree must take the source value, and its root must
+        /// equal a canonical build of the resulting key/value set.
+        #[test]
+        fn merge_trees_take_source_is_canonical() {
+            use crate::diff::TakeSourceResolver;
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+
+            // Build source where key 5 has value v(5_000_000)
+            let source_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in 0u64..24 {
+                    let v = if i == 5 { v16(5_000_000) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            // Build dest where key 5 has value v(9_999_999)
+            let dest_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in (0..16).chain(24..32) {
+                    let v = if i == 5 { v16(9_999_999) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            // Expected: union of keys; key 5 takes source's value.
+            let expected_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in 0u64..32 {
+                    let v = if i == 5 { v16(5_000_000) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let merged = merge_tool
+                .merge_trees(&source_root, &dest_root, &base_root, &TakeSourceResolver)
+                .expect("no unresolved conflicts (resolver handles them)");
+
+            assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "TakeSourceResolver merge output is non-canonical"
+            );
+        }
+
+        /// `merge_trees` with `TakeDestinationResolver`: symmetric to the
+        /// TakeSource test - the destination's value for the conflicting
+        /// key must be the one that ends up in the merged tree.
+        #[test]
+        fn merge_trees_take_destination_is_canonical() {
+            use crate::diff::TakeDestinationResolver;
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+
+            let source_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in 0u64..24 {
+                    let v = if i == 5 { v16(5_000_000) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            let dest_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in (0..16).chain(24..32) {
+                    let v = if i == 5 { v16(9_999_999) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            // Expected: union of keys; key 5 takes destination's value.
+            let expected_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in 0u64..32 {
+                    let v = if i == 5 { v16(9_999_999) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let merged = merge_tool
+                .merge_trees(
+                    &source_root,
+                    &dest_root,
+                    &base_root,
+                    &TakeDestinationResolver,
+                )
+                .expect("no unresolved conflicts (resolver handles them)");
+
+            assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "TakeDestinationResolver merge output is non-canonical"
+            );
+        }
     }
 }

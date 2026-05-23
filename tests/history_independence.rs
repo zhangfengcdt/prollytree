@@ -379,3 +379,304 @@ fn traversal_shared_prefix_keys() {
         failures.join("\n  ")
     );
 }
+
+// =========================================================================
+// Stronger coverage: closing the remaining "could a regression slip
+// through" gaps. Each test below targets a specific axis the matrix tests
+// don't pin.
+// =========================================================================
+
+/// Many-seed property test: for each config, run 32 deterministic shuffles
+/// of the same key set and assert every resulting root hash is equal.
+/// Hand-picked orders catch the obvious bugs; this one is meant to catch
+/// subtle drift in the chunker / splitter / cursor under arbitrary
+/// permutations.
+#[test]
+fn root_hash_property_many_random_orders() {
+    let mut failures = Vec::<String>::new();
+    const N: u64 = 200;
+    const SEEDS: u64 = 32;
+    for cfg_variant in config_variants() {
+        let asc: Vec<u64> = (0..N).collect();
+        let baseline = build_with_inserts((cfg_variant.cfg)(), &asc, k_u64, v_u64)
+            .get_root_hash()
+            .unwrap();
+        for seed in 0..SEEDS {
+            let mut order: Vec<u64> = (0..N).collect();
+            let mut seed_bytes = [0u8; 32];
+            seed_bytes[..8].copy_from_slice(&seed.to_le_bytes());
+            order.shuffle(&mut StdRng::from_seed(seed_bytes));
+            let h = build_with_inserts((cfg_variant.cfg)(), &order, k_u64, v_u64)
+                .get_root_hash()
+                .unwrap();
+            if h != baseline {
+                failures.push(format!(
+                    "cfg={} seed={} root diverged",
+                    cfg_variant.label, seed
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} divergent shuffle(s):\n  {}",
+        failures.len(),
+        failures.join("\n  ")
+    );
+}
+
+/// Cross-storage-backend equivalence: building the same logical tree on
+/// `InMemoryNodeStorage` and `FileNodeStorage` must yield the same root
+/// hash. The storage backend only persists bytes - the chunker writes
+/// the same nodes - but pinning this with a test guards against backend-
+/// specific code drift (e.g. an encoding tweak that leaks into hashes).
+#[test]
+fn file_storage_matches_memory_storage() {
+    use prollytree::storage::FileNodeStorage;
+    use tempfile::TempDir;
+
+    let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..300u64).map(|i| (k_u64(i), v_u64(i))).collect();
+    let cfg = TreeConfig::<32>::default();
+
+    // In-memory
+    let mut mem = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+    for (k, v) in &pairs {
+        mem.insert(k.clone(), v.clone());
+    }
+    let mem_root = mem.get_root_hash().unwrap();
+
+    // File-backed
+    let tmp = TempDir::new().expect("tempdir");
+    let storage = FileNodeStorage::<32>::new(tmp.path().to_path_buf()).expect("file storage");
+    let mut filed = ProllyTree::new(storage, cfg);
+    for (k, v) in &pairs {
+        filed.insert(k.clone(), v.clone());
+    }
+    let file_root = filed.get_root_hash().unwrap();
+
+    assert_eq!(
+        mem_root, file_root,
+        "memory and file storage produced different root hashes for the same operations"
+    );
+}
+
+/// Single-call vs batch parity: calling `insert(k1); insert(k2); ...` must
+/// produce the same root hash as one `insert_batch([k1, k2, ...])`. By
+/// the property they must, but pinning this catches regressions in
+/// `apply_changes`'s batch-vs-single dispatch.
+#[test]
+fn single_inserts_match_insert_batch() {
+    let cfg = TreeConfig::<32>::default();
+    let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..150u64).map(|i| (k_u64(i), v_u64(i))).collect();
+
+    let mut single = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+    for (k, v) in &pairs {
+        single.insert(k.clone(), v.clone());
+    }
+    let single_root = single.get_root_hash().unwrap();
+
+    let keys: Vec<Vec<u8>> = pairs.iter().map(|(k, _)| k.clone()).collect();
+    let vals: Vec<Vec<u8>> = pairs.iter().map(|(_, v)| v.clone()).collect();
+    let mut batched = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg);
+    batched.insert_batch(&keys, &vals);
+    let batched_root = batched.get_root_hash().unwrap();
+
+    assert_eq!(
+        single_root, batched_root,
+        "single insert sequence diverged from insert_batch with same final state"
+    );
+}
+
+/// Mixed-ops random sequences: generate arbitrary insert/update/delete
+/// sequences that converge to the same final logical state, and assert
+/// they all yield the same root hash. This stresses the most realistic
+/// failure modes a streaming chunker can have - cursor merges, cursor
+/// jumps across leaves, fast-forward triggers at arbitrary points.
+#[test]
+fn random_mixed_ops_converge_to_same_root() {
+    let cfg = TreeConfig::<32>::default();
+    // Target final state: { 0,2,4,...,98 } (even keys, 50 entries).
+    let target_keys: Vec<u64> = (0..50).map(|i| i * 2).collect();
+    let target_pairs: Vec<(Vec<u8>, Vec<u8>)> =
+        target_keys.iter().map(|&i| (k_u64(i), v_u64(i))).collect();
+
+    // Build the canonical baseline directly.
+    let mut baseline_tree = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+    for (k, v) in &target_pairs {
+        baseline_tree.insert(k.clone(), v.clone());
+    }
+    let baseline = baseline_tree.get_root_hash().unwrap();
+
+    let mut failures = Vec::<String>::new();
+    for seed in 0u64..16 {
+        // Construct a random op sequence that ends at the target state:
+        //   1. Insert each target key with a placeholder value.
+        //   2. Insert N "noise" keys (outside the target set).
+        //   3. Update each target key to its real value, in random order.
+        //   4. Delete each noise key, in random order.
+        let mut seed_bytes = [0u8; 32];
+        seed_bytes[..8].copy_from_slice(&seed.to_le_bytes());
+        let mut rng = StdRng::from_seed(seed_bytes);
+
+        let mut tree = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+
+        let mut step1: Vec<u64> = target_keys.clone();
+        step1.shuffle(&mut rng);
+        for &i in &step1 {
+            tree.insert(k_u64(i), b"placeholder".to_vec());
+        }
+
+        let noise: Vec<u64> = (1..50).map(|i| i * 2 + 1).collect(); // odd keys not in target
+        let mut step2 = noise.clone();
+        step2.shuffle(&mut rng);
+        for &i in &step2 {
+            tree.insert(k_u64(i), v_u64(i + 10_000));
+        }
+
+        let mut step3: Vec<u64> = target_keys.clone();
+        step3.shuffle(&mut rng);
+        for &i in &step3 {
+            tree.update(k_u64(i), v_u64(i));
+        }
+
+        let mut step4 = noise;
+        step4.shuffle(&mut rng);
+        for &i in &step4 {
+            tree.delete(&k_u64(i));
+        }
+
+        let root = tree.get_root_hash().unwrap();
+        if root != baseline {
+            failures.push(format!("seed={} root diverged from baseline", seed));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} mixed-op sequence(s) diverged:\n  {}",
+        failures.len(),
+        failures.join("\n  ")
+    );
+}
+
+/// Empty batches and no-op operations must not change the root hash.
+#[test]
+fn empty_batches_and_noops_preserve_root() {
+    let cfg = TreeConfig::<32>::default();
+    let mut tree = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg);
+    for i in 0u64..50 {
+        tree.insert(k_u64(i), v_u64(i));
+    }
+    let baseline = tree.get_root_hash().unwrap();
+
+    // Empty insert_batch
+    tree.insert_batch(&[], &[]);
+    assert_eq!(
+        tree.get_root_hash().unwrap(),
+        baseline,
+        "empty insert_batch changed the root"
+    );
+
+    // Empty delete_batch
+    tree.delete_batch(&[]);
+    assert_eq!(
+        tree.get_root_hash().unwrap(),
+        baseline,
+        "empty delete_batch changed the root"
+    );
+
+    // Delete of a key not present
+    assert!(!tree.delete(b"absent_key"));
+    assert_eq!(
+        tree.get_root_hash().unwrap(),
+        baseline,
+        "delete of absent key changed the root"
+    );
+
+    // Update of a key not present returns false and changes nothing
+    assert!(!tree.update(b"absent_key".to_vec(), b"value".to_vec()));
+    assert_eq!(
+        tree.get_root_hash().unwrap(),
+        baseline,
+        "failed update of absent key changed the root"
+    );
+}
+
+/// Inserting an ephemeral key and then deleting it must return to the
+/// original root hash. This is the most direct expression of history
+/// independence — the property says intermediate steps don't matter as
+/// long as the final state matches.
+#[test]
+fn insert_then_delete_returns_to_baseline() {
+    let cfg = TreeConfig::<32>::default();
+    let mut tree = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg);
+    for i in 0u64..40 {
+        tree.insert(k_u64(i), v_u64(i));
+    }
+    let baseline = tree.get_root_hash().unwrap();
+
+    // Insert and immediately delete an ephemeral key at various positions.
+    for &i in &[0u64, 20, 39, 999, 12345] {
+        let ephemeral = k_u64(i.wrapping_add(1_000_000));
+        tree.insert(ephemeral.clone(), b"ephemeral".to_vec());
+        assert!(tree.delete(&ephemeral));
+        assert_eq!(
+            tree.get_root_hash().unwrap(),
+            baseline,
+            "insert-then-delete of key based on {} did not return to baseline",
+            i
+        );
+    }
+}
+
+/// Delete every key, then re-insert the same set: the resulting tree
+/// must be byte-identical to a fresh canonical build of that set.
+#[test]
+fn delete_all_then_reinsert_is_canonical() {
+    let cfg = TreeConfig::<32>::default();
+    let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..80u64).map(|i| (k_u64(i), v_u64(i))).collect();
+
+    let mut fresh = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+    for (k, v) in &pairs {
+        fresh.insert(k.clone(), v.clone());
+    }
+    let fresh_root = fresh.get_root_hash().unwrap();
+
+    let mut wiped = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg);
+    for (k, v) in &pairs {
+        wiped.insert(k.clone(), v.clone());
+    }
+    // Now wipe everything.
+    let keys: Vec<Vec<u8>> = pairs.iter().map(|(k, _)| k.clone()).collect();
+    wiped.delete_batch(&keys);
+    // Re-insert in reverse order (shouldn't matter).
+    for (k, v) in pairs.iter().rev() {
+        wiped.insert(k.clone(), v.clone());
+    }
+    let wiped_root = wiped.get_root_hash().unwrap();
+
+    assert_eq!(
+        fresh_root, wiped_root,
+        "delete-all-then-reinsert produced a different root than a fresh build"
+    );
+}
+
+/// Deleting all keys must leave a well-formed empty tree, and inserting
+/// nothing into an empty tree must keep it empty.
+#[test]
+fn delete_all_yields_well_formed_empty_tree() {
+    let cfg = TreeConfig::<32>::default();
+    let mut tree = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+    for i in 0u64..30 {
+        tree.insert(k_u64(i), v_u64(i));
+    }
+    let keys: Vec<Vec<u8>> = (0..30u64).map(k_u64).collect();
+    tree.delete_batch(&keys);
+
+    let fresh = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg);
+    assert_eq!(
+        tree.get_root_hash().unwrap(),
+        fresh.get_root_hash().unwrap(),
+        "tree with everything deleted does not match a freshly-constructed empty tree"
+    );
+    assert_eq!(tree.size(), 0);
+}

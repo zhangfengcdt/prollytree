@@ -2407,4 +2407,63 @@ mod history_independence_tests {
             "tree after insert-extras-then-delete diverged from survivors-only baseline"
         );
     }
+
+    /// Commit-shape independence: a tree built up via many small commits
+    /// must end with the same tree root hash as the same set of mutations
+    /// applied in one big commit. Commit hashes will of course differ
+    /// (different parents, different timestamps), but the underlying
+    /// `tree.get_root_hash()` is a function of state alone.
+    ///
+    /// The three "shapes" are run in separate scopes so each store's
+    /// `CwdGuard` is released before the next one acquires the global
+    /// CWD mutex (the guard is not reentrant).
+    #[test]
+    fn tree_root_hash_independent_of_commit_shape() {
+        const N: u64 = 80;
+
+        // Shape A: one commit per insert.
+        let many_root = {
+            let (mut store, _t, _cwd) = fresh_store();
+            for i in 0..N {
+                store.insert(k8(i), v16(i)).expect("insert");
+                store.commit(&format!("commit {i}")).expect("commit");
+            }
+            store.tree.get_root_hash().expect("root hash A")
+        };
+
+        // Shape B: one commit for all inserts.
+        let one_root = {
+            let (mut store, _t, _cwd) = fresh_store();
+            for i in 0..N {
+                store.insert(k8(i), v16(i)).expect("insert");
+            }
+            store.commit("bulk").expect("commit");
+            store.tree.get_root_hash().expect("root hash B")
+        };
+
+        // Shape C: random commit boundaries.
+        let mixed_root = {
+            let (mut store, _t, _cwd) = fresh_store();
+            let boundaries: &[u64] = &[3, 4, 11, 12, 19, 26, 33, 40, 47, 54, 61, 68, 75];
+            let mut next_bound_idx = 0;
+            for i in 0..N {
+                store.insert(k8(i), v16(i)).expect("insert");
+                if next_bound_idx < boundaries.len() && i == boundaries[next_bound_idx] {
+                    store.commit(&format!("partial up to {i}")).expect("commit");
+                    next_bound_idx += 1;
+                }
+            }
+            store.commit("final").expect("commit");
+            store.tree.get_root_hash().expect("root hash C")
+        };
+
+        assert_eq!(
+            many_root, one_root,
+            "many-tiny-commits root differs from one-bulk-commit root"
+        );
+        assert_eq!(
+            many_root, mixed_root,
+            "many-tiny-commits root differs from mixed-boundary root"
+        );
+    }
 }
