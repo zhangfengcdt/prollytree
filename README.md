@@ -5,6 +5,10 @@
 [![License](https://img.shields.io/crates/l/prollytree.svg)](https://github.com/zhangfengcdt/prollytree/blob/main/LICENSE)
 [![Downloads](https://img.shields.io/crates/d/prollytree.svg)](https://crates.io/crates/prollytree)
 
+<p align="center">
+  <img src="docs/assets/prollytree-hero.svg" alt="ProllyTree — a probabilistic B-tree with Merkle properties for content-addressed, Git-versioned key-value storage" width="100%">
+</p>
+
 A **probabilistic B-tree with Merkle properties** — a content-addressed, Git-versioned key-value store with branching, three-way merge, cryptographic proofs, optional SQL, and an optional vector / text-search index. Written in Rust with first-class Python bindings.
 
 A prolly tree's shape is a deterministic function of its contents, so two replicas holding the same key-value set converge to the same root hash regardless of insertion order. That property is what makes the rest — Git-style versioning, efficient diff/sync between replicas, and verifiable subtree sharing across history — fall out for free.
