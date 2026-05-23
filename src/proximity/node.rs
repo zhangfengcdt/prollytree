@@ -91,7 +91,7 @@ impl<const N: usize> ProximityNode<N> {
     /// Content hash over the canonical bincode encoding of the node. The
     /// digest is what `NodeStorage` will index this node under in later PRs.
     pub fn get_hash(&self) -> ValueDigest<N> {
-        let bytes = bincode::serialize(self).expect("ProximityNode bincode serialize");
+        let bytes = crate::serde_bincode::serialize(self).expect("ProximityNode bincode serialize");
         ValueDigest::new(&bytes)
     }
 }
@@ -146,8 +146,8 @@ mod tests {
             2,
             1,
         );
-        let bytes = bincode::serialize(&original).unwrap();
-        let restored: ProximityNode<32> = bincode::deserialize(&bytes).unwrap();
+        let bytes = crate::serde_bincode::serialize(&original).unwrap();
+        let restored: ProximityNode<32> = crate::serde_bincode::deserialize(&bytes).unwrap();
         assert_eq!(original.level, restored.level);
         assert_eq!(original.ids, restored.ids);
         assert_eq!(original.vectors, restored.vectors);

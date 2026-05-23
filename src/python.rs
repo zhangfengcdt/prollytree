@@ -21,6 +21,7 @@ use parking_lot::Mutex;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyBytesMethods, PyDict, PyList};
+use pyo3::IntoPyObjectExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -169,7 +170,7 @@ impl PyProllyTree {
         let key_vec = key.as_bytes().to_vec();
         let value_vec = value.as_bytes().to_vec();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.insert(key_vec, value_vec);
@@ -182,7 +183,7 @@ impl PyProllyTree {
         let keys: Vec<Vec<u8>> = items.iter().map(|(k, _)| k.clone()).collect();
         let values: Vec<Vec<u8>> = items.iter().map(|(_, v)| v.clone()).collect();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.insert_batch(&keys, &values);
@@ -194,7 +195,7 @@ impl PyProllyTree {
     fn find(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
         let key_vec = key.as_bytes().to_vec();
 
-        let result = py.allow_threads(|| {
+        let result = py.detach(|| {
             let tree_wrapper = self.tree.lock();
             with_tree!(tree_wrapper, tree, { tree.find(&key_vec) })
         });
@@ -204,7 +205,7 @@ impl PyProllyTree {
                 // Find the key in the node and return the corresponding value
                 if let Some(key_index) = node.keys.iter().position(|k| k == &key_vec) {
                     if key_index < node.values.len() {
-                        Ok(Some(PyBytes::new_bound(py, &node.values[key_index]).into()))
+                        Ok(Some(PyBytes::new(py, &node.values[key_index]).into()))
                     } else {
                         Ok(None)
                     }
@@ -225,7 +226,7 @@ impl PyProllyTree {
         let key_vec = key.as_bytes().to_vec();
         let value_vec = value.as_bytes().to_vec();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.update(key_vec, value_vec);
@@ -237,7 +238,7 @@ impl PyProllyTree {
     fn delete(&mut self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<()> {
         let key_vec = key.as_bytes().to_vec();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.delete(&key_vec);
@@ -249,7 +250,7 @@ impl PyProllyTree {
     fn delete_batch(&mut self, py: Python, keys: Vec<Vec<u8>>) -> PyResult<()> {
         let key_vecs: Vec<Vec<u8>> = keys;
 
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut tree_wrapper = self.tree.lock();
             with_tree_mut!(tree_wrapper, tree, {
                 tree.delete_batch(&key_vecs);
@@ -272,8 +273,8 @@ impl PyProllyTree {
         let tree_wrapper = self.tree.lock();
         let hash_opt = with_tree!(tree_wrapper, tree, tree.get_root_hash());
         match hash_opt {
-            Some(hash) => Ok(PyBytes::new_bound(py, hash.as_ref()).into()),
-            None => Ok(PyBytes::new_bound(py, &[0u8; 32]).into()),
+            Some(hash) => Ok(PyBytes::new(py, hash.as_ref()).into()),
+            None => Ok(PyBytes::new(py, &[0u8; 32]).into()),
         }
     }
 
@@ -295,15 +296,15 @@ impl PyProllyTree {
     fn generate_proof(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Py<PyBytes>> {
         let key_vec = key.as_bytes().to_vec();
 
-        let proof_bytes = py.allow_threads(|| {
+        let proof_bytes = py.detach(|| {
             let tree_wrapper = self.tree.lock();
             let proof = with_tree!(tree_wrapper, tree, tree.generate_proof(&key_vec));
 
-            bincode::serialize(&proof)
+            crate::serde_bincode::serialize(&proof)
                 .map_err(|e| PyValueError::new_err(format!("Proof serialization failed: {}", e)))
         })?;
 
-        Ok(PyBytes::new_bound(py, &proof_bytes).into())
+        Ok(PyBytes::new(py, &proof_bytes).into())
     }
 
     #[pyo3(signature = (proof_bytes, key, expected_value=None))]
@@ -318,8 +319,8 @@ impl PyProllyTree {
         let proof_vec = proof_bytes.as_bytes().to_vec();
         let value_option = expected_value.map(|v| v.as_bytes().to_vec());
 
-        py.allow_threads(|| {
-            let proof: Proof<32> = bincode::deserialize(&proof_vec).map_err(|e| {
+        py.detach(|| {
+            let proof: Proof<32> = crate::serde_bincode::deserialize(&proof_vec).map_err(|e| {
                 PyValueError::new_err(format!("Proof deserialization failed: {}", e))
             })?;
 
@@ -336,10 +337,10 @@ impl PyProllyTree {
         // Implement a key-value level diff by comparing actual data
         // This approach works regardless of tree structure differences
 
-        let dict = PyDict::new_bound(py);
-        let added = PyDict::new_bound(py);
-        let removed = PyDict::new_bound(py);
-        let modified = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
+        let added = PyDict::new(py);
+        let removed = PyDict::new(py);
+        let modified = PyDict::new(py);
 
         // We'll need to collect all keys from both trees and compare values
         // For simplicity, we'll implement this by getting all key-value pairs
@@ -365,7 +366,7 @@ impl PyProllyTree {
     }
 
     fn save_config(&self, py: Python) -> PyResult<()> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let tree_wrapper = self.tree.lock();
             with_tree!(tree_wrapper, tree, {
                 let _ = tree.save_config();
@@ -375,7 +376,7 @@ impl PyProllyTree {
     }
 }
 
-#[pyclass(name = "StorageBackend", eq, eq_int)]
+#[pyclass(name = "StorageBackend", eq, eq_int, from_py_object)]
 #[derive(Clone, PartialEq)]
 enum PyStorageBackend {
     InMemory,
@@ -448,7 +449,7 @@ macro_rules! with_versioned_store_mut {
 }
 
 /// Python wrapper for MergeConflict
-#[pyclass(name = "MergeConflict")]
+#[pyclass(name = "MergeConflict", from_py_object)]
 #[derive(Clone)]
 struct PyMergeConflict {
     key: Vec<u8>,
@@ -461,15 +462,12 @@ struct PyMergeConflict {
 impl PyMergeConflict {
     #[getter]
     fn key(&self, py: Python) -> PyResult<Py<PyBytes>> {
-        Ok(PyBytes::new_bound(py, &self.key).into())
+        Ok(PyBytes::new(py, &self.key).into())
     }
 
     #[getter]
     fn base_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
-        Ok(self
-            .base_value
-            .as_ref()
-            .map(|v| PyBytes::new_bound(py, v).into()))
+        Ok(self.base_value.as_ref().map(|v| PyBytes::new(py, v).into()))
     }
 
     #[getter]
@@ -477,7 +475,7 @@ impl PyMergeConflict {
         Ok(self
             .source_value
             .as_ref()
-            .map(|v| PyBytes::new_bound(py, v).into()))
+            .map(|v| PyBytes::new(py, v).into()))
     }
 
     #[getter]
@@ -485,7 +483,7 @@ impl PyMergeConflict {
         Ok(self
             .destination_value
             .as_ref()
-            .map(|v| PyBytes::new_bound(py, v).into()))
+            .map(|v| PyBytes::new(py, v).into()))
     }
 
     fn __repr__(&self) -> String {
@@ -506,7 +504,7 @@ impl PyMergeConflict {
 }
 
 /// Python enum for conflict resolution strategies
-#[pyclass(name = "ConflictResolution", eq, eq_int)]
+#[pyclass(name = "ConflictResolution", eq, eq_int, from_py_object)]
 #[derive(Clone, PartialEq)]
 enum PyConflictResolution {
     IgnoreAll,
@@ -515,7 +513,7 @@ enum PyConflictResolution {
 }
 
 /// Python wrapper for DiffOperation
-#[pyclass(name = "DiffOperation")]
+#[pyclass(name = "DiffOperation", from_py_object)]
 #[derive(Clone)]
 struct PyDiffOperation {
     operation_type: String,
@@ -533,26 +531,17 @@ impl PyDiffOperation {
 
     #[getter]
     fn value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
-        Ok(self
-            .value
-            .as_ref()
-            .map(|v| PyBytes::new_bound(py, v).into()))
+        Ok(self.value.as_ref().map(|v| PyBytes::new(py, v).into()))
     }
 
     #[getter]
     fn old_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
-        Ok(self
-            .old_value
-            .as_ref()
-            .map(|v| PyBytes::new_bound(py, v).into()))
+        Ok(self.old_value.as_ref().map(|v| PyBytes::new(py, v).into()))
     }
 
     #[getter]
     fn new_value(&self, py: Python) -> PyResult<Option<Py<PyBytes>>> {
-        Ok(self
-            .new_value
-            .as_ref()
-            .map(|v| PyBytes::new_bound(py, v).into()))
+        Ok(self.new_value.as_ref().map(|v| PyBytes::new(py, v).into()))
     }
 
     fn __repr__(&self) -> String {
@@ -576,7 +565,7 @@ impl PyDiffOperation {
 }
 
 /// Python wrapper for KvDiff
-#[pyclass(name = "KvDiff")]
+#[pyclass(name = "KvDiff", from_py_object)]
 #[derive(Clone)]
 struct PyKvDiff {
     key: Vec<u8>,
@@ -587,7 +576,7 @@ struct PyKvDiff {
 impl PyKvDiff {
     #[getter]
     fn key(&self, py: Python) -> PyResult<Py<PyBytes>> {
-        Ok(PyBytes::new_bound(py, &self.key).into())
+        Ok(PyBytes::new(py, &self.key).into())
     }
 
     #[getter]
@@ -716,7 +705,7 @@ impl PyVersionedKvStore {
         let guard = self.inner.lock();
         with_versioned_store!(guard, store, {
             match store.get(&key_vec) {
-                Some(value) => Ok(Some(PyBytes::new_bound(py, &value).into())),
+                Some(value) => Ok(Some(PyBytes::new(py, &value).into())),
                 None => Ok(None),
             }
         })
@@ -762,7 +751,7 @@ impl PyVersionedKvStore {
             let py_keys: Vec<Py<PyBytes>> = keys
                 .iter()
                 .take(MAX_KEYS_LIMIT)
-                .map(|key| PyBytes::new_bound(py, key).into())
+                .map(|key| PyBytes::new(py, key).into())
                 .collect();
 
             Ok(py_keys)
@@ -776,7 +765,7 @@ impl PyVersionedKvStore {
 
             let py_status: Vec<(Py<PyBytes>, String)> = status
                 .iter()
-                .map(|(key, status_str)| (PyBytes::new_bound(py, key).into(), status_str.clone()))
+                .map(|(key, status_str)| (PyBytes::new(py, key).into(), status_str.clone()))
                 .collect();
 
             Ok(py_status)
@@ -868,16 +857,16 @@ impl PyVersionedKvStore {
         };
 
         // Now convert to Python objects without holding the store lock
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
                 .into_iter()
                 .map(|(id, author, committer, message, timestamp)| {
                     let mut map = HashMap::new();
-                    map.insert("id".to_string(), id.into_py(py));
-                    map.insert("author".to_string(), author.into_py(py));
-                    map.insert("committer".to_string(), committer.into_py(py));
-                    map.insert("message".to_string(), message.into_py(py));
-                    map.insert("timestamp".to_string(), timestamp.into_py(py));
+                    map.insert("id".to_string(), id.into_py_any(py).unwrap());
+                    map.insert("author".to_string(), author.into_py_any(py).unwrap());
+                    map.insert("committer".to_string(), committer.into_py_any(py).unwrap());
+                    map.insert("message".to_string(), message.into_py_any(py).unwrap());
+                    map.insert("timestamp".to_string(), timestamp.into_py_any(py).unwrap());
                     Ok(map)
                 })
                 .collect();
@@ -917,16 +906,16 @@ impl PyVersionedKvStore {
         };
 
         // Now convert to Python objects without holding the store lock
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
                 .into_iter()
                 .map(|(id, author, committer, message, timestamp)| {
                     let mut map = HashMap::new();
-                    map.insert("id".to_string(), id.into_py(py));
-                    map.insert("author".to_string(), author.into_py(py));
-                    map.insert("committer".to_string(), committer.into_py(py));
-                    map.insert("message".to_string(), message.into_py(py));
-                    map.insert("timestamp".to_string(), timestamp.into_py(py));
+                    map.insert("id".to_string(), id.into_py_any(py).unwrap());
+                    map.insert("author".to_string(), author.into_py_any(py).unwrap());
+                    map.insert("committer".to_string(), committer.into_py_any(py).unwrap());
+                    map.insert("message".to_string(), message.into_py_any(py).unwrap());
+                    map.insert("timestamp".to_string(), timestamp.into_py_any(py).unwrap());
                     Ok(map)
                 })
                 .collect();
@@ -961,16 +950,16 @@ impl PyVersionedKvStore {
         };
 
         // Now convert to Python objects without holding the store lock
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let results: PyResult<Vec<HashMap<String, Py<PyAny>>>> = commits_data
                 .into_iter()
                 .map(|(id, author, committer, message, timestamp)| {
                     let mut map = HashMap::new();
-                    map.insert("id".to_string(), id.into_py(py));
-                    map.insert("author".to_string(), author.into_py(py));
-                    map.insert("committer".to_string(), committer.into_py(py));
-                    map.insert("message".to_string(), message.into_py(py));
-                    map.insert("timestamp".to_string(), timestamp.into_py(py));
+                    map.insert("id".to_string(), id.into_py_any(py).unwrap());
+                    map.insert("author".to_string(), author.into_py_any(py).unwrap());
+                    map.insert("committer".to_string(), committer.into_py_any(py).unwrap());
+                    map.insert("message".to_string(), message.into_py_any(py).unwrap());
+                    map.insert("timestamp".to_string(), timestamp.into_py_any(py).unwrap());
                     Ok(map)
                 })
                 .collect();
@@ -1069,17 +1058,17 @@ impl PyVersionedKvStore {
     fn generate_proof(&self, py: Python, key: &Bound<'_, PyBytes>) -> PyResult<Py<PyBytes>> {
         let key_vec = key.as_bytes().to_vec();
 
-        let proof_bytes = py.allow_threads(|| {
+        let proof_bytes = py.detach(|| {
             let guard = self.inner.lock();
             with_versioned_store!(guard, store, {
                 let proof = store.generate_proof(&key_vec);
-                bincode::serialize(&proof).map_err(|e| {
+                crate::serde_bincode::serialize(&proof).map_err(|e| {
                     PyValueError::new_err(format!("Proof serialization failed: {}", e))
                 })
             })
         })?;
 
-        Ok(PyBytes::new_bound(py, &proof_bytes).into())
+        Ok(PyBytes::new(py, &proof_bytes).into())
     }
 
     #[pyo3(signature = (proof_bytes, key, expected_value=None))]
@@ -1094,10 +1083,11 @@ impl PyVersionedKvStore {
         let proof_vec = proof_bytes.as_bytes().to_vec();
         let value_option = expected_value.map(|v| v.as_bytes().to_vec());
 
-        py.allow_threads(|| {
-            let proof: crate::proof::Proof<32> = bincode::deserialize(&proof_vec).map_err(|e| {
-                PyValueError::new_err(format!("Proof deserialization failed: {}", e))
-            })?;
+        py.detach(|| {
+            let proof: crate::proof::Proof<32> = crate::serde_bincode::deserialize(&proof_vec)
+                .map_err(|e| {
+                    PyValueError::new_err(format!("Proof deserialization failed: {}", e))
+                })?;
 
             let guard = self.inner.lock();
             with_versioned_store!(guard, store, {
@@ -1133,8 +1123,8 @@ impl PyVersionedKvStore {
                 .take(MAX_KEYS_LIMIT)
                 .map(|(key, value): (Vec<u8>, Vec<u8>)| {
                     (
-                        PyBytes::new_bound(py, &key).into(),
-                        PyBytes::new_bound(py, &value).into(),
+                        PyBytes::new(py, &key).into(),
+                        PyBytes::new(py, &value).into(),
                     )
                 })
                 .collect();
@@ -1244,12 +1234,18 @@ impl PyWorktreeManager {
             .add_worktree(path, &branch, create_branch)
             .map_err(|e| PyValueError::new_err(format!("Failed to add worktree: {}", e)))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut map = HashMap::new();
-            map.insert("id".to_string(), info.id.into_py(py));
-            map.insert("path".to_string(), info.path.to_string_lossy().into_py(py));
-            map.insert("branch".to_string(), info.branch.into_py(py));
-            map.insert("is_linked".to_string(), info.is_linked.into_py(py));
+            map.insert("id".to_string(), info.id.into_py_any(py).unwrap());
+            map.insert(
+                "path".to_string(),
+                info.path.to_string_lossy().into_py_any(py).unwrap(),
+            );
+            map.insert("branch".to_string(), info.branch.into_py_any(py).unwrap());
+            map.insert(
+                "is_linked".to_string(),
+                info.is_linked.into_py_any(py).unwrap(),
+            );
             Ok(map)
         })
     }
@@ -1282,15 +1278,24 @@ impl PyWorktreeManager {
         let manager = self.inner.lock();
         let worktrees = manager.list_worktrees();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let results: Vec<HashMap<String, Py<PyAny>>> = worktrees
                 .iter()
                 .map(|info| {
                     let mut map = HashMap::new();
-                    map.insert("id".to_string(), info.id.clone().into_py(py));
-                    map.insert("path".to_string(), info.path.to_string_lossy().into_py(py));
-                    map.insert("branch".to_string(), info.branch.clone().into_py(py));
-                    map.insert("is_linked".to_string(), info.is_linked.into_py(py));
+                    map.insert("id".to_string(), info.id.clone().into_py_any(py).unwrap());
+                    map.insert(
+                        "path".to_string(),
+                        info.path.to_string_lossy().into_py_any(py).unwrap(),
+                    );
+                    map.insert(
+                        "branch".to_string(),
+                        info.branch.clone().into_py_any(py).unwrap(),
+                    );
+                    map.insert(
+                        "is_linked".to_string(),
+                        info.is_linked.into_py_any(py).unwrap(),
+                    );
                     map
                 })
                 .collect();
@@ -1466,7 +1471,7 @@ impl PyWorktreeVersionedKvStore {
 /// Python is single-threaded (GIL), Rust storage is synchronous, and GlueSQL
 /// requires an async runtime. The bridging pattern used here is:
 ///
-/// 1. `py.allow_threads()` — releases the Python GIL so other Python threads
+/// 1. `py.detach()` — releases the Python GIL so other Python threads
 ///    can run while Rust executes.
 /// 2. A **per-call** `tokio::runtime::Runtime` is created inside the
 ///    GIL-free closure. A per-call runtime avoids lifetime issues with
@@ -1475,16 +1480,16 @@ impl PyWorktreeVersionedKvStore {
 /// 3. `runtime.block_on(async { ... })` drives the GlueSQL async execution,
 ///    which internally uses `spawn_blocking` for the underlying sync store
 ///    operations.
-/// 4. `Python::with_gil()` re-acquires the GIL to construct Python return
+/// 4. `Python::attach()` re-acquires the GIL to construct Python return
 ///    values.
 ///
 /// ```text
 /// Python call (GIL held)
-///   └─ py.allow_threads (GIL released)
+///   └─ py.detach (GIL released)
 ///        └─ tokio::runtime::Runtime::new()
 ///             └─ runtime.block_on(async { glue.execute(...).await })
 ///                  └─ GlueSQL → ProllyStorage → spawn_blocking → sync store
-///                       └─ Python::with_gil() → return PyObject
+///                       └─ Python::attach() → return PyObject
 /// ```
 #[cfg(feature = "sql")]
 #[pyclass(name = "ProllySQLStore")]
@@ -1523,7 +1528,7 @@ impl PyProllySQLStore {
 
     #[pyo3(signature = (query, format="dict"))]
     fn execute(&self, py: Python, query: String, format: &str) -> PyResult<Py<PyAny>> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
@@ -1541,15 +1546,15 @@ impl PyProllySQLStore {
                     .next()
                     .ok_or_else(|| PyValueError::new_err("No result from SQL query"))?;
 
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     match result {
                         Payload::Select { labels, rows } => {
                             match format {
                                 "dict" | "dicts" => {
                                     // Return list of dictionaries
-                                    let py_list = PyList::empty_bound(py);
+                                    let py_list = PyList::empty(py);
                                     for row in rows {
-                                        let dict = PyDict::new_bound(py);
+                                        let dict = PyDict::new(py);
                                         for (i, value) in row.iter().enumerate() {
                                             if i < labels.len() {
                                                 let py_value = sql_value_to_python(py, value)?;
@@ -1562,14 +1567,14 @@ impl PyProllySQLStore {
                                 }
                                 "tuples" => {
                                     // Return (labels, rows) tuple
-                                    let py_labels = PyList::empty_bound(py);
+                                    let py_labels = PyList::empty(py);
                                     for label in &labels {
                                         py_labels.append(label)?;
                                     }
 
-                                    let py_rows = PyList::empty_bound(py);
+                                    let py_rows = PyList::empty(py);
                                     for row in rows {
-                                        let py_row = PyList::empty_bound(py);
+                                        let py_row = PyList::empty(py);
                                         for value in row {
                                             let py_value = sql_value_to_python(py, &value)?;
                                             py_row.append(py_value)?;
@@ -1577,7 +1582,7 @@ impl PyProllySQLStore {
                                         py_rows.append(py_row)?;
                                     }
 
-                                    Ok((py_labels, py_rows).into_py(py))
+                                    Ok((py_labels, py_rows).into_py_any(py).unwrap())
                                 }
                                 "json" => {
                                     // Return JSON string
@@ -1599,7 +1604,7 @@ impl PyProllySQLStore {
                                                 e
                                             ))
                                         })?;
-                                    Ok(json_str.into_py(py))
+                                    Ok(json_str.into_py_any(py).unwrap())
                                 }
                                 "csv" => {
                                     // Return CSV string
@@ -1619,7 +1624,7 @@ impl PyProllySQLStore {
                                         csv_str.push_str(&row_strs.join(","));
                                         csv_str.push('\n');
                                     }
-                                    Ok(csv_str.into_py(py))
+                                    Ok(csv_str.into_py_any(py).unwrap())
                                 }
                                 _ => Err(PyValueError::new_err(format!(
                                     "Unknown format: {}. Use 'dict', 'tuples', 'json', or 'csv'",
@@ -1628,43 +1633,43 @@ impl PyProllySQLStore {
                             }
                         }
                         Payload::Insert(count) => {
-                            let dict = PyDict::new_bound(py);
+                            let dict = PyDict::new(py);
                             dict.set_item("type", "insert")?;
                             dict.set_item("count", count)?;
                             Ok(dict.into())
                         }
                         Payload::Update(count) => {
-                            let dict = PyDict::new_bound(py);
+                            let dict = PyDict::new(py);
                             dict.set_item("type", "update")?;
                             dict.set_item("count", count)?;
                             Ok(dict.into())
                         }
                         Payload::Delete(count) => {
-                            let dict = PyDict::new_bound(py);
+                            let dict = PyDict::new(py);
                             dict.set_item("type", "delete")?;
                             dict.set_item("count", count)?;
                             Ok(dict.into())
                         }
                         Payload::Create => {
-                            let dict = PyDict::new_bound(py);
+                            let dict = PyDict::new(py);
                             dict.set_item("type", "create")?;
                             dict.set_item("success", true)?;
                             Ok(dict.into())
                         }
                         Payload::DropTable(_) => {
-                            let dict = PyDict::new_bound(py);
+                            let dict = PyDict::new(py);
                             dict.set_item("type", "drop_table")?;
                             dict.set_item("success", true)?;
                             Ok(dict.into())
                         }
                         Payload::AlterTable => {
-                            let dict = PyDict::new_bound(py);
+                            let dict = PyDict::new(py);
                             dict.set_item("type", "alter_table")?;
                             dict.set_item("success", true)?;
                             Ok(dict.into())
                         }
                         _ => {
-                            let dict = PyDict::new_bound(py);
+                            let dict = PyDict::new(py);
                             dict.set_item("type", "success")?;
                             dict.set_item("success", true)?;
                             Ok(dict.into())
@@ -1685,7 +1690,7 @@ impl PyProllySQLStore {
     }
 
     fn commit(&self, py: Python, _message: String) -> PyResult<String> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let runtime = tokio::runtime::Runtime::new()
                 .map_err(|e| PyValueError::new_err(format!("Failed to create runtime: {}", e)))?;
 
@@ -1733,7 +1738,7 @@ impl PyProllySQLStore {
         for row in values {
             let mut row_values = Vec::new();
             for value in row {
-                let value_str = Python::with_gil(|py| -> PyResult<String> {
+                let value_str = Python::attach(|py| -> PyResult<String> {
                     if let Ok(s) = value.extract::<String>(py) {
                         Ok(format!("'{}'", s.replace('\'', "''")))
                     } else if let Ok(i) = value.extract::<i64>(py) {
@@ -1786,28 +1791,28 @@ impl PyProllySQLStore {
 fn sql_value_to_python(py: Python, value: &SqlValue) -> PyResult<Py<PyAny>> {
     match value {
         SqlValue::Null => Ok(py.None()),
-        SqlValue::Bool(b) => Ok(b.into_py(py)),
-        SqlValue::I8(i) => Ok(i.into_py(py)),
-        SqlValue::I16(i) => Ok(i.into_py(py)),
-        SqlValue::I32(i) => Ok(i.into_py(py)),
-        SqlValue::I64(i) => Ok(i.into_py(py)),
-        SqlValue::I128(i) => Ok(i.into_py(py)),
-        SqlValue::U8(i) => Ok(i.into_py(py)),
-        SqlValue::U16(i) => Ok(i.into_py(py)),
-        SqlValue::U32(i) => Ok(i.into_py(py)),
-        SqlValue::U64(i) => Ok(i.into_py(py)),
-        SqlValue::U128(i) => Ok(i.to_string().into_py(py)),
-        SqlValue::F32(f) => Ok(f.into_py(py)),
-        SqlValue::F64(f) => Ok(f.into_py(py)),
-        SqlValue::Str(s) => Ok(s.into_py(py)),
-        SqlValue::Bytea(b) => Ok(PyBytes::new_bound(py, b).into()),
-        SqlValue::Date(d) => Ok(d.to_string().into_py(py)),
-        SqlValue::Time(t) => Ok(t.to_string().into_py(py)),
-        SqlValue::Timestamp(ts) => Ok(ts.to_string().into_py(py)),
-        SqlValue::Interval(i) => Ok(format!("{:?}", i).into_py(py)),
-        SqlValue::Uuid(u) => Ok(u.to_string().into_py(py)),
+        SqlValue::Bool(b) => Ok(b.into_py_any(py).unwrap()),
+        SqlValue::I8(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::I16(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::I32(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::I64(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::I128(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::U8(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::U16(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::U32(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::U64(i) => Ok(i.into_py_any(py).unwrap()),
+        SqlValue::U128(i) => Ok(i.to_string().into_py_any(py).unwrap()),
+        SqlValue::F32(f) => Ok(f.into_py_any(py).unwrap()),
+        SqlValue::F64(f) => Ok(f.into_py_any(py).unwrap()),
+        SqlValue::Str(s) => Ok(s.into_py_any(py).unwrap()),
+        SqlValue::Bytea(b) => Ok(PyBytes::new(py, b).into()),
+        SqlValue::Date(d) => Ok(d.to_string().into_py_any(py).unwrap()),
+        SqlValue::Time(t) => Ok(t.to_string().into_py_any(py).unwrap()),
+        SqlValue::Timestamp(ts) => Ok(ts.to_string().into_py_any(py).unwrap()),
+        SqlValue::Interval(i) => Ok(format!("{:?}", i).into_py_any(py).unwrap()),
+        SqlValue::Uuid(u) => Ok(u.to_string().into_py_any(py).unwrap()),
         SqlValue::Map(m) => {
-            let dict = PyDict::new_bound(py);
+            let dict = PyDict::new(py);
             for (k, v) in m.iter() {
                 let py_value = sql_value_to_python(py, v)?;
                 dict.set_item(k, py_value)?;
@@ -1815,16 +1820,16 @@ fn sql_value_to_python(py: Python, value: &SqlValue) -> PyResult<Py<PyAny>> {
             Ok(dict.into())
         }
         SqlValue::List(l) => {
-            let py_list = PyList::empty_bound(py);
+            let py_list = PyList::empty(py);
             for item in l.iter() {
                 let py_value = sql_value_to_python(py, item)?;
                 py_list.append(py_value)?;
             }
             Ok(py_list.into())
         }
-        SqlValue::Decimal(d) => Ok(d.to_string().into_py(py)),
-        SqlValue::Point(p) => Ok(format!("POINT({} {})", p.x, p.y).into_py(py)),
-        SqlValue::Inet(ip) => Ok(ip.to_string().into_py(py)),
+        SqlValue::Decimal(d) => Ok(d.to_string().into_py_any(py).unwrap()),
+        SqlValue::Point(p) => Ok(format!("POINT({} {})", p.x, p.y).into_py_any(py).unwrap()),
+        SqlValue::Inet(ip) => Ok(ip.to_string().into_py_any(py).unwrap()),
     }
 }
 
@@ -1947,7 +1952,7 @@ impl PyNamespacedKvStore {
         Ok(store
             .namespace(namespace)
             .get(key.as_bytes())
-            .map(|v| PyBytes::new_bound(py, &v).into()))
+            .map(|v| PyBytes::new(py, &v).into()))
     }
 
     /// Delete a key from a specific namespace.
@@ -1963,11 +1968,8 @@ impl PyNamespacedKvStore {
     fn ns_list_keys<'py>(&self, py: Python<'py>, namespace: &str) -> PyResult<Py<PyList>> {
         let mut store = self.inner.lock();
         let keys = store.namespace(namespace).list_keys();
-        let py_keys: Vec<Py<PyBytes>> = keys
-            .iter()
-            .map(|k| PyBytes::new_bound(py, k).into())
-            .collect();
-        Ok(PyList::new_bound(py, &py_keys).into())
+        let py_keys: Vec<Py<PyBytes>> = keys.iter().map(|k| PyBytes::new(py, k).into()).collect();
+        Ok(PyList::new(py, &py_keys)?.into())
     }
 
     // -- Registry operations --
@@ -1994,7 +1996,7 @@ impl PyNamespacedKvStore {
         self.inner
             .lock()
             .get_namespace_root_hash(namespace)
-            .map(|h| PyBytes::new_bound(py, h.as_bytes()).into())
+            .map(|h| PyBytes::new(py, h.as_bytes()).into())
     }
 
     /// Check if a namespace changed between two commits.
@@ -2025,7 +2027,7 @@ impl PyNamespacedKvStore {
             .inner
             .lock()
             .get(key.as_bytes())
-            .map(|v| PyBytes::new_bound(py, &v).into()))
+            .map(|v| PyBytes::new(py, &v).into()))
     }
 
     /// Delete from the default namespace.
@@ -2039,11 +2041,8 @@ impl PyNamespacedKvStore {
     /// List keys in the default namespace.
     fn list_keys<'py>(&self, py: Python<'py>) -> PyResult<Py<PyList>> {
         let keys = self.inner.lock().list_keys();
-        let py_keys: Vec<Py<PyBytes>> = keys
-            .iter()
-            .map(|k| PyBytes::new_bound(py, k).into())
-            .collect();
-        Ok(PyList::new_bound(py, &py_keys).into())
+        let py_keys: Vec<Py<PyBytes>> = keys.iter().map(|k| PyBytes::new(py, k).into()).collect();
+        Ok(PyList::new(py, &py_keys)?.into())
     }
 
     // -- Git operations --
@@ -2209,18 +2208,18 @@ impl PyNamespacedKvStore {
         };
         let tuples: Vec<Py<PyAny>> = hits
             .into_iter()
-            .map(|h| {
-                let t = pyo3::types::PyTuple::new_bound(
+            .map(|h| -> PyResult<Py<PyAny>> {
+                let t = pyo3::types::PyTuple::new(
                     py,
                     &[
-                        PyBytes::new_bound(py, &h.id).to_object(py),
-                        h.score.to_object(py),
+                        PyBytes::new(py, &h.id).into_py_any(py)?,
+                        h.score.into_py_any(py)?,
                     ],
-                );
-                t.into()
+                )?;
+                Ok(t.into())
             })
-            .collect();
-        Ok(PyList::new_bound(py, &tuples).into())
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(PyList::new(py, &tuples)?.into())
     }
 
     /// Delete every chunk for `id` from a text sub-index.
@@ -2316,19 +2315,19 @@ impl PyNamespacedKvStore {
             .lock()
             .audit_text_index(namespace, idx_name)
             .map_err(|e| PyValueError::new_err(format!("audit_text_index failed: {e}")))?;
-        let d = PyDict::new_bound(py);
+        let d = PyDict::new(py);
         let orphans: Vec<Py<PyBytes>> = report
             .orphans_in_index
             .iter()
-            .map(|b| PyBytes::new_bound(py, b).into())
+            .map(|b| PyBytes::new(py, b).into())
             .collect();
         let missing: Vec<Py<PyBytes>> = report
             .missing_from_index
             .iter()
-            .map(|b| PyBytes::new_bound(py, b).into())
+            .map(|b| PyBytes::new(py, b).into())
             .collect();
-        d.set_item("orphans_in_index", PyList::new_bound(py, &orphans))?;
-        d.set_item("missing_from_index", PyList::new_bound(py, &missing))?;
+        d.set_item("orphans_in_index", PyList::new(py, &orphans)?)?;
+        d.set_item("missing_from_index", PyList::new(py, &missing)?)?;
         d.set_item("is_in_sync", report.is_in_sync())?;
         Ok(d.into())
     }
@@ -2364,7 +2363,7 @@ impl PyNamespacedKvStore {
             .lock()
             .gc_blobs()
             .map_err(|e| PyValueError::new_err(format!("gc_blobs failed: {e}")))?;
-        let d = PyDict::new_bound(py);
+        let d = PyDict::new(py);
         d.set_item("total", report.total)?;
         d.set_item("referenced", report.referenced)?;
         d.set_item("removed", report.removed)?;
@@ -2523,7 +2522,7 @@ impl Embedder for CallableEmbedderImpl {
         self.dim
     }
     fn embed(&self, text: &str) -> Result<Vec<f32>, crate::proximity::EmbedError> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self.callable.bind(py).call1((text,)).map_err(|e| {
                 crate::proximity::EmbedError::Failure(format!("python callback raised: {e}"))
             })?;
@@ -2598,14 +2597,14 @@ impl PyCallableEmbedder {
 /// known Python embedder wrappers.
 #[cfg(feature = "proximity")]
 fn extract_embedder(obj: &Bound<'_, PyAny>) -> PyResult<Arc<dyn Embedder>> {
-    if let Ok(h) = obj.downcast::<PyHashEmbedder>() {
+    if let Ok(h) = obj.cast::<PyHashEmbedder>() {
         return Ok(h.borrow().inner.clone());
     }
-    if let Ok(c) = obj.downcast::<PyCallableEmbedder>() {
+    if let Ok(c) = obj.cast::<PyCallableEmbedder>() {
         return Ok(c.borrow().inner.clone());
     }
     #[cfg(feature = "proximity_text")]
-    if let Ok(m) = obj.downcast::<PyMiniLmEmbedder>() {
+    if let Ok(m) = obj.cast::<PyMiniLmEmbedder>() {
         return Ok(m.borrow().inner.clone());
     }
     Err(PyValueError::new_err(

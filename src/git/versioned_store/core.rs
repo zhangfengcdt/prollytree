@@ -370,8 +370,8 @@ where
         let staging_file = self.get_staging_file_path()?;
 
         // Serialize the staging area
-        let serialized =
-            bincode::serialize(&self.staging_area).map_err(GitKvError::SerializationError)?;
+        let serialized = crate::serde_bincode::serialize(&self.staging_area)
+            .map_err(GitKvError::SerializationEncodeError)?;
 
         std::fs::write(staging_file, serialized).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to write staging area: {e}"))
@@ -389,8 +389,8 @@ where
                 GitKvError::GitObjectError(format!("Failed to read staging area: {e}"))
             })?;
 
-            self.staging_area =
-                bincode::deserialize(&data).map_err(GitKvError::SerializationError)?;
+            self.staging_area = crate::serde_bincode::deserialize(&data)
+                .map_err(GitKvError::SerializationDecodeError)?;
         }
 
         Ok(())

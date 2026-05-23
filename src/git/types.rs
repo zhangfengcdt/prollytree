@@ -26,8 +26,11 @@ pub enum GitKvError {
     #[error("Git object error: {0}")]
     GitObjectError(String),
 
-    #[error("Serialization error: {0}")]
-    SerializationError(#[from] bincode::Error),
+    #[error("Serialization encode error: {0}")]
+    SerializationEncodeError(#[from] bincode::error::EncodeError),
+
+    #[error("Serialization decode error: {0}")]
+    SerializationDecodeError(#[from] bincode::error::DecodeError),
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),

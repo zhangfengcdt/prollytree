@@ -75,7 +75,7 @@ impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
             let mut data = Vec::new();
             file.read_to_end(&mut data).ok()?;
             // split/merged are #[serde(skip)] so they deserialize as false.
-            let node: ProllyNode<N> = bincode::deserialize(&data).ok()?;
+            let node: ProllyNode<N> = crate::serde_bincode::deserialize(&data).ok()?;
             Some(Arc::new(node))
         } else {
             None
@@ -88,7 +88,7 @@ impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
         node: ProllyNode<N>,
     ) -> Result<(), StorageError> {
         let path = self.node_path(&hash);
-        let data = bincode::serialize(&node)?;
+        let data = crate::serde_bincode::serialize(&node)?;
         let mut file = File::create(path)?;
         file.write_all(&data)?;
         Ok(())
