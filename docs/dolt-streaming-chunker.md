@@ -166,14 +166,25 @@ chunker rooted at that cursor, for each edit `cur.seek(edit.key)` ->
 
 ## Status
 
-Phase 1 (streaming chunker as `canonicalize` backend) and Phase 2
-(cursor-driven `apply_mutations` replacing the legacy `insert` /
-`delete` path) are both landed. The `#[ignore]`d node-level tests at
-the *primitive* `ProllyNode` API still fail because they exercise
-`node.insert` / `node.delete` directly, which still runs the legacy
-in-place `Balanced::balance`. The public API at every consumer layer
-(`ProllyTree`, `GitVersionedKvStore`, `GitNamespacedKvStore`) has
-history-independence guaranteed by construction now.
+All three phases are landed.
+
+  - **Phase 1** (`5c09a86`): streaming chunker replaces the old
+    `canonicalize`-from-leaves rebuild as the backend for
+    `ProllyTree::canonicalize`.
+  - **Phase 2** (`28ec971`): cursor-driven `apply_mutations` replaces
+    the legacy `ProllyNode::{insert, delete}` in the public mutation
+    path of `ProllyTree`.
+  - **Phase 3**: two fast paths recover the per-op cost - a pure-append
+    fast path (when all mutations are inserts past the tree's max key)
+    and an alignment-aware fast-forward (when the chunker re-syncs with
+    the old tree mid-walk).
+
+The `#[ignore]`d node-level tests at the *primitive* `ProllyNode` API
+still fail because they exercise `node.insert` / `node.delete`
+directly, which still runs the legacy in-place `Balanced::balance`.
+The public API at every consumer layer (`ProllyTree`,
+`GitVersionedKvStore`, `GitNamespacedKvStore`) has history independence
+by construction now.
 
 Bench at N=10 000 inserts (`cargo bench --bench tree -- insert_single`):
 
@@ -181,37 +192,39 @@ Bench at N=10 000 inserts (`cargo bench --bench tree -- insert_single`):
   - canonicalize stop-gap (1f88dd1): 30.1 s (26.4x)
   - Phase 1 streaming chunker (5c09a86): 13.3 s (11.7x)
   - Phase 2 cursor-driven (28ec971): 16.6 s (14.5x)
+  - Phase 3 fast-forward + pure-append: **11.2 s (9.8x)**
 
-Phase 2 regressed slightly because the cursor adds per-leaf overhead
-without yet enabling the chunk-boundary fast-forward that gives Dolt's
-algorithm its `O(log N + edits)` cost per op. The fast-forward is the
-remaining work; see "Phase 3" below.
+Phase 3 is 2.7x faster than Phase 2 and 1.2x faster than Phase 1, with
+the same correctness guarantees and a substantially richer fast path.
 
-### Phase 3 - cursor fast-forward (remaining work)
+### Phase 3 - implemented (`Chunker::append_subtree_at_parent_level` + `try_pure_append` + `fast_forward_to_end`)
 
-Implement Dolt's `chunker.advanceTo(next *cursor)` recursive
-algorithm:
+Two complementary fast paths landed:
 
-1. `NodeCursor::compare(other) -> i32` matching Dolt's
-   `compareCursors`.
-2. `Chunker::append` extended to accept items at any level (so a
-   parent chunker can absorb `(firstKey, child_hash)` pairs
-   wholesale without re-descending into leaves).
-3. `Chunker::advance_to(cur, target)` that walks forward, feeding
-   items from `cur` into the local splitter; when both the new
-   chunker boundary and `cur` land on a chunk boundary at the same
-   level, recurse into the parent chunker to fast-forward over
-   unchanged subtrees.
-4. `apply_mutations` switches from item-by-item walking to:
-   `cur.seek(mut.key)` -> `chunker.advance_to(cur)` -> apply the
-   mutation. Between mutations, the chunker skips entire unchanged
-   subtrees via the parent recursion.
+**Pure-append** (`try_pure_append`): triggered when every mutation is
+an insert past the tree's max key (a very common pattern: monotonic
+keys, append-only logs, time-series data). The algorithm walks the
+tree's leaves once to collect `(firstKey, leaf_hash)` pairs, feeds all
+but the last leaf directly into the level-1 chunker via
+`Chunker::append_subtree_at_parent_level`, then re-processes only the
+last leaf's items plus the new keys through the level-0 chunker.
+Saves reading N-1 leaves' worth of items.
 
-Expected outcome: bench at N=10 000 returns to within ~2x of baseline
-(roughly Dolt's own per-op cost for small batches), keeping all
-canonical-tree guarantees.
+**Alignment-aware fast-forward** (`fast_forward_to_end`): after each
+chunker boundary emit, the chunker exposes its `last_emit_hash`. The
+driver in `apply_mutations` snapshots the cursor's leaf hash if the
+cursor was at the end of an old leaf, then compares the two after
+the cursor advances. When they match (chunker has re-synced with the
+old tree's chunk boundary) AND no more mutations remain, the rest of
+the old tree's leaves are unchanged - we copy them to the level-1
+chunker via `append_subtree_at_parent_level` and break.
 
-### Phase 4 - cleanup (after Phase 3 lands)
+The hash comparison is cheap because we only compute the leaf hash
+when both `cur.at_node_end()` and `muts.peek().is_none()` hold, so the
+expensive `SHA-256` over leaf contents fires at most once per leaf
+boundary on the post-mutation tail.
+
+### Phase 4 - cleanup (future work)
 
 - Remove or refactor the 6 `#[ignore]`d tests in `src/node.rs`. They
   test the *primitive* layer; the property is now provided at a

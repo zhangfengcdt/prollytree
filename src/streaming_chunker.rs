@@ -39,13 +39,22 @@ limitations under the License.
 //! freshly-reset splitter and you get the same boundaries every time, so
 //! the same chunks and the same root hash.
 //!
-//! ## Phase 1 (this file)
+//! ## Phases
 //!
-//! No cursor support yet - callers must feed the entire final sorted
-//! `(key, value)` sequence. This is still O(N) per `apply_mutations`
-//! but is *correct by construction* and removes the post-hoc
-//! `canonicalize` rebuild. Phase 2 adds `NodeCursor` + `advance_to` so
-//! unchanged subtrees can be skipped.
+//! - **Phase 1**: `Chunker` + `Splitter` + `NodeBuilder` +
+//!   `build_tree_from_sorted_pairs`. Streams a full sorted sequence
+//!   through the chunker to produce a canonical tree. Used as the
+//!   backend for `ProllyTree::canonicalize`.
+//! - **Phase 2**: `NodeCursor` + `apply_mutations`. Walks an existing
+//!   tree's leaves with a cursor and merges in a sorted batch of
+//!   mutations through the same chunker. Replaces the legacy
+//!   `ProllyNode::insert`/`delete` path in `ProllyTree`'s public API.
+//! - **Phase 3**: `try_pure_append` (skip reading existing leaves when
+//!   every mutation is an insert past the tree's max key) and
+//!   `fast_forward_to_end` (skip remaining unchanged leaves once the
+//!   chunker re-syncs with the old tree). Brings per-op cost down for
+//!   the common cases of append-heavy workloads and small mid-tree
+//!   edits without sacrificing canonicality.
 
 use crate::config::TreeConfig;
 use crate::node::ProllyNode;
@@ -264,6 +273,13 @@ pub struct Chunker<'s, const N: usize, S: NodeStorage<N>> {
     parent: Option<Box<Chunker<'s, N, S>>>,
     config: TreeConfig<N>,
     level: u8,
+    /// Hash of the most recently emitted chunk at this level. Set by
+    /// `handle_boundary`, cleared whenever a new item is appended (so
+    /// callers see `Some(h)` only immediately after a boundary). Used
+    /// by `apply_mutations`'s fast-forward to detect when the new
+    /// tree's chunk hash matches an old chunk's hash - i.e. when the
+    /// chunker has re-synchronized with the old tree.
+    last_emit_hash: Option<crate::digest::ValueDigest<N>>,
     /// Reference to storage. Each chunker level needs to write its
     /// chunks. The shared mutable borrow is passed down explicitly
     /// rather than held in a field, because parent chunkers also need
@@ -279,6 +295,7 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
             parent: None,
             config: config.clone(),
             level,
+            last_emit_hash: None,
             _marker: std::marker::PhantomData,
         }
     }
@@ -288,7 +305,49 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
         self.append(storage, key, value);
     }
 
+    /// The hash of the most recently emitted chunk at this level, if
+    /// nothing has been appended since. Consumed by the caller to test
+    /// alignment with an old tree's chunk.
+    pub fn take_last_emit_hash(&mut self) -> Option<crate::digest::ValueDigest<N>> {
+        self.last_emit_hash.take()
+    }
+
+    /// True if the chunker's in-progress chunk is empty (i.e. the next
+    /// append starts a fresh chunk). After a boundary emit this is
+    /// true; while we're filling a chunk it is false.
+    pub fn is_at_boundary(&self) -> bool {
+        self.builder.is_empty()
+    }
+
+    /// Append a precomputed `(firstKey, child_hash_bytes)` entry to a
+    /// chunker that is currently at a boundary. Used by the fast-forward
+    /// path: when alignment with the old tree is detected, the next
+    /// unchanged old leaf can be propagated to this level's parent
+    /// chunker without re-feeding its leaf items.
+    ///
+    /// The caller MUST ensure `self.is_at_boundary()` is true; otherwise
+    /// the in-progress chunk would absorb this entry mid-way, which is
+    /// not what fast-forward expects.
+    pub fn append_subtree_at_parent_level(
+        &mut self,
+        storage: &mut S,
+        first_key: Vec<u8>,
+        child_hash_bytes: Vec<u8>,
+    ) {
+        debug_assert!(
+            self.is_at_boundary(),
+            "fast-forward append requires a freshly emitted boundary at this level"
+        );
+        if self.parent.is_none() {
+            self.parent = Some(Box::new(Chunker::new(&self.config, self.level + 1)));
+        }
+        let parent = self.parent.as_mut().expect("parent created");
+        parent.append(storage, first_key, child_hash_bytes);
+    }
+
     fn append(&mut self, storage: &mut S, key: Vec<u8>, value: Vec<u8>) {
+        // A new append invalidates the last-emit signal.
+        self.last_emit_hash = None;
         // Update splitter state on a borrow of the bytes before they're
         // moved into the builder.
         self.splitter.append(&key, &value);
@@ -335,6 +394,9 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
         parent.append(storage, first_key, hash.as_bytes().to_vec());
 
         self.splitter.reset();
+        // Record this emit's hash so the caller can test for old-tree
+        // alignment.
+        self.last_emit_hash = Some(hash);
         // `build` already left the builder empty.
     }
 
@@ -591,10 +653,12 @@ impl<const N: usize> NodeCursor<N> {
 /// canonical regardless of the old tree's shape or the mutation order
 /// (within the sorted batch).
 ///
-/// This is the Phase-2 cursor-driven entry point. It's O(tree size +
-/// edits) - one pass over the existing leaves - which is the same
-/// big-O as Phase 1 but avoids materializing every pair into a
-/// `BTreeMap` first.
+/// Includes the Phase 3 alignment-aware fast-forward: after every chunk
+/// emit at level 0, if the emit happens at the end of an *old* leaf
+/// AND the emitted chunk's hash equals that old leaf's hash, the
+/// chunker is back in sync with the old tree. If no more mutations
+/// remain, we can copy the remaining old leaves directly into the
+/// level-1 chunker without re-feeding their items.
 pub fn apply_mutations<const N: usize, S, I>(
     root: ProllyNode<N>,
     mutations: I,
@@ -618,10 +682,23 @@ where
         return chunker.done(storage);
     }
 
+    // Pure-append fast path: if every mutation is an insert past the
+    // tree's max key, all existing leaves are unchanged. Feed them
+    // directly to the level-1 chunker without reading each leaf's
+    // items, then process the new keys via a fresh level-0 chunker.
+    //
+    // For a tree with K existing leaves and one new key past the max,
+    // this turns the inner loop's O(tree size) walk into O(K) parent
+    // traversals - the dominant speedup for append-heavy workloads.
+    let mut muts_vec: Vec<(Vec<u8>, Option<Vec<u8>>)> = mutations.into_iter().collect();
+    if let Some(result) = try_pure_append(&root, &mut muts_vec, config, storage) {
+        return result;
+    }
+
     let mut cur = NodeCursor::at_start(root, storage);
     let mut chunker = Chunker::<N, S>::new(config, 0);
 
-    let mut muts = mutations.into_iter().peekable();
+    let mut muts = muts_vec.into_iter().peekable();
 
     while cur.valid() {
         // Are there mutations that apply at or before the cursor's
@@ -652,12 +729,39 @@ where
             }
         }
 
+        // Alignment / fast-forward can only kick in once there are no
+        // more pending mutations AND the cursor is about to cross a
+        // leaf boundary. Compute the leaf hash lazily so the
+        // SHA-256-over-leaf cost is paid only when it could pay off.
+        let about_to_leave_leaf = cur.at_node_end() && muts.peek().is_none();
+        let leaf_hash_being_left = if about_to_leave_leaf {
+            Some(cur.nd.get_hash())
+        } else {
+            None
+        };
+
         if !consumed_cur {
             // Pass the existing cur_key/value through unchanged.
             let v = cur.current_value().to_vec();
             chunker.add_pair(storage, cur_key, v);
         }
         cur.advance(storage);
+
+        // ----- Alignment / fast-forward -----
+        //
+        // If we just left an old leaf AND the chunker's most recent
+        // emit happened at this exact transition AND the emitted hash
+        // equals the old leaf's hash, then the chunker is back in
+        // sync with the old tree. Fast-forward by copying the rest of
+        // the old leaves directly into the level-1 chunker.
+        if let Some(old_hash) = leaf_hash_being_left {
+            if let Some(emit_hash) = chunker.take_last_emit_hash() {
+                if emit_hash == old_hash && chunker.is_at_boundary() {
+                    fast_forward_to_end(&mut chunker, &mut cur, storage);
+                    break;
+                }
+            }
+        }
     }
 
     // Drain any remaining mutations that fall past the end of the old tree.
@@ -668,6 +772,200 @@ where
     }
 
     chunker.done(storage)
+}
+
+/// Pure-append optimization: when every mutation is an insert with a
+/// key strictly greater than the tree's max key, the entire existing
+/// tree is unchanged. Iterate the leaves left-to-right and feed each
+/// leaf's `(firstKey, hash)` directly to the level-1 chunker, then
+/// stream the new keys through a fresh level-0 chunker whose emissions
+/// feed into that same level-1 parent.
+///
+/// Returns `Some(root)` when applied, `None` if the precondition isn't
+/// met (e.g. any delete, or any mutation key <= tree max).
+fn try_pure_append<const N: usize, S: NodeStorage<N>>(
+    root: &ProllyNode<N>,
+    muts: &mut Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    config: &TreeConfig<N>,
+    storage: &mut S,
+) -> Option<ProllyNode<N>> {
+    if muts.is_empty() {
+        return None;
+    }
+    // Any delete disqualifies the fast path.
+    if muts.iter().any(|(_, v)| v.is_none()) {
+        return None;
+    }
+    let max_key = tree_max_key(root, storage)?;
+    // The mutations come from a BTreeMap upstream so they're already
+    // sorted; the smallest key is muts[0].
+    if muts[0].0.as_slice() <= max_key.as_slice() {
+        return None;
+    }
+
+    // Collect existing leaves. We can't just feed ALL of them as-is to
+    // the level-1 chunker: the LAST leaf might be incomplete (its
+    // canonical chunker boundary fires only when full), so the new
+    // keys need to be merged with it via a level-0 chunker. The
+    // earlier leaves are guaranteed canonical boundaries (the splitter
+    // pattern matched at their boundaries) so they can be propagated
+    // directly.
+    let mut leaves: Vec<(Vec<u8>, Vec<u8>, ProllyNode<N>)> = Vec::new();
+    iter_leaves(root, storage, |leaf| {
+        if !leaf.keys.is_empty() {
+            leaves.push((
+                leaf.keys[0].clone(),
+                leaf.get_hash().as_bytes().to_vec(),
+                leaf.clone(),
+            ));
+        }
+    });
+    if leaves.is_empty() {
+        return None;
+    }
+
+    let mut chunker = Chunker::<N, S>::new(config, 0);
+
+    // Feed all-but-the-last leaf to the level-1 parent chunker as
+    // precomputed `(firstKey, hash)` entries. These leaves had canonical
+    // boundaries when they were originally chunked.
+    let last_leaf = leaves.pop().expect("non-empty");
+    for (fk, h_bytes, _) in leaves {
+        chunker.append_subtree_at_parent_level(storage, fk, h_bytes);
+    }
+
+    // Re-process the last existing leaf's items + the new keys through
+    // the level-0 chunker. Its emits feed the level-1 parent we just
+    // populated, preserving the canonical level-1 sequence.
+    for (k, v) in last_leaf.2.keys.iter().zip(last_leaf.2.values.iter()) {
+        chunker.add_pair(storage, k.clone(), v.clone());
+    }
+    for (k, opt_v) in muts.drain(..) {
+        let v = opt_v.expect("pre-checked: no deletes in pure-append batch");
+        chunker.add_pair(storage, k, v);
+    }
+
+    Some(chunker.done(storage))
+}
+
+/// Walk all leaves of `root` in key order, invoking `visit` on each.
+fn iter_leaves<const N: usize, S: NodeStorage<N>>(
+    root: &ProllyNode<N>,
+    storage: &S,
+    mut visit: impl FnMut(&ProllyNode<N>),
+) {
+    fn recurse<const N: usize, S: NodeStorage<N>>(
+        node: &ProllyNode<N>,
+        storage: &S,
+        visit: &mut dyn FnMut(&ProllyNode<N>),
+    ) {
+        if node.is_leaf {
+            visit(node);
+            return;
+        }
+        for child_hash_bytes in &node.values {
+            let child = storage
+                .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(child_hash_bytes))
+                .map(|arc| (*arc).clone())
+                .expect("child reachable");
+            recurse(&child, storage, visit);
+        }
+    }
+    recurse(root, storage, &mut visit);
+}
+
+/// Largest key in the tree, by walking the rightmost spine.
+fn tree_max_key<const N: usize, S: NodeStorage<N>>(
+    root: &ProllyNode<N>,
+    storage: &S,
+) -> Option<Vec<u8>> {
+    if root.keys.is_empty() {
+        return None;
+    }
+    if root.is_leaf {
+        return root.keys.last().cloned();
+    }
+    let last_child_hash_bytes = root.values.last()?.clone();
+    let last_child = storage
+        .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(
+            &last_child_hash_bytes,
+        ))
+        .map(|arc| (*arc).clone())?;
+    tree_max_key(&last_child, storage)
+}
+
+/// Fast-forward over the remaining old leaves once the chunker is in
+/// sync with the old tree. Each subsequent leaf is propagated to the
+/// level-1 chunker as a single `(firstKey, leaf_hash)` entry, without
+/// reading the leaf's items. The cursor is consumed to its end.
+fn fast_forward_to_end<const N: usize, S: NodeStorage<N>>(
+    chunker: &mut Chunker<'_, N, S>,
+    cur: &mut NodeCursor<N>,
+    storage: &mut S,
+) {
+    debug_assert_eq!(
+        chunker.level, 0,
+        "fast_forward_to_end currently supports leaf-level chunkers only"
+    );
+    debug_assert!(
+        chunker.is_at_boundary(),
+        "fast_forward_to_end requires the chunker to be at a boundary"
+    );
+
+    // The cursor has just been advanced past the boundary leaf via
+    // `advance`. If the advance crossed the parent's last child, the
+    // cursor is now invalid - nothing more to fast-forward.
+    while cur.valid() {
+        // The current leaf is wholly unchanged (caller guaranteed no
+        // pending mutations). Promote it to the parent chunker.
+        let first_key = match cur.nd.keys.first() {
+            Some(k) => k.clone(),
+            None => return,
+        };
+        let leaf_hash = cur.nd.get_hash();
+        chunker.append_subtree_at_parent_level(storage, first_key, leaf_hash.as_bytes().to_vec());
+
+        // Jump to the start of the *next* leaf. `advance` would walk
+        // item-by-item; we want to skip the whole leaf. Manually bump
+        // the parent cursor by one (since the level-0 chunker has now
+        // absorbed this leaf) and refetch.
+        if cur.parent.is_none() {
+            // The "leaf" is actually the root of a single-leaf tree.
+            // There's nothing past it.
+            cur.invalidate_at_end();
+            return;
+        }
+        let parent = cur.parent.as_mut().expect("parent present");
+        // Move parent.idx to the next child slot. `parent.idx` is
+        // currently pointing at the just-emitted child.
+        let next_idx = parent.idx + 1;
+        if (next_idx as usize) >= parent.nd.values.len() {
+            // No next child at this level. Try advancing the parent
+            // to find a further sibling chunk further up the tree.
+            parent.advance(storage);
+            if parent.out_of_bounds() {
+                cur.invalidate_at_end();
+                return;
+            }
+            // Parent moved to a new internal node; fetch its first child.
+            let child_hash_bytes = parent.nd.values[parent.idx as usize].clone();
+            let child = storage
+                .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(&child_hash_bytes))
+                .map(|arc| (*arc).clone())
+                .expect("child reachable");
+            cur.nd = child;
+            cur.idx = 0;
+            continue;
+        }
+        parent.idx = next_idx;
+        let child_hash_bytes = parent.nd.values[parent.idx as usize].clone();
+        let child = storage
+            .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(&child_hash_bytes))
+            .map(|arc| (*arc).clone())
+            .expect("child reachable");
+        cur.nd = child;
+        cur.idx = 0;
+    }
 }
 
 // --------------------------------------------------------------------------

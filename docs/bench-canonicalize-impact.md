@@ -5,15 +5,15 @@ release build) at each step of the history-independence fix. The
 benchmark inserts N keys one at a time into a fresh `ProllyTree` with
 `TreeConfig::default()` and `InMemoryNodeStorage`.
 
-| N      | Baseline (02e1cfa) | canonicalize (1f88dd1) | Phase 1 chunker (5c09a86) | Phase 2 cursor (28ec971) |
-|--------|---------------------|------------------------|---------------------------|--------------------------|
-| 100    | 1.36 ms             | 4.20 ms (3.1x)         | -                         | -                        |
-| 1 000  | 67.1 ms             | 363 ms (5.4x)          | 178 ms (2.6x)             | 165 ms (2.5x)            |
-| 10 000 | 1.14 s              | 30.1 s (26.4x)         | 13.3 s (11.7x)            | 16.6 s (14.5x)           |
+| N      | Baseline (02e1cfa) | canonicalize | Phase 1 chunker | Phase 2 cursor | Phase 3 fast-forward |
+|--------|---------------------|--------------|------------------|----------------|----------------------|
+| 100    | 1.36 ms             | 4.20 ms (3.1x) | -              | -              | -                    |
+| 1 000  | 67.1 ms             | 363 ms (5.4x)  | 178 ms (2.6x)  | 165 ms (2.5x)  | 153 ms (2.3x)        |
+| 10 000 | 1.14 s              | 30.1 s (26.4x) | 13.3 s (11.7x) | 16.6 s (14.5x) | 11.2 s (9.8x)        |
 
-All three "with fix" columns are still O(N²) per insert sequence -
-each insert triggers an O(N) walk + chunker pass. The reduction from
-26x to ~12-15x comes from:
+Phases 1+2 are still O(N²) per insert sequence - each insert triggers
+an O(N) walk + chunker pass. The reduction from 26x to ~12-15x comes
+from:
 
   - dropping the wasted in-place `Balanced::balance` work that
     canonicalize used to discard;
@@ -21,18 +21,31 @@ each insert triggers an O(N) walk + chunker pass. The reduction from
     collect-then-rebuild;
   - bypassing `BTreeMap` materialization via cursor walk (Phase 2).
 
-Phase 2 is slightly slower than Phase 1 because the cursor adds
-per-leaf overhead (refetching child nodes from storage) without yet
-enabling the chunk-boundary fast-forward that lets the chunker skip
-unchanged subtrees.
+Phase 3 adds two fast paths matching Dolt's chunker design:
 
-### Phase 3 (remaining)
+  - **Pure-append**: when every mutation is an insert past the tree's
+    max key, walk the existing internal spine once to collect
+    `(firstKey, leaf_hash)` for each leaf, feed all but the last leaf
+    directly into the level-1 chunker, then re-process the last leaf's
+    items plus new keys through level-0. This skips reading the items
+    of N-1 leaves. Dominates the win for append-heavy workloads like
+    the `insert_single` benchmark.
 
-The cursor fast-forward, `chunker.advanceTo(next)`, is what brings the
-per-op cost from O(N) to `O(log N + edits)`. See
-`docs/dolt-streaming-chunker.md` for the design. With the fast-forward
-landed, the expected bench is ~2x of baseline for incremental
-insert sequences.
+  - **Alignment-aware fast-forward**: after each chunk emit, if the
+    cursor was at the end of an old leaf and the emitted chunk's hash
+    equals that leaf's hash, the chunker has re-synced with the old
+    tree. If no more mutations are pending, `fast_forward_to_end`
+    copies the remaining old leaves to the level-1 chunker without
+    reading their items. Helps mid-tree mutations where the tail of
+    the tree is unchanged.
+
+At N=10 000 inserts in ascending order (the `insert_single` benchmark),
+Phase 3 is **2.7x faster than Phase 2** and **9.8x slower than the
+pre-fix baseline** (which had the order-dependence bug). The remaining
+gap to baseline comes from: per-leaf hash-mapping lookups in storage,
+the inherent O(N²) nature of one-mutation-per-call (each call still
+processes the last leaf), and the cost of writing the new tree's nodes
+to storage on every commit.
 
 ### Correctness status (independent of perf)
 
