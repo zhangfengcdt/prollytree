@@ -352,7 +352,18 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
         self.splitter.append(&key, &value);
         self.builder.add(key, value);
 
-        if self.splitter.crossed_boundary() {
+        // Dolt's "constraint (3)": an internal-level chunk must contain
+        // at least 2 entries. A single-entry internal node would be a
+        // degenerate tower - emitting a boundary at level L on one
+        // entry creates a level-(L+1) chunker that also sees one entry
+        // and (with the same splitter config) also fires a boundary,
+        // cascading infinitely. Defer emission until the in-progress
+        // chunk has at least 2 entries. At level 0 (leaves), single-
+        // entry chunks are allowed because the alternative would be no
+        // tree at all for a 1-key dataset.
+        let degenerate_internal = self.level > 0 && self.builder.count() < 2;
+
+        if self.splitter.crossed_boundary() && !degenerate_internal {
             self.handle_boundary(storage);
         }
     }
@@ -1143,5 +1154,41 @@ mod tests {
         let expected = build_tree_from_sorted_pairs::<32, _>(expected_pairs, &cfg, &mut s2);
 
         assert_eq!(result.get_hash(), expected.get_hash());
+    }
+
+    /// Regression test for the "every-item boundary" degenerate config:
+    /// `pattern = 0` makes `(hash & pattern) == pattern` true for every
+    /// item, so the splitter fires a boundary on every append. Combined
+    /// with `min_chunk_size = 1` (Python's `TreeConfig.__init__` default
+    /// at the time of writing), this used to cascade through the
+    /// chunker's recursive parent creation until the level counter
+    /// (`u8`) overflowed - panicking in debug, segfaulting in release.
+    /// The "constraint (3)" check in `Chunker::append` (skip emission
+    /// when an internal-level builder has fewer than 2 entries) breaks
+    /// the cascade.
+    #[test]
+    fn degenerate_pattern_zero_does_not_cascade() {
+        let cfg = TreeConfig::<32> {
+            base: 4,
+            modulus: 64,
+            min_chunk_size: 1,
+            max_chunk_size: 4096,
+            pattern: 0,
+            root_hash: None,
+            key_schema: None,
+            value_schema: None,
+            encode_types: vec![],
+        };
+        let mut storage = InMemoryNodeStorage::<32>::default();
+        // Stream a handful of items through; this used to overflow the
+        // u8 level counter via recursive `handle_boundary` -> `append`.
+        let root = build_tree_from_sorted_pairs::<32, _>(
+            (0u64..5).map(|i| (key(i), val(i))),
+            &cfg,
+            &mut storage,
+        );
+        // Sanity: tree should hold all 5 items, and its level should be
+        // small (definitely not approaching u8::MAX).
+        assert!(root.level < 16, "tree level grew too tall: {}", root.level);
     }
 }
