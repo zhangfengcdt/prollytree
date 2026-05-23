@@ -647,7 +647,17 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
                 self.modulus,
             );
 
-            while end < self.keys.len() && end - start < self.max_chunk_size {
+            // The chunk currently being built spans `last_start..end`,
+            // so its size is `end - last_start`. Stop sliding once the
+            // chunk has reached `max_chunk_size`; this preserves the
+            // safety-cap intent of `TreeConfig::max_chunk_size`.
+            //
+            // (The original condition `end - start < max_chunk_size`
+            // compared the sliding *window* size against the chunk cap,
+            // which is always `min_chunk_size < max_chunk_size` for sane
+            // configs - i.e. the cap never fired. The streaming chunker
+            // in `crate::streaming_chunker` enforces the same cap.)
+            while end < self.keys.len() && end - last_start < self.max_chunk_size {
                 // Check if the current hash matches the pattern
                 if hash & self.pattern == self.pattern {
                     break;

@@ -360,7 +360,16 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
         // tree at all for a 1-key dataset.
         let degenerate_internal = self.level > 0 && self.builder.count() < 2;
 
-        if self.splitter.crossed_boundary() && !degenerate_internal {
+        // `max_chunk_size` safety cap: force a boundary if the builder
+        // has reached the configured cap, even if the splitter pattern
+        // didn't fire. This bounds the worst-case node size for
+        // adversarial keys whose rolling hash rarely matches the
+        // pattern, matching the *intent* of `chunk_content`'s
+        // `max_chunk_size` field. (Sane configs have `max >= 2` so
+        // this never conflicts with the degenerate-internal rule.)
+        let at_max = self.builder.count() >= self.config.max_chunk_size;
+
+        if (self.splitter.crossed_boundary() || at_max) && !degenerate_internal {
             self.handle_boundary(storage);
         }
     }
@@ -789,6 +798,26 @@ where
 ///
 /// Returns `Some(root)` when applied, `None` if the precondition isn't
 /// met (e.g. any delete, or any mutation key <= tree max).
+///
+/// # Canonical-input assumption
+///
+/// This path promotes earlier leaves' precomputed
+/// `(firstKey, leaf_hash)` entries directly into the level-1 chunker,
+/// trusting that those boundaries are already the ones a fresh
+/// canonical build would produce. Trees built via `apply_mutations`
+/// (i.e. trees produced by this crate after the streaming-chunker
+/// rewrite) satisfy that invariant by construction.
+///
+/// Trees written by older code paths that did not canonicalize
+/// (pre-streaming-chunker `ProllyTree::insert`/`delete`) may carry
+/// non-canonical leaf boundaries. Running this fast path on such a
+/// tree preserves the non-canonical segmentation in the result — the
+/// "next mutation re-canonicalizes" guarantee does NOT hold for
+/// append-only mutations against a non-canonical base. Callers
+/// migrating from old code should perform one full cursor walk
+/// (e.g. via an `update`/`delete` round trip on any existing key,
+/// which disqualifies pure-append) to canonicalize before relying on
+/// hash-equality across replicas.
 fn try_pure_append<const N: usize, S: NodeStorage<N>>(
     root: &ProllyNode<N>,
     muts: &mut Vec<(Vec<u8>, Option<Vec<u8>>)>,
@@ -804,46 +833,29 @@ fn try_pure_append<const N: usize, S: NodeStorage<N>>(
     }
     let max_key = tree_max_key(root, storage)?;
     // The mutations come from a BTreeMap upstream so they're already
-    // sorted; the smallest key is muts[0].
+    // sorted; the smallest key is muts[0]. (Sort order is the caller's
+    // responsibility for direct uses of `apply_mutations`.)
     if muts[0].0.as_slice() <= max_key.as_slice() {
         return None;
     }
 
-    // Collect existing leaves. We can't just feed ALL of them as-is to
-    // the level-1 chunker: the LAST leaf might be incomplete (its
-    // canonical chunker boundary fires only when full), so the new
-    // keys need to be merged with it via a level-0 chunker. The
-    // earlier leaves are guaranteed canonical boundaries (the splitter
-    // pattern matched at their boundaries) so they can be propagated
-    // directly.
-    let mut leaves: Vec<(Vec<u8>, Vec<u8>, ProllyNode<N>)> = Vec::new();
-    iter_leaves(root, storage, |leaf| {
-        if !leaf.keys.is_empty() {
-            leaves.push((
-                leaf.keys[0].clone(),
-                leaf.get_hash().as_bytes().to_vec(),
-                leaf.clone(),
-            ));
-        }
-    });
-    if leaves.is_empty() {
-        return None;
-    }
-
+    // Stream the existing leaves. We keep at most ONE leaf buffered at
+    // any time — the previous one — so we can promote it once the next
+    // leaf arrives (confirming it isn't the last). The final buffered
+    // leaf gets re-streamed through level 0 together with the new keys.
+    //
+    // This avoids allocating a `Vec<ProllyNode<N>>` over the whole tree
+    // when only the trailing leaf actually needs its contents.
     let mut chunker = Chunker::<N, S>::new(config, 0);
+    let mut last_leaf: Option<ProllyNode<N>> = None;
+    pure_append_walk(root, storage, &mut chunker, &mut last_leaf);
 
-    // Feed all-but-the-last leaf to the level-1 parent chunker as
-    // precomputed `(firstKey, hash)` entries. These leaves had canonical
-    // boundaries when they were originally chunked.
-    let last_leaf = leaves.pop().expect("non-empty");
-    for (fk, h_bytes, _) in leaves {
-        chunker.append_subtree_at_parent_level(storage, fk, h_bytes);
-    }
+    let last_leaf = last_leaf?;
 
     // Re-process the last existing leaf's items + the new keys through
     // the level-0 chunker. Its emits feed the level-1 parent we just
     // populated, preserving the canonical level-1 sequence.
-    for (k, v) in last_leaf.2.keys.iter().zip(last_leaf.2.values.iter()) {
+    for (k, v) in last_leaf.keys.iter().zip(last_leaf.values.iter()) {
         chunker.add_pair(storage, k.clone(), v.clone());
     }
     for (k, opt_v) in muts.drain(..) {
@@ -854,30 +866,40 @@ fn try_pure_append<const N: usize, S: NodeStorage<N>>(
     Some(chunker.done(storage))
 }
 
-/// Walk all leaves of `root` in key order, invoking `visit` on each.
-fn iter_leaves<const N: usize, S: NodeStorage<N>>(
-    root: &ProllyNode<N>,
-    storage: &S,
-    mut visit: impl FnMut(&ProllyNode<N>),
+/// Recursive walk over the leaves of `node` for the pure-append fast
+/// path. Maintains a one-leaf lookahead in `last_leaf` so each fully-
+/// confirmed earlier leaf can be promoted to the parent chunker via
+/// `append_subtree_at_parent_level` without ever buffering more than
+/// one full `ProllyNode` at a time.
+fn pure_append_walk<const N: usize, S: NodeStorage<N>>(
+    node: &ProllyNode<N>,
+    storage: &mut S,
+    chunker: &mut Chunker<'_, N, S>,
+    last_leaf: &mut Option<ProllyNode<N>>,
 ) {
-    fn recurse<const N: usize, S: NodeStorage<N>>(
-        node: &ProllyNode<N>,
-        storage: &S,
-        visit: &mut dyn FnMut(&ProllyNode<N>),
-    ) {
-        if node.is_leaf {
-            visit(node);
+    if node.is_leaf {
+        if node.keys.is_empty() {
             return;
         }
-        for child_hash_bytes in &node.values {
-            let child = storage
-                .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(child_hash_bytes))
-                .map(|arc| (*arc).clone())
-                .expect("child reachable");
-            recurse(&child, storage, visit);
+        if let Some(prev) = last_leaf.take() {
+            // `prev` was previously seen and is now confirmed not to be
+            // the trailing leaf - promote it directly to the parent
+            // chunker without ever re-reading its items.
+            let fk = prev.keys[0].clone();
+            let h = prev.get_hash().as_bytes().to_vec();
+            chunker.append_subtree_at_parent_level(storage, fk, h);
         }
+        *last_leaf = Some(node.clone());
+        return;
     }
-    recurse(root, storage, &mut visit);
+    // Internal node: descend in key order.
+    for child_hash_bytes in &node.values {
+        let child = storage
+            .get_node_by_hash(&crate::digest::ValueDigest::raw_hash(child_hash_bytes))
+            .map(|arc| (*arc).clone())
+            .expect("child reachable");
+        pure_append_walk(&child, storage, chunker, last_leaf);
+    }
 }
 
 /// Largest key in the tree, by walking the rightmost spine.

@@ -2240,15 +2240,12 @@ mod tests {
     // ------------------------------------------------------------------
     // History-independence tests at the ProllyTree (public API) layer.
     //
-    // Mirrors the structure of the node-level tests in `src/node.rs`:
-    // one always-on baseline that exercises the narrow case the
-    // implementation supports today, and a small set of `#[ignore]`d
-    // tests that probe broader guarantees (root-hash equality across
-    // orders, root-hash equality after updates/deletes) which currently
-    // fail. See the module header in `src/node.rs` for the underlying
-    // bugs these expose; the integration test in
-    // `tests/history_independence.rs` runs the full config × order ×
-    // op-mix matrix.
+    // Four always-on tests covering the same shapes used at the lower
+    // layers: traversal equality across insertion orders, root-hash
+    // equality across orders, root-hash equality under update sequences,
+    // and root-hash equality under delete sequences. The full matrix
+    // (configs × orders × key patterns × op mixes) lives in
+    // `tests/history_independence.rs`.
     // ------------------------------------------------------------------
     mod history_independence_tests {
         use super::*;
