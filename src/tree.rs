@@ -2373,4 +2373,155 @@ mod tests {
             );
         }
     }
+
+    /// History-independence under three-way merge.
+    ///
+    /// `apply_merge_results` (and `merge_trees`) start from a destination
+    /// tree and apply added / modified / removed entries via
+    /// `ProllyTree::insert` / `delete` - both of which call
+    /// `canonicalize()`. So the merge result should be a canonical tree
+    /// that depends only on the final key/value set.
+    mod merge_canonicality_tests {
+        use super::*;
+        use crate::diff::IgnoreConflictsResolver;
+        use rand::prelude::StdRng;
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+
+        fn k8(i: u64) -> Vec<u8> {
+            i.to_be_bytes().to_vec()
+        }
+        fn v16(i: u64) -> Vec<u8> {
+            let mut v = Vec::with_capacity(16);
+            v.extend_from_slice(&i.to_be_bytes());
+            v.extend_from_slice(&(!i).to_be_bytes());
+            v
+        }
+
+        /// Build a fresh ProllyTree sharing the given storage; insert the
+        /// keys in the supplied order so all node hashes are reachable
+        /// from `storage`. Returns (tree, root_hash). The tree's
+        /// `storage` field is updated in place via clone, so the caller's
+        /// original mutable handle still references the latest state.
+        fn build_tree_sharing_storage(
+            storage: &mut InMemoryNodeStorage<32>,
+            indices: &[u64],
+        ) -> ValueDigest<32> {
+            let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+            for &i in indices {
+                tree.insert(k8(i), v16(i));
+            }
+            let root_hash = tree.get_root_hash().unwrap();
+            // Promote the per-tree storage (which now holds all nodes for this
+            // tree) back into the shared storage.
+            *storage = tree.storage;
+            root_hash
+        }
+
+        /// `apply_merge_results` produces a canonical tree: applying merge
+        /// ops to a destination must equal a freshly built tree from the
+        /// same final key/value set.
+        #[test]
+        fn apply_merge_results_is_canonical() {
+            let mut storage = InMemoryNodeStorage::<32>::default();
+
+            // base has {0..16}, source adds {16..24}, dest adds {24..32}.
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+
+            let mut source_keys: Vec<u64> = (0..24).collect();
+            source_keys.shuffle(&mut StdRng::from_seed([1u8; 32]));
+            let source_root = build_tree_sharing_storage(&mut storage, &source_keys);
+
+            let mut dest_keys: Vec<u64> = (0..16).chain(24..32).collect();
+            dest_keys.shuffle(&mut StdRng::from_seed([2u8; 32]));
+            let dest_root = build_tree_sharing_storage(&mut storage, &dest_keys);
+
+            // Expected final state: union of source and dest = {0..32}.
+            let mut expected_keys: Vec<u64> = (0..32).collect();
+            expected_keys.shuffle(&mut StdRng::from_seed([3u8; 32]));
+            let expected_root = build_tree_sharing_storage(&mut storage, &expected_keys);
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let merge_results = merge_tool.merge(&source_root, &dest_root, &base_root);
+            let merged = merge_tool
+                .apply_merge_results(&dest_root, &merge_results)
+                .expect("no conflicts expected");
+
+            assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "merged tree's root hash does not match a fresh canonical build of the same final state"
+            );
+        }
+
+        /// Same three input roots, but the merge is applied twice with the
+        /// merge results in different orders. Because `apply_merge_results`
+        /// goes through `insert`/`delete` which both canonicalize, the
+        /// final root hash should be identical.
+        #[test]
+        fn apply_merge_results_independent_of_result_order() {
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+            let source_root =
+                build_tree_sharing_storage(&mut storage, &(0..24).collect::<Vec<_>>());
+            let dest_root = build_tree_sharing_storage(
+                &mut storage,
+                &(0..16).chain(24..32).collect::<Vec<_>>(),
+            );
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let mut results = merge_tool.merge(&source_root, &dest_root, &base_root);
+
+            let merged_asc = merge_tool
+                .apply_merge_results(&dest_root, &results)
+                .expect("no conflicts");
+
+            results.shuffle(&mut StdRng::from_seed([4u8; 32]));
+            let merged_shuf = merge_tool
+                .apply_merge_results(&dest_root, &results)
+                .expect("no conflicts");
+
+            assert_eq!(
+                merged_asc.get_root_hash().unwrap(),
+                merged_shuf.get_root_hash().unwrap(),
+                "applying the same merge results in different orders produced different root hashes"
+            );
+        }
+
+        /// `merge_trees` with the ignore-conflicts resolver should produce
+        /// a canonical tree regardless of how the underlying trees were
+        /// built.
+        #[test]
+        fn merge_trees_ignore_conflicts_is_canonical() {
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+
+            let mut a_keys: Vec<u64> = (0..24).collect();
+            a_keys.shuffle(&mut StdRng::from_seed([5u8; 32]));
+            let source_root = build_tree_sharing_storage(&mut storage, &a_keys);
+
+            let mut b_keys: Vec<u64> = (0..16).chain(24..32).collect();
+            b_keys.shuffle(&mut StdRng::from_seed([6u8; 32]));
+            let dest_root = build_tree_sharing_storage(&mut storage, &b_keys);
+
+            let expected_root =
+                build_tree_sharing_storage(&mut storage, &(0..32).collect::<Vec<_>>());
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let merged = merge_tool
+                .merge_trees(
+                    &source_root,
+                    &dest_root,
+                    &base_root,
+                    &IgnoreConflictsResolver,
+                )
+                .expect("no unresolved conflicts");
+
+            assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "merge_trees output's root hash differs from a fresh canonical build"
+            );
+        }
+    }
 }
