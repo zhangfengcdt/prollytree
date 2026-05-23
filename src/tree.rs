@@ -348,14 +348,17 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
         tree
     }
     fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
-        // Root node does not have a parent hash
-        self.root.insert(key, value, &mut self.storage, Vec::new());
+        // Stream the single mutation through the cursor-driven chunker.
+        // This bypasses the legacy in-place balance code (which doesn't
+        // maintain history independence) and produces a canonical tree
+        // by construction.
+        self.apply_changes(std::iter::once((key, Some(value))));
         self.persist_root();
     }
 
     fn insert_batch(&mut self, keys: &[Vec<u8>], values: &[Vec<u8>]) {
-        self.root
-            .insert_batch(keys, values, &mut self.storage, Vec::new());
+        let batch = keys.iter().cloned().zip(values.iter().cloned().map(Some));
+        self.apply_changes(batch);
     }
 
     fn update(&mut self, key: Vec<u8>, value: Vec<u8>) -> bool {
@@ -368,15 +371,19 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn delete(&mut self, key: &[u8]) -> bool {
-        let deleted = self.root.delete(key, &mut self.storage, Vec::new());
-        if deleted {
-            self.persist_root();
+        // Pre-check: was the key present? Same answer as before but
+        // computed via the cursor walk inside apply_changes' probe path.
+        if self.find(key).is_none() {
+            return false;
         }
-        deleted
+        self.apply_changes(std::iter::once((key.to_vec(), None)));
+        self.persist_root();
+        true
     }
 
     fn delete_batch(&mut self, keys: &[Vec<u8>]) {
-        self.root.delete_batch(keys, &mut self.storage, Vec::new());
+        let batch = keys.iter().map(|k| (k.clone(), None));
+        self.apply_changes(batch);
     }
 
     fn find(&self, key: &[u8]) -> Option<ProllyNode<N>> {
@@ -1071,6 +1078,47 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
             }
         }
         None
+    }
+
+    /// Apply a batch of insert/delete operations in a single streaming pass.
+    /// `Some(value)` is an insert/upsert; `None` is a delete.
+    ///
+    /// Implementation: sort the mutations into a `BTreeMap` for ordering
+    /// and duplicate-key collapsing, then drive them through
+    /// `streaming_chunker::apply_mutations`, which walks the existing
+    /// tree with a `NodeCursor` and emits a new canonical tree without
+    /// materializing every existing pair into memory.
+    ///
+    /// Returns the number of deletes that hit a non-existent key
+    /// (callers may use this to set return values).
+    pub fn apply_changes<I>(&mut self, changes: I) -> usize
+    where
+        I: IntoIterator<Item = (Vec<u8>, Option<Vec<u8>>)>,
+    {
+        // Sort + dedupe the input. Last-write-wins per key within the batch.
+        let map: std::collections::BTreeMap<Vec<u8>, Option<Vec<u8>>> =
+            changes.into_iter().collect();
+        // For accurate `missing_deletes`, we need to know which delete
+        // targets weren't in the old tree. Cheap pre-pass: probe the
+        // existing tree.
+        let mut missing_deletes = 0usize;
+        for (k, v) in map.iter() {
+            if v.is_none() && self.find(k).is_none() {
+                missing_deletes += 1;
+            }
+        }
+
+        let new_root = crate::streaming_chunker::apply_mutations(
+            self.root.clone(),
+            map,
+            &self.config,
+            &mut self.storage,
+        );
+        let _ = self
+            .storage
+            .insert_node(new_root.get_hash(), new_root.clone());
+        self.root = new_root;
+        missing_deletes
     }
 
     /// Collect all keys from the tree
@@ -2186,6 +2234,411 @@ mod tests {
             let key_idx = node.keys.iter().position(|k| k == b"conflict_key").unwrap();
             let value = node.values[key_idx].clone();
             assert_eq!(value, b"dest_value".to_vec());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // History-independence tests at the ProllyTree (public API) layer.
+    //
+    // Four always-on tests covering the same shapes used at the lower
+    // layers: traversal equality across insertion orders, root-hash
+    // equality across orders, root-hash equality under update sequences,
+    // and root-hash equality under delete sequences. The full matrix
+    // (configs × orders × key patterns × op mixes) lives in
+    // `tests/history_independence.rs`.
+    // ------------------------------------------------------------------
+    mod history_independence_tests {
+        use super::*;
+        use rand::prelude::StdRng;
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+
+        fn k8(i: u64) -> Vec<u8> {
+            i.to_be_bytes().to_vec()
+        }
+        fn v16(i: u64) -> Vec<u8> {
+            let mut v = Vec::with_capacity(16);
+            v.extend_from_slice(&i.to_be_bytes());
+            v.extend_from_slice(&(!i).to_be_bytes());
+            v
+        }
+
+        /// Five insertion orders for the same key set 0..n.
+        fn orders(n: u64) -> Vec<(&'static str, Vec<u64>)> {
+            let asc: Vec<u64> = (0..n).collect();
+            let desc: Vec<u64> = (0..n).rev().collect();
+            let alt: Vec<u64> = (0..n).step_by(2).chain((1..n).step_by(2)).collect();
+            let mut s0: Vec<u64> = (0..n).collect();
+            s0.shuffle(&mut StdRng::from_seed([0u8; 32]));
+            let mut s42: Vec<u64> = (0..n).collect();
+            s42.shuffle(&mut StdRng::from_seed([42u8; 32]));
+            vec![
+                ("ascending", asc),
+                ("descending", desc),
+                ("alt-odd-even", alt),
+                ("shuffled(0)", s0),
+                ("shuffled(42)", s42),
+            ]
+        }
+
+        fn build_tree(order: &[u64]) -> ProllyTree<32, InMemoryNodeStorage<32>> {
+            let storage = InMemoryNodeStorage::<32>::default();
+            let mut tree = ProllyTree::new(storage, TreeConfig::default());
+            for &i in order {
+                tree.insert(k8(i), v16(i));
+            }
+            tree
+        }
+
+        /// Pure inserts under the default TreeConfig produce the same
+        /// leaf-level traversal regardless of insertion order. This is
+        /// the equivalent of `test_history_independence_default_config_traversal`
+        /// from `src/node.rs` but at the public ProllyTree API.
+        #[test]
+        fn prollytree_traversal_independent_of_order() {
+            const N: u64 = 256;
+            let orders = orders(N);
+            let baseline_label = orders[0].0;
+            let baseline_trav = build_tree(&orders[0].1).traverse();
+            for (label, order) in orders.iter().skip(1) {
+                let t = build_tree(order).traverse();
+                assert_eq!(
+                    t, baseline_trav,
+                    "order={} leaf content diverged from order={}",
+                    label, baseline_label
+                );
+            }
+        }
+
+        #[test]
+        fn prollytree_root_hash_independent_of_order() {
+            const N: u64 = 256;
+            let orders = orders(N);
+            let baseline_label = orders[0].0;
+            let baseline_hash = build_tree(&orders[0].1).get_root_hash().unwrap();
+            for (label, order) in orders.iter().skip(1) {
+                let h = build_tree(order).get_root_hash().unwrap();
+                assert_eq!(
+                    h, baseline_hash,
+                    "order={} root hash diverged from order={}",
+                    label, baseline_label
+                );
+            }
+        }
+
+        #[test]
+        fn prollytree_root_hash_independent_under_updates() {
+            const N: u64 = 256;
+            // Baseline: insert ascending with the real values.
+            let asc: Vec<u64> = (0..N).collect();
+            let baseline = build_tree(&asc).get_root_hash().unwrap();
+
+            // Variant: insert all with placeholder, then overwrite all in reverse.
+            let storage = InMemoryNodeStorage::<32>::default();
+            let mut tree = ProllyTree::new(storage, TreeConfig::default());
+            for &i in &asc {
+                tree.insert(k8(i), vec![0u8]);
+            }
+            for i in (0..N).rev() {
+                tree.insert(k8(i), v16(i));
+            }
+            let h = tree.get_root_hash().unwrap();
+            assert_eq!(
+                h, baseline,
+                "update-then-final root hash diverged from baseline"
+            );
+        }
+
+        #[test]
+        fn prollytree_root_hash_independent_under_deletes() {
+            const SURVIVE: u64 = 256;
+            const EXTRA: u64 = 256;
+            let survivors: Vec<u64> = (0..SURVIVE).collect();
+            let baseline = build_tree(&survivors).get_root_hash().unwrap();
+
+            let storage = InMemoryNodeStorage::<32>::default();
+            let mut tree = ProllyTree::new(storage, TreeConfig::default());
+            for i in 0..SURVIVE + EXTRA {
+                tree.insert(k8(i), v16(i));
+            }
+            for i in SURVIVE..SURVIVE + EXTRA {
+                tree.delete(&k8(i));
+            }
+            let h = tree.get_root_hash().unwrap();
+            assert_eq!(
+                h, baseline,
+                "delete-then-final root hash diverged from baseline"
+            );
+        }
+    }
+
+    /// History-independence under three-way merge.
+    ///
+    /// `apply_merge_results` (and `merge_trees`) start from a destination
+    /// tree and apply added / modified / removed entries via
+    /// `ProllyTree::insert` / `delete`, both of which route through the
+    /// streaming chunker in `crate::streaming_chunker`. So the merge
+    /// result is a canonical tree that depends only on the final
+    /// key/value set.
+    mod merge_canonicality_tests {
+        use super::*;
+        use crate::diff::IgnoreConflictsResolver;
+        use rand::prelude::StdRng;
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+
+        fn k8(i: u64) -> Vec<u8> {
+            i.to_be_bytes().to_vec()
+        }
+        fn v16(i: u64) -> Vec<u8> {
+            let mut v = Vec::with_capacity(16);
+            v.extend_from_slice(&i.to_be_bytes());
+            v.extend_from_slice(&(!i).to_be_bytes());
+            v
+        }
+
+        /// Build a fresh ProllyTree sharing the given storage; insert the
+        /// keys in the supplied order so all node hashes are reachable
+        /// from `storage`. Returns (tree, root_hash). The tree's
+        /// `storage` field is updated in place via clone, so the caller's
+        /// original mutable handle still references the latest state.
+        fn build_tree_sharing_storage(
+            storage: &mut InMemoryNodeStorage<32>,
+            indices: &[u64],
+        ) -> ValueDigest<32> {
+            let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+            for &i in indices {
+                tree.insert(k8(i), v16(i));
+            }
+            let root_hash = tree.get_root_hash().unwrap();
+            // Promote the per-tree storage (which now holds all nodes for this
+            // tree) back into the shared storage.
+            *storage = tree.storage;
+            root_hash
+        }
+
+        /// `apply_merge_results` produces a canonical tree: applying merge
+        /// ops to a destination must equal a freshly built tree from the
+        /// same final key/value set.
+        #[test]
+        fn apply_merge_results_is_canonical() {
+            let mut storage = InMemoryNodeStorage::<32>::default();
+
+            // base has {0..16}, source adds {16..24}, dest adds {24..32}.
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+
+            let mut source_keys: Vec<u64> = (0..24).collect();
+            source_keys.shuffle(&mut StdRng::from_seed([1u8; 32]));
+            let source_root = build_tree_sharing_storage(&mut storage, &source_keys);
+
+            let mut dest_keys: Vec<u64> = (0..16).chain(24..32).collect();
+            dest_keys.shuffle(&mut StdRng::from_seed([2u8; 32]));
+            let dest_root = build_tree_sharing_storage(&mut storage, &dest_keys);
+
+            // Expected final state: union of source and dest = {0..32}.
+            let mut expected_keys: Vec<u64> = (0..32).collect();
+            expected_keys.shuffle(&mut StdRng::from_seed([3u8; 32]));
+            let expected_root = build_tree_sharing_storage(&mut storage, &expected_keys);
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let merge_results = merge_tool.merge(&source_root, &dest_root, &base_root);
+            let merged = merge_tool
+                .apply_merge_results(&dest_root, &merge_results)
+                .expect("no conflicts expected");
+
+            assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "merged tree's root hash does not match a fresh canonical build of the same final state"
+            );
+        }
+
+        /// Same three input roots, but the merge is applied twice with the
+        /// merge results in different orders. Because `apply_merge_results`
+        /// goes through `insert`/`delete` which both stream through the
+        /// canonical chunker, the final root hash should be identical.
+        #[test]
+        fn apply_merge_results_independent_of_result_order() {
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+            let source_root =
+                build_tree_sharing_storage(&mut storage, &(0..24).collect::<Vec<_>>());
+            let dest_root = build_tree_sharing_storage(
+                &mut storage,
+                &(0..16).chain(24..32).collect::<Vec<_>>(),
+            );
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let mut results = merge_tool.merge(&source_root, &dest_root, &base_root);
+
+            let merged_asc = merge_tool
+                .apply_merge_results(&dest_root, &results)
+                .expect("no conflicts");
+
+            results.shuffle(&mut StdRng::from_seed([4u8; 32]));
+            let merged_shuf = merge_tool
+                .apply_merge_results(&dest_root, &results)
+                .expect("no conflicts");
+
+            assert_eq!(
+                merged_asc.get_root_hash().unwrap(),
+                merged_shuf.get_root_hash().unwrap(),
+                "applying the same merge results in different orders produced different root hashes"
+            );
+        }
+
+        /// `merge_trees` with the ignore-conflicts resolver should produce
+        /// a canonical tree regardless of how the underlying trees were
+        /// built.
+        #[test]
+        fn merge_trees_ignore_conflicts_is_canonical() {
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+
+            let mut a_keys: Vec<u64> = (0..24).collect();
+            a_keys.shuffle(&mut StdRng::from_seed([5u8; 32]));
+            let source_root = build_tree_sharing_storage(&mut storage, &a_keys);
+
+            let mut b_keys: Vec<u64> = (0..16).chain(24..32).collect();
+            b_keys.shuffle(&mut StdRng::from_seed([6u8; 32]));
+            let dest_root = build_tree_sharing_storage(&mut storage, &b_keys);
+
+            let expected_root =
+                build_tree_sharing_storage(&mut storage, &(0..32).collect::<Vec<_>>());
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let merged = merge_tool
+                .merge_trees(
+                    &source_root,
+                    &dest_root,
+                    &base_root,
+                    &IgnoreConflictsResolver,
+                )
+                .expect("no unresolved conflicts");
+
+            assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "merge_trees output's root hash differs from a fresh canonical build"
+            );
+        }
+
+        /// `merge_trees` with `TakeSourceResolver`: when source and
+        /// destination both modified key `5` with different values, the
+        /// merged tree must take the source value, and its root must
+        /// equal a canonical build of the resulting key/value set.
+        #[test]
+        fn merge_trees_take_source_is_canonical() {
+            use crate::diff::TakeSourceResolver;
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+
+            // Build source where key 5 has value v(5_000_000)
+            let source_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in 0u64..24 {
+                    let v = if i == 5 { v16(5_000_000) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            // Build dest where key 5 has value v(9_999_999)
+            let dest_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in (0..16).chain(24..32) {
+                    let v = if i == 5 { v16(9_999_999) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            // Expected: union of keys; key 5 takes source's value.
+            let expected_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in 0u64..32 {
+                    let v = if i == 5 { v16(5_000_000) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let merged = merge_tool
+                .merge_trees(&source_root, &dest_root, &base_root, &TakeSourceResolver)
+                .expect("no unresolved conflicts (resolver handles them)");
+
+            assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "TakeSourceResolver merge output is non-canonical"
+            );
+        }
+
+        /// `merge_trees` with `TakeDestinationResolver`: symmetric to the
+        /// TakeSource test - the destination's value for the conflicting
+        /// key must be the one that ends up in the merged tree.
+        #[test]
+        fn merge_trees_take_destination_is_canonical() {
+            use crate::diff::TakeDestinationResolver;
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_tree_sharing_storage(&mut storage, &(0..16).collect::<Vec<_>>());
+
+            let source_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in 0u64..24 {
+                    let v = if i == 5 { v16(5_000_000) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            let dest_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in (0..16).chain(24..32) {
+                    let v = if i == 5 { v16(9_999_999) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            // Expected: union of keys; key 5 takes destination's value.
+            let expected_root = {
+                let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+                for i in 0u64..32 {
+                    let v = if i == 5 { v16(9_999_999) } else { v16(i) };
+                    tree.insert(k8(i), v);
+                }
+                let h = tree.get_root_hash().unwrap();
+                storage = tree.storage;
+                h
+            };
+
+            let merge_tool = ProllyTree::new(storage, TreeConfig::default());
+            let merged = merge_tool
+                .merge_trees(
+                    &source_root,
+                    &dest_root,
+                    &base_root,
+                    &TakeDestinationResolver,
+                )
+                .expect("no unresolved conflicts (resolver handles them)");
+
+            assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "TakeDestinationResolver merge output is non-canonical"
+            );
         }
     }
 }

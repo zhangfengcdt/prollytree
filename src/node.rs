@@ -499,6 +499,127 @@ impl<const N: usize> ProllyNode<N> {
         traverse_node(self, storage, &formatter, "", true, &mut output);
         output
     }
+
+    /// Build a canonical tree from a sorted sequence of (key, value) pairs
+    /// using the batch chunker built on top of `chunk_content`.
+    ///
+    /// This is an alternate canonical builder kept as an independent
+    /// oracle: the streaming chunker in `crate::streaming_chunker` is
+    /// the production path used by `ProllyTree`, and the
+    /// `matches_node_build_canonical_from_pairs` unit test compares the
+    /// two builders' root hashes to catch regressions in either path.
+    ///
+    /// "Canonical" means the resulting tree depends only on the (key, value)
+    /// set and the `TreeConfig`, never on the order operations were applied.
+    /// The function chunks the sorted sequence with `chunk_content`, emits
+    /// leaves at level 0, then repeats up the tree using each child's first
+    /// key as the pivot and child hash as the value, until a single root
+    /// node remains. Intermediate level nodes are persisted to `storage`
+    /// so that the returned root's children are reachable.
+    ///
+    /// `pairs` MUST be sorted by key ascending and contain no duplicate keys.
+    pub fn build_canonical_from_pairs<S: NodeStorage<N>>(
+        pairs: Vec<(Vec<u8>, Vec<u8>)>,
+        config: &TreeConfig<N>,
+        storage: &mut S,
+    ) -> ProllyNode<N> {
+        let (keys, values): (Vec<Vec<u8>>, Vec<Vec<u8>>) = pairs.into_iter().unzip();
+        let mut current = build_level(&keys, &values, true, INIT_LEVEL, config);
+
+        let mut level = INIT_LEVEL;
+        while current.len() > 1 {
+            // Persist each child node before we promote pivots to the next level.
+            for node in &current {
+                let _ = storage.insert_node(node.get_hash(), node.clone());
+            }
+            level = level.saturating_add(1);
+
+            let next_keys: Vec<Vec<u8>> = current
+                .iter()
+                .map(|n| n.keys.first().cloned().unwrap_or_default())
+                .collect();
+            let next_values: Vec<Vec<u8>> = current
+                .iter()
+                .map(|n| n.get_hash().as_bytes().to_vec())
+                .collect();
+
+            current = build_level(&next_keys, &next_values, false, level, config);
+        }
+
+        current
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| build_empty(config))
+    }
+}
+
+/// Chunk a flat (keys, values) sequence with the config's chunker and emit
+/// one `ProllyNode` per chunk. Used by `build_canonical_from_pairs`.
+fn build_level<const N: usize>(
+    keys: &[Vec<u8>],
+    values: &[Vec<u8>],
+    is_leaf: bool,
+    level: u8,
+    config: &TreeConfig<N>,
+) -> Vec<ProllyNode<N>> {
+    if keys.is_empty() {
+        // Empty input: return a single empty node so the caller has something
+        // to use as the root. Only happens when the tree itself is empty.
+        return vec![build_empty(config)];
+    }
+
+    let mut buf = make_node(keys.to_vec(), values.to_vec(), is_leaf, level, config);
+
+    let chunks = buf.chunk_content();
+    if chunks.is_empty() || (chunks.len() == 1 && chunks[0] == (0, keys.len())) {
+        // Either below min_chunk_size (chunks empty) or the entire sequence
+        // is one chunk - return a single node holding everything.
+        buf.split = false;
+        return vec![buf];
+    }
+
+    chunks
+        .into_iter()
+        .map(|(start, end)| {
+            make_node(
+                keys[start..end].to_vec(),
+                values[start..end].to_vec(),
+                is_leaf,
+                level,
+                config,
+            )
+        })
+        .collect()
+}
+
+fn make_node<const N: usize>(
+    keys: Vec<Vec<u8>>,
+    values: Vec<Vec<u8>>,
+    is_leaf: bool,
+    level: u8,
+    config: &TreeConfig<N>,
+) -> ProllyNode<N> {
+    ProllyNode {
+        keys,
+        key_schema: config.key_schema.clone(),
+        values,
+        value_schema: config.value_schema.clone(),
+        is_leaf,
+        level,
+        base: config.base,
+        modulus: config.modulus,
+        min_chunk_size: config.min_chunk_size,
+        max_chunk_size: config.max_chunk_size,
+        pattern: config.pattern,
+        split: false,
+        merged: false,
+        encode_types: Vec::new(),
+        encode_values: Vec::new(),
+    }
+}
+
+fn build_empty<const N: usize>(config: &TreeConfig<N>) -> ProllyNode<N> {
+    make_node(Vec::new(), Vec::new(), true, INIT_LEVEL, config)
 }
 
 impl<const N: usize> NodeChunk for ProllyNode<N> {
@@ -526,7 +647,17 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
                 self.modulus,
             );
 
-            while end < self.keys.len() && end - start < self.max_chunk_size {
+            // The chunk currently being built spans `last_start..end`,
+            // so its size is `end - last_start`. Stop sliding once the
+            // chunk has reached `max_chunk_size`; this preserves the
+            // safety-cap intent of `TreeConfig::max_chunk_size`.
+            //
+            // (The original condition `end - start < max_chunk_size`
+            // compared the sliding *window* size against the chunk cap,
+            // which is always `min_chunk_size < max_chunk_size` for sane
+            // configs - i.e. the cap never fired. The streaming chunker
+            // in `crate::streaming_chunker` enforces the same cap.)
+            while end < self.keys.len() && end - last_start < self.max_chunk_size {
                 // Check if the current hash matches the pattern
                 if hash & self.pattern == self.pattern {
                     break;
@@ -1753,5 +1884,120 @@ mod tests {
 
         // The proof should be valid for an existing key
         assert!(is_valid, "Proof should be valid for existing key");
+    }
+
+    // ------------------------------------------------------------------
+    // History-independence smoke test at the ProllyNode layer.
+    //
+    // The canonical chunker that maintains history independence lives
+    // in `crate::streaming_chunker` and is driven by
+    // `ProllyTree::apply_changes` on every mutation. Comprehensive
+    // tests of the property live at the public-API and integration
+    // layers (`src/tree.rs::history_independence_tests`,
+    // `tests/history_independence.rs`,
+    // `src/git/versioned_store/{tests,namespaced_tests}.rs`).
+    //
+    // The single test below is a smoke check that the *legacy*
+    // `ProllyNode::insert` plus `Balanced::balance` path still
+    // converges at the leaf level for the narrow case it always
+    // supported: pure inserts with the default config. This is the
+    // same guarantee the original `test_history_independence` (above)
+    // exercises, lifted to 8-byte u64 keys. It does NOT assert the
+    // strong root-hash equality property - that lives on the
+    // streaming-chunker path now.
+    // ------------------------------------------------------------------
+
+    /// Build the four insertion orders used by the node-level tests for a
+    /// sequence of keys 0..n: ascending, descending, alternating-odd-then-even,
+    /// and a deterministic shuffle.
+    fn order_variants(n: u64) -> Vec<(&'static str, Vec<u64>)> {
+        let asc: Vec<u64> = (0..n).collect();
+        let desc: Vec<u64> = (0..n).rev().collect();
+        let alt: Vec<u64> = (0..n).step_by(2).chain((1..n).step_by(2)).collect();
+        let mut shuf: Vec<u64> = (0..n).collect();
+        let mut rng = StdRng::from_seed([0u8; 32]);
+        shuf.shuffle(&mut rng);
+        vec![
+            ("ascending", asc),
+            ("descending", desc),
+            ("alt-odd-even", alt),
+            ("shuffled(0)", shuf),
+        ]
+    }
+
+    /// TreeConfig profiles that vary the chunker tuning knobs.
+    /// Each entry is (label, base, modulus, min, max, pattern).
+    fn config_variants() -> Vec<(&'static str, u64, u64, usize, usize, u64)> {
+        vec![
+            ("default", 257, 1_000_000_007, 8, 4096, 0b11111111),
+            ("tiny-chunks", 257, 1_000_000_007, 2, 16, 0b11),
+            ("medium-chunks", 257, 1_000_000_007, 4, 64, 0b1111),
+            ("alt-hash", 131, 1_000_000_009, 8, 4096, 0b11111111),
+        ]
+    }
+
+    fn k8(i: u64) -> Vec<u8> {
+        i.to_be_bytes().to_vec()
+    }
+
+    fn v16(i: u64) -> Vec<u8> {
+        let mut v = Vec::with_capacity(16);
+        v.extend_from_slice(&i.to_be_bytes());
+        v.extend_from_slice(&(!i).to_be_bytes());
+        v
+    }
+
+    fn make_node(cfg: &(&'static str, u64, u64, usize, usize, u64)) -> ProllyNode<32> {
+        ProllyNode::builder()
+            .base(cfg.1)
+            .modulus(cfg.2)
+            .min_chunk_size(cfg.3)
+            .max_chunk_size(cfg.4)
+            .pattern(cfg.5)
+            .build()
+    }
+
+    fn traversal_of(
+        cfg: &(&'static str, u64, u64, usize, usize, u64),
+        order: &[u64],
+        value_fn: impl Fn(u64) -> Vec<u8>,
+    ) -> String {
+        let mut storage = InMemoryNodeStorage::<32>::default();
+        let mut node = make_node(cfg);
+        for &i in order {
+            node.insert(k8(i), value_fn(i), &mut storage, Vec::new());
+            storage.insert_node(node.get_hash(), node.clone()).unwrap();
+        }
+        node.traverse(&storage)
+    }
+
+    // ---- Always-on baseline (passes today) ----
+
+    /// Pure inserts under the default TreeConfig converge at the leaf level
+    /// (i.e. the `traverse()` string is identical across insertion orders)
+    /// for 8-byte u64 keys at N=256. This is the same flavor of guarantee
+    /// the legacy `test_history_independence` exercises with 1-byte keys
+    /// and N=100.
+    ///
+    /// Note: this does NOT assert root-hash equality - see the `#[ignore]`d
+    /// `*_root_hash_*` tests for the stronger guarantee. Today the chunker
+    /// can build different internal-node structure for the same final keys
+    /// even when the leaves agree, so the Merkle root is not yet a
+    /// canonical fingerprint of the (key, value) set.
+    #[test]
+    fn test_history_independence_default_config_traversal() {
+        const N: u64 = 256;
+        let default_cfg = config_variants()[0];
+        let orders = order_variants(N);
+        let baseline_label = orders[0].0;
+        let baseline_trav = traversal_of(&default_cfg, &orders[0].1, v16);
+        for (label, order) in orders.iter().skip(1) {
+            let t = traversal_of(&default_cfg, order, v16);
+            assert_eq!(
+                t, baseline_trav,
+                "default config: order={} leaf content diverged from order={}",
+                label, baseline_label
+            );
+        }
     }
 }

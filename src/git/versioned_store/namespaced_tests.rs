@@ -877,4 +877,169 @@ mod namespaced_tests {
         println!("    New (hash compare): {:?}", new_change_time);
         println!("=========================================\n");
     }
+
+    // =====================================================================
+    // History independence
+    //
+    // Each namespace is backed by its own ProllyTree, so the streaming
+    // canonical chunker (driven by ProllyTree::apply_changes on every
+    // commit) should produce per-namespace root hashes that depend only
+    // on the final (key, value) set in that namespace - never on
+    // insert/delete order or cross-namespace interleaving.
+    // =====================================================================
+
+    use rand::prelude::StdRng;
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+
+    fn k8(i: u64) -> Vec<u8> {
+        i.to_be_bytes().to_vec()
+    }
+
+    fn v16(i: u64) -> Vec<u8> {
+        let mut v = Vec::with_capacity(16);
+        v.extend_from_slice(&i.to_be_bytes());
+        v.extend_from_slice(&(!i).to_be_bytes());
+        v
+    }
+
+    /// Build a single-namespace store, inserting keys in the given order
+    /// and committing once. Returns the namespace's root hash.
+    fn build_single_namespace(ns_name: &str, order: &[u64]) -> crate::digest::ValueDigest<32> {
+        let (_temp_dir, dataset_path) = setup_git_repo();
+        let _cwd = CwdGuard::set(&dataset_path);
+        let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
+        {
+            let mut ns = store.namespace(ns_name);
+            for &i in order {
+                ns.insert(k8(i), v16(i)).expect("insert");
+            }
+        }
+        store.commit("history-independence").expect("commit");
+        store
+            .get_namespace_root_hash(ns_name)
+            .expect("namespace root hash")
+    }
+
+    #[test]
+    fn namespace_root_hash_independent_of_insert_order() {
+        const N: u64 = 48;
+        let asc: Vec<u64> = (0..N).collect();
+        let desc: Vec<u64> = (0..N).rev().collect();
+        let alt: Vec<u64> = (0..N).step_by(2).chain((1..N).step_by(2)).collect();
+        let mut shuf: Vec<u64> = (0..N).collect();
+        shuf.shuffle(&mut StdRng::from_seed([23u8; 32]));
+
+        let h_asc = build_single_namespace("users", &asc);
+        let h_desc = build_single_namespace("users", &desc);
+        let h_alt = build_single_namespace("users", &alt);
+        let h_shuf = build_single_namespace("users", &shuf);
+
+        assert_eq!(
+            h_asc, h_desc,
+            "descending order produced different namespace root hash"
+        );
+        assert_eq!(
+            h_asc, h_alt,
+            "alternating order produced different namespace root hash"
+        );
+        assert_eq!(
+            h_asc, h_shuf,
+            "shuffled order produced different namespace root hash"
+        );
+    }
+
+    #[test]
+    fn namespace_root_hash_independent_after_deletes() {
+        const SURVIVE: u64 = 32;
+        const EXTRA: u64 = 16;
+
+        let survivors: Vec<u64> = (0..SURVIVE).collect();
+        let baseline = build_single_namespace("orders", &survivors);
+
+        let (_temp_dir, dataset_path) = setup_git_repo();
+        let _cwd = CwdGuard::set(&dataset_path);
+        let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
+
+        let mut all: Vec<u64> = (0..SURVIVE + EXTRA).collect();
+        all.shuffle(&mut StdRng::from_seed([29u8; 32]));
+        {
+            let mut ns = store.namespace("orders");
+            for &i in &all {
+                ns.insert(k8(i), v16(i)).expect("insert");
+            }
+        }
+        store.commit("with extras").expect("commit");
+
+        let mut del_order: Vec<u64> = (SURVIVE..SURVIVE + EXTRA).collect();
+        del_order.shuffle(&mut StdRng::from_seed([31u8; 32]));
+        {
+            let mut ns = store.namespace("orders");
+            for &i in &del_order {
+                assert!(ns.delete(&k8(i)).expect("delete"));
+            }
+        }
+        store.commit("delete extras").expect("commit deletes");
+
+        let after_delete = store
+            .get_namespace_root_hash("orders")
+            .expect("ns root hash");
+        assert_eq!(
+            after_delete, baseline,
+            "namespace after insert-extras-then-delete diverged from survivors-only baseline"
+        );
+    }
+
+    /// Two namespaces written in interleaved order across multiple commits
+    /// must produce the same per-namespace root hashes as a fresh single-
+    /// commit build of each one independently. This catches any case where
+    /// cross-namespace interleaving leaks into a namespace's tree state.
+    #[test]
+    fn per_namespace_hashes_independent_of_cross_namespace_interleaving() {
+        const N: u64 = 24;
+        let asc: Vec<u64> = (0..N).collect();
+        let baseline_users = build_single_namespace("users", &asc);
+        let baseline_orders = build_single_namespace("orders", &asc);
+
+        let (_temp_dir, dataset_path) = setup_git_repo();
+        let _cwd = CwdGuard::set(&dataset_path);
+        let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
+
+        // Interleave: for each i, write to "users" then "orders". Pick a
+        // non-trivial shuffle so we don't accidentally match the single-
+        // namespace order. Commit every few iterations to exercise the
+        // staging-drain path.
+        let mut shuffled: Vec<u64> = (0..N).collect();
+        shuffled.shuffle(&mut StdRng::from_seed([37u8; 32]));
+        for (idx, i) in shuffled.iter().enumerate() {
+            {
+                let mut users = store.namespace("users");
+                users.insert(k8(*i), v16(*i)).expect("users insert");
+            }
+            {
+                let mut orders = store.namespace("orders");
+                orders.insert(k8(*i), v16(*i)).expect("orders insert");
+            }
+            if idx % 5 == 4 {
+                store
+                    .commit(&format!("interleaved batch {idx}"))
+                    .expect("commit batch");
+            }
+        }
+        store.commit("interleaved final").expect("commit final");
+
+        let h_users = store.get_namespace_root_hash("users").expect("users hash");
+        let h_orders = store
+            .get_namespace_root_hash("orders")
+            .expect("orders hash");
+
+        assert_eq!(
+            h_users, baseline_users,
+            "users namespace diverged after cross-namespace interleaved writes"
+        );
+        assert_eq!(
+            h_orders, baseline_orders,
+            "orders namespace diverged after cross-namespace interleaved writes"
+        );
+    }
 }

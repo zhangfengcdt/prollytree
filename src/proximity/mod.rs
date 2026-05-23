@@ -14,9 +14,8 @@ limitations under the License.
 
 //! Version-controlled approximate-nearest-neighbour index.
 //!
-//! This module implements a content-addressed proximity map inspired by Dolt's
-//! vector index (<https://www.dolthub.com/blog/2025-06-23-vector-index-deep-dive/>).
-//! A vector's maximum tree level is derived deterministically from a hash of
+//! This module implements a content-addressed proximity map. A vector's
+//! maximum tree level is derived deterministically from a hash of
 //! `(id, vector)`, so the index shape depends only on the current data — not on
 //! insertion order or history. The resulting Merkle tree is shared across
 //! versions for free.

@@ -2236,3 +2236,234 @@ mod tests {
         assert_eq!(store2.get(b"k"), Some(b"v".to_vec()));
     }
 }
+
+/// History-independence tests at the `GitVersionedKvStore` layer.
+///
+/// `VersionedKvStore::insert/delete` stages changes; `commit` drains the
+/// staging area into the inner `ProllyTree` via `apply_changes`, which
+/// drives the streaming canonical chunker. These tests verify that the
+/// staged order does not affect the final committed tree's root hash.
+#[cfg(test)]
+mod history_independence_tests {
+    use crate::git::versioned_store::GitVersionedKvStore;
+    use crate::tree::Tree;
+    use rand::prelude::StdRng;
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+    use tempfile::TempDir;
+
+    /// Reuses the same CWD guard from `mod tests` above; redefined here so
+    /// this module is self-contained.
+    struct CwdGuard {
+        original: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let lock = crate::git::versioned_store::cwd_lock()
+                .lock()
+                .expect("CWD mutex poisoned");
+            let original = std::env::current_dir().expect("Failed to get current dir");
+            std::env::set_current_dir(path).expect("Failed to change directory");
+            Self {
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    /// Initialize a fresh GitVersionedKvStore in an isolated temp git repo.
+    /// Returns the store, the TempDir (must outlive the store), and the
+    /// CwdGuard (which holds the CWD lock for the test's lifetime).
+    fn fresh_store() -> (GitVersionedKvStore<32>, TempDir, CwdGuard) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        gix::init(temp_dir.path()).expect("git init");
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).expect("mkdir dataset");
+        let guard = CwdGuard::set(&dataset_dir);
+        // Set user identity inside the new repo - many tests need this.
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(temp_dir.path())
+            .output()
+            .ok();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(temp_dir.path())
+            .output()
+            .ok();
+        let store = GitVersionedKvStore::<32>::init(&dataset_dir).expect("init store");
+        (store, temp_dir, guard)
+    }
+
+    fn k8(i: u64) -> Vec<u8> {
+        i.to_be_bytes().to_vec()
+    }
+
+    fn v16(i: u64) -> Vec<u8> {
+        let mut v = Vec::with_capacity(16);
+        v.extend_from_slice(&i.to_be_bytes());
+        v.extend_from_slice(&(!i).to_be_bytes());
+        v
+    }
+
+    fn build_then_commit(order: &[u64]) -> crate::digest::ValueDigest<32> {
+        let (mut store, _temp, _cwd) = fresh_store();
+        for &i in order {
+            store.insert(k8(i), v16(i)).expect("insert");
+        }
+        store.commit("history-independence test").expect("commit");
+        store.tree.get_root_hash().expect("root hash after commit")
+    }
+
+    #[test]
+    fn root_hash_independent_of_insert_order() {
+        const N: u64 = 64;
+        let asc: Vec<u64> = (0..N).collect();
+        let desc: Vec<u64> = (0..N).rev().collect();
+        let alt: Vec<u64> = (0..N).step_by(2).chain((1..N).step_by(2)).collect();
+        let mut shuf: Vec<u64> = (0..N).collect();
+        shuf.shuffle(&mut StdRng::from_seed([7u8; 32]));
+
+        let h_asc = build_then_commit(&asc);
+        let h_desc = build_then_commit(&desc);
+        let h_alt = build_then_commit(&alt);
+        let h_shuf = build_then_commit(&shuf);
+
+        assert_eq!(h_asc, h_desc, "descending order diverged from ascending");
+        assert_eq!(h_asc, h_alt, "alternating order diverged from ascending");
+        assert_eq!(h_asc, h_shuf, "shuffled order diverged from ascending");
+    }
+
+    #[test]
+    fn root_hash_independent_after_updates() {
+        const N: u64 = 64;
+        let asc: Vec<u64> = (0..N).collect();
+
+        // Baseline: insert with final values, single commit.
+        let baseline = build_then_commit(&asc);
+
+        // Variant: stage placeholder writes, commit, then overwrite with
+        // final values in a different order across multiple commits. The
+        // committed tree's root hash should equal the baseline.
+        let (mut store, _temp, _cwd) = fresh_store();
+        for &i in &asc {
+            store.insert(k8(i), vec![0u8]).expect("placeholder insert");
+        }
+        store.commit("placeholders").expect("commit placeholders");
+
+        let mut overwrite_order: Vec<u64> = (0..N).collect();
+        overwrite_order.shuffle(&mut StdRng::from_seed([11u8; 32]));
+        for &i in &overwrite_order {
+            store
+                .update(k8(i), v16(i))
+                .expect("update")
+                .then_some(())
+                .expect("update returned false");
+        }
+        store.commit("real values").expect("commit values");
+
+        let after_update = store.tree.get_root_hash().expect("root hash");
+        assert_eq!(
+            after_update, baseline,
+            "tree after stage-commit-overwrite-commit diverged from direct-insert baseline"
+        );
+    }
+
+    #[test]
+    fn root_hash_independent_after_deletes() {
+        const SURVIVE: u64 = 64;
+        const EXTRA: u64 = 32;
+        let survivors: Vec<u64> = (0..SURVIVE).collect();
+        let baseline = build_then_commit(&survivors);
+
+        // Variant: insert SURVIVE + EXTRA keys, commit, then delete the extras.
+        // Result should match a tree that only ever held the survivors.
+        let (mut store, _temp, _cwd) = fresh_store();
+        let mut all: Vec<u64> = (0..SURVIVE + EXTRA).collect();
+        all.shuffle(&mut StdRng::from_seed([13u8; 32]));
+        for &i in &all {
+            store.insert(k8(i), v16(i)).expect("insert");
+        }
+        store.commit("with extras").expect("commit");
+
+        let mut del_order: Vec<u64> = (SURVIVE..SURVIVE + EXTRA).collect();
+        del_order.shuffle(&mut StdRng::from_seed([17u8; 32]));
+        for &i in &del_order {
+            assert!(store.delete(&k8(i)).expect("delete"));
+        }
+        store.commit("delete extras").expect("commit deletes");
+
+        let after_delete = store.tree.get_root_hash().expect("root hash");
+        assert_eq!(
+            after_delete, baseline,
+            "tree after insert-extras-then-delete diverged from survivors-only baseline"
+        );
+    }
+
+    /// Commit-shape independence: a tree built up via many small commits
+    /// must end with the same tree root hash as the same set of mutations
+    /// applied in one big commit. Commit hashes will of course differ
+    /// (different parents, different timestamps), but the underlying
+    /// `tree.get_root_hash()` is a function of state alone.
+    ///
+    /// The three "shapes" are run in separate scopes so each store's
+    /// `CwdGuard` is released before the next one acquires the global
+    /// CWD mutex (the guard is not reentrant).
+    #[test]
+    fn tree_root_hash_independent_of_commit_shape() {
+        const N: u64 = 80;
+
+        // Shape A: one commit per insert.
+        let many_root = {
+            let (mut store, _t, _cwd) = fresh_store();
+            for i in 0..N {
+                store.insert(k8(i), v16(i)).expect("insert");
+                store.commit(&format!("commit {i}")).expect("commit");
+            }
+            store.tree.get_root_hash().expect("root hash A")
+        };
+
+        // Shape B: one commit for all inserts.
+        let one_root = {
+            let (mut store, _t, _cwd) = fresh_store();
+            for i in 0..N {
+                store.insert(k8(i), v16(i)).expect("insert");
+            }
+            store.commit("bulk").expect("commit");
+            store.tree.get_root_hash().expect("root hash B")
+        };
+
+        // Shape C: random commit boundaries.
+        let mixed_root = {
+            let (mut store, _t, _cwd) = fresh_store();
+            let boundaries: &[u64] = &[3, 4, 11, 12, 19, 26, 33, 40, 47, 54, 61, 68, 75];
+            let mut next_bound_idx = 0;
+            for i in 0..N {
+                store.insert(k8(i), v16(i)).expect("insert");
+                if next_bound_idx < boundaries.len() && i == boundaries[next_bound_idx] {
+                    store.commit(&format!("partial up to {i}")).expect("commit");
+                    next_bound_idx += 1;
+                }
+            }
+            store.commit("final").expect("commit");
+            store.tree.get_root_hash().expect("root hash C")
+        };
+
+        assert_eq!(
+            many_root, one_root,
+            "many-tiny-commits root differs from one-bulk-commit root"
+        );
+        assert_eq!(
+            many_root, mixed_root,
+            "many-tiny-commits root differs from mixed-boundary root"
+        );
+    }
+}
