@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ProllyTree README hero image.
+  1200 x 630, SVG. Renders inline in GitHub READMEs.
+  License: Apache 2.0 (same as the project).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"
+     preserveAspectRatio="xMidYMid meet" role="img"
+     aria-label="ProllyTree — a probabilistic B-tree with Merkle properties for content-addressed, versioned key-value storage">
+
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="42%" r="75%">
+      <stop offset="0%"  stop-color="#143b2a"/>
+      <stop offset="55%" stop-color="#0a1a22"/>
+      <stop offset="100%" stop-color="#070d14"/>
+    </radialGradient>
+    <linearGradient id="edgeGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#27d39a" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#27d39a" stop-opacity="0.30"/>
+    </linearGradient>
+    <pattern id="dots" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#1d2a37" opacity="0.55"/>
+    </pattern>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bgGlow)"/>
+  <rect width="1200" height="630" fill="url(#dots)"/>
+
+  <!-- ============== TITLE BLOCK (top-centre) ============== -->
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif">
+    <text x="600" y="92" text-anchor="middle"
+          font-size="58" font-weight="800" letter-spacing="-1.2"
+          fill="#f1f5f9">PROLLYTREE</text>
+    <!-- accent underline -->
+    <rect x="538" y="106" width="124" height="4" rx="2" fill="#27d39a"/>
+    <text x="600" y="146" text-anchor="middle"
+          font-family="JetBrains Mono, ui-monospace, monospace"
+          font-size="15" letter-spacing="2" fill="#a8b8c9">
+      PROBABILISTIC B-TREE  ·  MERKLE  ·  CONTENT-ADDRESSED  ·  VERSIONED
+    </text>
+  </g>
+
+  <!-- ============== CENTRAL TREE ==============
+       A clean prolly tree:
+         - Root node with hash → Merkle property
+         - 3 leaves of varying width → content-defined boundaries
+         - Sorted batched (k,v) entries → B-tree property
+       ============================================ -->
+  <g>
+    <!-- ROOT NODE -->
+    <g filter="url(#softGlow)">
+      <rect x="490" y="200" width="220" height="68" rx="8"
+            fill="#102a23" stroke="#27d39a" stroke-width="2"/>
+      <text x="600" y="222" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#27d39a" letter-spacing="2">ROOT · hash 4e8c…f12</text>
+      <!-- divider -->
+      <line x1="555" y1="232" x2="555" y2="262" stroke="#27d39a" stroke-width="0.8" opacity="0.4"/>
+      <line x1="645" y1="232" x2="645" y2="262" stroke="#27d39a" stroke-width="0.8" opacity="0.4"/>
+      <!-- child hash references -->
+      <text x="522" y="252" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#e6f5ee">→ b1a7</text>
+      <text x="600" y="252" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#e6f5ee">→ c2d4</text>
+      <text x="678" y="252" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#e6f5ee">→ e3f9</text>
+    </g>
+
+    <!-- LEAVES (varying widths → content-defined boundaries) -->
+    <!-- Leaf 1 -->
+    <g>
+      <rect x="305" y="350" width="135" height="68" rx="7"
+            fill="#0f1d27" stroke="#3a5a4b" stroke-width="1.4"/>
+      <text x="372" y="370" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="11" fill="#27d39a" opacity="0.9">b1a7…</text>
+      <text x="372" y="389" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#a8b8c9">k₁ → v</text>
+      <text x="372" y="406" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#a8b8c9">k₂ → v</text>
+    </g>
+    <!-- Leaf 2 (wider — boundary fell here naturally) -->
+    <g>
+      <rect x="475" y="350" width="250" height="68" rx="7"
+            fill="#0f1d27" stroke="#3a5a4b" stroke-width="1.4"/>
+      <text x="600" y="370" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="11" fill="#27d39a" opacity="0.9">c2d4…</text>
+      <text x="600" y="389" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#a8b8c9">k₃ → v    k₄ → v</text>
+      <text x="600" y="406" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#a8b8c9">k₅ → v    k₆ → v</text>
+    </g>
+    <!-- Leaf 3 -->
+    <g>
+      <rect x="760" y="350" width="160" height="68" rx="7"
+            fill="#0f1d27" stroke="#3a5a4b" stroke-width="1.4"/>
+      <text x="840" y="370" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="11" fill="#27d39a" opacity="0.9">e3f9…</text>
+      <text x="840" y="389" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#a8b8c9">k₇ → v   k₈ → v</text>
+      <text x="840" y="406" text-anchor="middle"
+            font-family="JetBrains Mono, monospace"
+            font-size="12" fill="#a8b8c9">k₉ → v</text>
+    </g>
+
+    <!-- Edges from root → leaves (gradient lines) -->
+    <g stroke="url(#edgeGrad)" stroke-width="1.5" opacity="0.85" fill="none">
+      <path d="M 522 268 L 372 350"/>
+      <path d="M 600 268 L 600 350"/>
+      <path d="M 678 268 L 840 350"/>
+    </g>
+  </g>
+
+  <!-- ============== CALLOUT LABELS ==============
+       Three clean callouts naming the defining properties.
+       Each anchored to the part of the tree it describes by a thin
+       dashed line — no boxes, no clutter.
+       =========================================== -->
+
+  <!-- 1. MERKLE — points at the root's hash label -->
+  <g font-family="Inter, sans-serif">
+    <path d="M 695 215 L 850 192" stroke="#27d39a" stroke-width="1"
+          stroke-dasharray="3 4" opacity="0.55" fill="none"/>
+    <text x="860" y="190" font-size="13" font-weight="700" fill="#27d39a" letter-spacing="1.5">MERKLE</text>
+    <text x="860" y="208"
+          font-family="JetBrains Mono, monospace"
+          font-size="11" fill="#a8b8c9">every node carries</text>
+    <text x="860" y="223"
+          font-family="JetBrains Mono, monospace"
+          font-size="11" fill="#a8b8c9">its content hash</text>
+  </g>
+
+  <!-- 2. B-TREE — points at the batched entries in leaf 2 -->
+  <g font-family="Inter, sans-serif">
+    <path d="M 725 395 L 850 460" stroke="#27d39a" stroke-width="1"
+          stroke-dasharray="3 4" opacity="0.55" fill="none"/>
+    <text x="860" y="462" font-size="13" font-weight="700" fill="#27d39a" letter-spacing="1.5">B-TREE</text>
+    <text x="860" y="480"
+          font-family="JetBrains Mono, monospace"
+          font-size="11" fill="#a8b8c9">sorted, batched</text>
+    <text x="860" y="495"
+          font-family="JetBrains Mono, monospace"
+          font-size="11" fill="#a8b8c9">entries per node</text>
+  </g>
+
+  <!-- 3. CONTENT-DEFINED — points at the varying leaf widths -->
+  <g font-family="Inter, sans-serif">
+    <path d="M 305 395 L 200 460" stroke="#27d39a" stroke-width="1"
+          stroke-dasharray="3 4" opacity="0.55" fill="none"/>
+    <text x="195" y="462" text-anchor="end" font-size="13" font-weight="700" fill="#27d39a" letter-spacing="1.5">CONTENT-DEFINED</text>
+    <text x="195" y="480" text-anchor="end"
+          font-family="JetBrains Mono, monospace"
+          font-size="11" fill="#a8b8c9">shape is a pure</text>
+    <text x="195" y="495" text-anchor="end"
+          font-family="JetBrains Mono, monospace"
+          font-size="11" fill="#a8b8c9">function of the data</text>
+  </g>
+
+  <!-- 4. (left-of-root) VERSIONED — small commit-chain motif + label -->
+  <g>
+    <!-- mini commit chain -->
+    <g transform="translate(150, 230)">
+      <circle cx="0"  cy="0" r="6" fill="#27d39a"/>
+      <circle cx="30" cy="0" r="6" fill="#27d39a"/>
+      <circle cx="60" cy="0" r="6" fill="#27d39a"/>
+      <circle cx="90" cy="0" r="6" fill="#27d39a"/>
+      <line x1="6"  y1="0" x2="24" y2="0" stroke="#27d39a" stroke-width="1.5"/>
+      <line x1="36" y1="0" x2="54" y2="0" stroke="#27d39a" stroke-width="1.5"/>
+      <line x1="66" y1="0" x2="84" y2="0" stroke="#27d39a" stroke-width="1.5"/>
+    </g>
+    <text x="150" y="208"
+          font-family="Inter, sans-serif" font-size="13" font-weight="700"
+          fill="#27d39a" letter-spacing="1.5">VERSIONED</text>
+    <text x="150" y="260"
+          font-family="JetBrains Mono, monospace"
+          font-size="11" fill="#a8b8c9">git commits · branches</text>
+    <text x="150" y="275"
+          font-family="JetBrains Mono, monospace"
+          font-size="11" fill="#a8b8c9">three-way merge</text>
+    <!-- connector to the root -->
+    <path d="M 250 232 L 490 232" stroke="#27d39a" stroke-width="1"
+          stroke-dasharray="3 4" opacity="0.45" fill="none"/>
+  </g>
+
+  <!-- ============== BOTTOM TAGLINE + URL ============== -->
+  <g font-family="Inter, sans-serif">
+    <text x="600" y="555" text-anchor="middle"
+          font-size="15" fill="#a8b8c9">
+      A Rust library and CLI for content-addressed, Git-versioned key-value storage
+    </text>
+  </g>
+
+</svg>

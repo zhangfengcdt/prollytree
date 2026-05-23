@@ -836,6 +836,8 @@
       
         
       
+        
+      
     
     
     
@@ -936,6 +938,34 @@
     
   
     Probabilistic Balancing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="mutation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mutations & Streaming Chunker
   
 
     
@@ -1545,6 +1575,7 @@
 <ol>
 <li><strong><a href="prolly_tree/">Prolly Trees</a></strong> — the core data structure. What a prolly tree is, why it exists, and how it compares to classical B-trees and Merkle trees.</li>
 <li><strong><a href="rolling_hash/">Probabilistic Balancing</a></strong> — how node boundaries are chosen by a rolling-hash predicate, and why this gives you history-independent shape with O(log n) depth.</li>
+<li><strong><a href="mutation/">Mutations &amp; Streaming Chunker</a></strong> — what actually happens between <code>tree.insert(...)</code> and a new root hash. The shared pipeline behind <code>insert</code>, <code>delete</code>, <code>insert_batch</code>, and <code>delete_batch</code>, including the cursor walk and the two fast paths.</li>
 <li><strong><a href="merkle/">Merkle Properties &amp; Proofs</a></strong> — how inclusion proofs are constructed, what the root hash tells you, and why two trees with the same root <em>are</em> the same tree.</li>
 <li><strong><a href="versioning/">Versioning &amp; Merge</a></strong> — how the versioned KV store layers commits, branches, and three-way merges on top of the tree, and what conflict resolvers you can plug in.</li>
 </ol>
