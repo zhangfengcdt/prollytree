@@ -1120,6 +1120,44 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         self.root = new_root;
     }
 
+    /// Apply a batch of insert/delete operations with a single canonicalize
+    /// pass at the end. `Some(value)` is an insert/upsert; `None` is a delete.
+    ///
+    /// Use this from any code path that drains a staging area (e.g.
+    /// `GitVersionedKvStore::commit`) - it replaces N canonicalize calls
+    /// (one per item, each O(tree size)) with a single one at the end.
+    /// Returns the number of deletes that hit a non-existent key.
+    pub fn apply_changes<I>(&mut self, changes: I) -> usize
+    where
+        I: IntoIterator<Item = (Vec<u8>, Option<Vec<u8>>)>,
+    {
+        // Materialize the current state into a BTreeMap so applying changes is
+        // O(log N) per item. Then rebuild the tree once from the final state.
+        let mut map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> =
+            self.collect_pairs().into_iter().collect();
+        let mut missing_deletes = 0usize;
+        for (key, value) in changes {
+            match value {
+                Some(v) => {
+                    map.insert(key, v);
+                }
+                None => {
+                    if map.remove(&key).is_none() {
+                        missing_deletes += 1;
+                    }
+                }
+            }
+        }
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = map.into_iter().collect();
+        let new_root =
+            ProllyNode::<N>::build_canonical_from_pairs(pairs, &self.config, &mut self.storage);
+        let _ = self
+            .storage
+            .insert_node(new_root.get_hash(), new_root.clone());
+        self.root = new_root;
+        missing_deletes
+    }
+
     /// Collect all keys from the tree
     pub fn collect_keys(&self) -> Vec<Vec<u8>> {
         let mut keys = Vec::new();

@@ -805,8 +805,14 @@ where
                 }
 
                 if let Some(tree) = self.namespaces.get_mut(ns_name) {
+                    // Build the batch first (applies externalize threshold per
+                    // value); then drive it through `apply_changes` so we
+                    // canonicalize once for this namespace's commit instead
+                    // of once per staged item.
+                    let mut batch: Vec<(Vec<u8>, Option<Vec<u8>>)> =
+                        Vec::with_capacity(staging.len());
                     for (key, value) in staging.drain() {
-                        match value {
+                        let stored = match value {
                             Some(v) => {
                                 // Apply externalisation threshold: values longer
                                 // than `externalize_threshold` are stored as
@@ -814,7 +820,7 @@ where
                                 // in-tree value replaced by a 44-byte envelope
                                 // (magic + content hash + original size). Smaller
                                 // values stay inline, byte-for-byte unchanged.
-                                let stored = match self.externalize_threshold {
+                                let stored_value = match self.externalize_threshold {
                                     Some(threshold) if v.len() > threshold => {
                                         let hash = ValueDigest::<N>::new(&v);
                                         // Write the blob through the inner
@@ -836,13 +842,13 @@ where
                                     }
                                     _ => v,
                                 };
-                                tree.insert(key, stored);
+                                Some(stored_value)
                             }
-                            None => {
-                                tree.delete(&key);
-                            }
-                        }
+                            None => None,
+                        };
+                        batch.push((key, stored));
                     }
+                    tree.apply_changes(batch);
                     tree.persist_root();
                 }
             }
@@ -932,10 +938,15 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
                     self.namespaces.insert(ns_name.clone(), tree);
                 }
                 if let Some(tree) = self.namespaces.get_mut(ns_name) {
+                    // Build the batch first (applies externalize threshold per
+                    // value); then drive it through `apply_changes` so we
+                    // canonicalize once per namespace per commit.
+                    let mut batch: Vec<(Vec<u8>, Option<Vec<u8>>)> =
+                        Vec::with_capacity(staging.len());
                     for (key, value) in staging.drain() {
-                        match value {
+                        let stored = match value {
                             Some(v) => {
-                                let stored = match self.externalize_threshold {
+                                let stored_value = match self.externalize_threshold {
                                     Some(threshold) if v.len() > threshold => {
                                         let hash = ValueDigest::<N>::new(&v);
                                         self.inner
@@ -954,13 +965,13 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
                                     }
                                     _ => v,
                                 };
-                                tree.insert(key, stored);
+                                Some(stored_value)
                             }
-                            None => {
-                                tree.delete(&key);
-                            }
-                        }
+                            None => None,
+                        };
+                        batch.push((key, stored));
                     }
+                    tree.apply_changes(batch);
                     tree.persist_root();
                 }
             }

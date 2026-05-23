@@ -278,17 +278,10 @@ where
 
     /// Commit staged changes
     pub fn commit(&mut self, message: &str) -> Result<gix::ObjectId, GitKvError> {
-        // Apply staged changes to the tree
-        for (key, value) in self.staging_area.drain() {
-            match value {
-                Some(v) => {
-                    self.tree.insert(key, v);
-                }
-                None => {
-                    self.tree.delete(&key);
-                }
-            }
-        }
+        // Apply staged changes in a single batch so we canonicalize once
+        // instead of once per staged item (each canonicalize is O(tree size)).
+        let changes: Vec<(Vec<u8>, Option<Vec<u8>>)> = self.staging_area.drain().collect();
+        self.tree.apply_changes(changes);
 
         // Persist the tree state (including updating root hash and saving config)
         self.tree.persist_root();
