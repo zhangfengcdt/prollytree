@@ -164,19 +164,70 @@ boundary, then recurse into the parent.
 chunker rooted at that cursor, for each edit `cur.seek(edit.key)` ->
 `chunker.advance_to(&cur)` -> apply the edit.
 
-### Phase 3 - cleanup
+## Status
 
-Remove `ProllyTree::canonicalize`, `ProllyTree::collect_pairs`,
-`ProllyTree::collect_pairs_recursive`. Un-ignore the 6 `#[ignore]`d
-node-level tests in `src/node.rs`. Refresh
-`docs/bench-canonicalize-impact.md` with the new numbers.
+Phase 1 (streaming chunker as `canonicalize` backend) and Phase 2
+(cursor-driven `apply_mutations` replacing the legacy `insert` /
+`delete` path) are both landed. The `#[ignore]`d node-level tests at
+the *primitive* `ProllyNode` API still fail because they exercise
+`node.insert` / `node.delete` directly, which still runs the legacy
+in-place `Balanced::balance`. The public API at every consumer layer
+(`ProllyTree`, `GitVersionedKvStore`, `GitNamespacedKvStore`) has
+history-independence guaranteed by construction now.
+
+Bench at N=10 000 inserts (`cargo bench --bench tree -- insert_single`):
+
+  - Pre-fix baseline (02e1cfa): 1.14 s
+  - canonicalize stop-gap (1f88dd1): 30.1 s (26.4x)
+  - Phase 1 streaming chunker (5c09a86): 13.3 s (11.7x)
+  - Phase 2 cursor-driven (28ec971): 16.6 s (14.5x)
+
+Phase 2 regressed slightly because the cursor adds per-leaf overhead
+without yet enabling the chunk-boundary fast-forward that gives Dolt's
+algorithm its `O(log N + edits)` cost per op. The fast-forward is the
+remaining work; see "Phase 3" below.
+
+### Phase 3 - cursor fast-forward (remaining work)
+
+Implement Dolt's `chunker.advanceTo(next *cursor)` recursive
+algorithm:
+
+1. `NodeCursor::compare(other) -> i32` matching Dolt's
+   `compareCursors`.
+2. `Chunker::append` extended to accept items at any level (so a
+   parent chunker can absorb `(firstKey, child_hash)` pairs
+   wholesale without re-descending into leaves).
+3. `Chunker::advance_to(cur, target)` that walks forward, feeding
+   items from `cur` into the local splitter; when both the new
+   chunker boundary and `cur` land on a chunk boundary at the same
+   level, recurse into the parent chunker to fast-forward over
+   unchanged subtrees.
+4. `apply_mutations` switches from item-by-item walking to:
+   `cur.seek(mut.key)` -> `chunker.advance_to(cur)` -> apply the
+   mutation. Between mutations, the chunker skips entire unchanged
+   subtrees via the parent recursion.
+
+Expected outcome: bench at N=10 000 returns to within ~2x of baseline
+(roughly Dolt's own per-op cost for small batches), keeping all
+canonical-tree guarantees.
+
+### Phase 4 - cleanup (after Phase 3 lands)
+
+- Remove or refactor the 6 `#[ignore]`d tests in `src/node.rs`. They
+  test the *primitive* layer; the property is now provided at a
+  higher abstraction. Either delete them with a note pointing to the
+  streaming-chunker tests, or rewrite them against the chunker
+  directly.
+- Optionally: remove `ProllyTree::canonicalize` entirely and inline
+  its caller, since `apply_changes` is now the only mutation path.
+- Refresh `docs/bench-canonicalize-impact.md` with the final numbers.
 
 ## Verification
 
-1. All `#[ignore]`d node-level history-independence tests pass.
-2. Integration matrix in `tests/history_independence.rs` keeps
-   passing with the chunker-only path (no canonicalize).
-3. `cargo bench --bench tree -- insert_single`: with Phase 1 we
-   expect ~5x of baseline at N=10 000 (still doing O(N) work, but
-   less overhead); with Phase 2 we expect ~1.5x of baseline.
-4. Full suite green under all three CI feature flag variants.
+1. Integration matrix in `tests/history_independence.rs`: 6 tests
+   pass (was 4 with stop-gap).
+2. ProllyTree-level history-independence tests in `src/tree.rs`: 4 of
+   4 pass (was 1 of 4 with stop-gap).
+3. VersionedKvStore + NamespacedKvStore tests: 6 of 6 pass.
+4. Streaming-chunker module tests: 10 of 10 pass.
+5. Full suite green under all three CI feature flag variants.
