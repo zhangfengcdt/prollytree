@@ -80,6 +80,7 @@ pub(crate) mod serde_bincode;
 #[cfg(feature = "sql")]
 pub mod sql;
 pub mod storage;
+pub mod streaming_chunker;
 mod tracing;
 pub mod tree;
 pub mod validation;

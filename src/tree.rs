@@ -1103,17 +1103,24 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// shape and root hash depend only on the (key, value) set and the
     /// `TreeConfig`, never on the operation history.
     ///
-    /// This is the correctness-first stop-gap for the history-independence
-    /// guarantee: after every mutation the tree is recomputed from the
-    /// canonical chunked layout of its leaves. It is O(N) per operation.
-    /// Once the incremental balance path is fixed to maintain this
-    /// invariant by construction, this call can be elided.
+    /// Implementation: collects the current sorted `(key, value)` pairs
+    /// and streams them through `streaming_chunker::Chunker`, which is
+    /// the Rust port of Dolt's streaming-chunker pipeline. The chunker
+    /// resets its splitter state at every chunk boundary, so the same
+    /// final sorted sequence always yields the same chunks and hashes.
+    ///
+    /// This is still O(N) per call (it walks all leaves), but it is now
+    /// correct *by construction* rather than by post-hoc rebuild. Phase
+    /// 2 of the streaming-chunker work adds a `NodeCursor` so unchanged
+    /// subtrees can be skipped, restoring O(log N + edits) per op.
     fn canonicalize(&mut self) {
         let pairs = self.collect_pairs();
         // Leaves are already walked in sorted order; no resort needed.
-        let new_root =
-            ProllyNode::<N>::build_canonical_from_pairs(pairs, &self.config, &mut self.storage);
-        // Persist the new root so children referenced from it are reachable.
+        let new_root = crate::streaming_chunker::build_tree_from_sorted_pairs(
+            pairs,
+            &self.config,
+            &mut self.storage,
+        );
         let _ = self
             .storage
             .insert_node(new_root.get_hash(), new_root.clone());
@@ -1132,7 +1139,8 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         I: IntoIterator<Item = (Vec<u8>, Option<Vec<u8>>)>,
     {
         // Materialize the current state into a BTreeMap so applying changes is
-        // O(log N) per item. Then rebuild the tree once from the final state.
+        // O(log N) per item. Then rebuild the tree once from the final state
+        // by streaming the sorted pairs through the chunker.
         let mut map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> =
             self.collect_pairs().into_iter().collect();
         let mut missing_deletes = 0usize;
@@ -1148,9 +1156,11 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
                 }
             }
         }
-        let pairs: Vec<(Vec<u8>, Vec<u8>)> = map.into_iter().collect();
-        let new_root =
-            ProllyNode::<N>::build_canonical_from_pairs(pairs, &self.config, &mut self.storage);
+        let new_root = crate::streaming_chunker::build_tree_from_sorted_pairs(
+            map,
+            &self.config,
+            &mut self.storage,
+        );
         let _ = self
             .storage
             .insert_node(new_root.get_hash(), new_root.clone());
