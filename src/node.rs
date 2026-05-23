@@ -1877,24 +1877,24 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // History-independence tests at the ProllyNode layer.
+    // History-independence smoke test at the ProllyNode layer.
     //
-    // History independence at the public `ProllyTree` API is guaranteed
-    // by the streaming-chunker pipeline in `crate::streaming_chunker`,
-    // which `ProllyTree::apply_changes` drives on every mutation. The
-    // integration tests in `tests/history_independence.rs` cover the
-    // full matrix at that layer.
+    // The canonical chunker that maintains history independence lives
+    // in `crate::streaming_chunker` and is driven by
+    // `ProllyTree::apply_changes` on every mutation. Comprehensive
+    // tests of the property live at the public-API and integration
+    // layers (`src/tree.rs::history_independence_tests`,
+    // `tests/history_independence.rs`,
+    // `src/git/versioned_store/{tests,namespaced_tests}.rs`).
     //
-    // The tests below exercise `ProllyNode` directly, bypassing the
-    // streaming chunker. The legacy in-place `Balanced::balance` path
-    // still has insertion-order-dependent behavior (chunker emits
-    // different leaf boundaries for the same final keys under
-    // non-default configs; deletes can leave empty trailing leaves;
-    // internal node structure varies). The `#[ignore]`d tests here
-    // document those gaps - run with `--include-ignored` to surface
-    // them. They serve as the acceptance suite for a future rewrite
-    // of `ProllyNode`'s primitive mutation API to route through the
-    // streaming chunker.
+    // The single test below is a smoke check that the *legacy*
+    // `ProllyNode::insert` plus `Balanced::balance` path still
+    // converges at the leaf level for the narrow case it always
+    // supported: pure inserts with the default config. This is the
+    // same guarantee the original `test_history_independence` (above)
+    // exercises, lifted to 8-byte u64 keys. It does NOT assert the
+    // strong root-hash equality property - that lives on the
+    // streaming-chunker path now.
     // ------------------------------------------------------------------
 
     /// Build the four insertion orders used by the node-level tests for a
@@ -1935,26 +1935,6 @@ mod tests {
         v.extend_from_slice(&i.to_be_bytes());
         v.extend_from_slice(&(!i).to_be_bytes());
         v
-    }
-
-    fn build_node(
-        cfg: &(&'static str, u64, u64, usize, usize, u64),
-        order: &[u64],
-        value_fn: impl Fn(u64) -> Vec<u8>,
-    ) -> ValueDigest<32> {
-        let mut storage = InMemoryNodeStorage::<32>::default();
-        let mut node: ProllyNode<32> = ProllyNode::builder()
-            .base(cfg.1)
-            .modulus(cfg.2)
-            .min_chunk_size(cfg.3)
-            .max_chunk_size(cfg.4)
-            .pattern(cfg.5)
-            .build();
-        for &i in order {
-            node.insert(k8(i), value_fn(i), &mut storage, Vec::new());
-            storage.insert_node(node.get_hash(), node.clone()).unwrap();
-        }
-        node.get_hash()
     }
 
     fn make_node(cfg: &(&'static str, u64, u64, usize, usize, u64)) -> ProllyNode<32> {
@@ -2007,216 +1987,6 @@ mod tests {
                 t, baseline_trav,
                 "default config: order={} leaf content diverged from order={}",
                 label, baseline_label
-            );
-        }
-    }
-
-    // ---- #[ignore]d: tests that currently expose chunker/balance bugs ----
-
-    #[test]
-    #[ignore = "chunker emits different leaf boundaries for the same final keys under non-default configs (e.g. tiny-chunks); see module header"]
-    fn test_history_independence_traversal_varied_configs() {
-        const N: u64 = 256;
-        let orders = order_variants(N);
-        for cfg in config_variants() {
-            let traversals: Vec<(String, String)> = orders
-                .iter()
-                .map(|(label, order)| ((*label).to_string(), traversal_of(&cfg, order, v16)))
-                .collect();
-            let baseline = &traversals[0];
-            for (label, t) in traversals.iter().skip(1) {
-                assert_eq!(
-                    t, &baseline.1,
-                    "config={} order={} diverged from order={} at the leaf level",
-                    cfg.0, label, baseline.0
-                );
-            }
-        }
-    }
-
-    #[test]
-    #[ignore = "overwrites do not always converge to the same leaf layout as a fresh tree built from the final values; see module header"]
-    fn test_history_independence_traversal_after_updates() {
-        // For each config: insert all keys with a placeholder, then overwrite
-        // with the real value in two different orders. Leaf-level content must
-        // match a baseline built from the final values in ascending order.
-        const N: u64 = 256;
-        for cfg in config_variants() {
-            let asc: Vec<u64> = (0..N).collect();
-            let baseline = traversal_of(&cfg, &asc, v16);
-
-            let placeholder = |_i: u64| vec![0u8];
-
-            // Variant A: ascending placeholders, then descending overwrites.
-            let mut storage_a = InMemoryNodeStorage::<32>::default();
-            let mut node_a = make_node(&cfg);
-            for &i in &asc {
-                node_a.insert(k8(i), placeholder(i), &mut storage_a, Vec::new());
-            }
-            for i in (0..N).rev() {
-                node_a.insert(k8(i), v16(i), &mut storage_a, Vec::new());
-            }
-            let trav_a = node_a.traverse(&storage_a);
-
-            // Variant B: shuffled placeholders, then shuffled (different seed) overwrites.
-            let mut order1: Vec<u64> = (0..N).collect();
-            order1.shuffle(&mut StdRng::from_seed([1u8; 32]));
-            let mut order2: Vec<u64> = (0..N).collect();
-            order2.shuffle(&mut StdRng::from_seed([2u8; 32]));
-            let mut storage_b = InMemoryNodeStorage::<32>::default();
-            let mut node_b = make_node(&cfg);
-            for &i in &order1 {
-                node_b.insert(k8(i), placeholder(i), &mut storage_b, Vec::new());
-            }
-            for &i in &order2 {
-                node_b.insert(k8(i), v16(i), &mut storage_b, Vec::new());
-            }
-            let trav_b = node_b.traverse(&storage_b);
-
-            assert_eq!(
-                trav_a, baseline,
-                "config={} traversal after asc/desc update diverged from baseline",
-                cfg.0
-            );
-            assert_eq!(
-                trav_b, baseline,
-                "config={} traversal after shuf/shuf update diverged from baseline",
-                cfg.0
-            );
-        }
-    }
-
-    #[test]
-    #[ignore = "deletes can leave empty trailing leaves so the traversal does not match a tree that only ever held the survivors; see module header"]
-    fn test_history_independence_traversal_after_deletes() {
-        // Insert SURVIVE+EXTRA keys then delete the EXTRA. Leaf-level
-        // content must match a baseline that only ever held the survivors.
-        const SURVIVE: u64 = 256;
-        const EXTRA: u64 = 256;
-        for cfg in config_variants() {
-            let survivors: Vec<u64> = (0..SURVIVE).collect();
-            let extras: Vec<u64> = (SURVIVE..SURVIVE + EXTRA).collect();
-            let baseline = traversal_of(&cfg, &survivors, v16);
-
-            // Variant A: asc inserts, asc deletes.
-            let mut storage_a = InMemoryNodeStorage::<32>::default();
-            let mut node_a = make_node(&cfg);
-            for &i in survivors.iter().chain(extras.iter()) {
-                node_a.insert(k8(i), v16(i), &mut storage_a, Vec::new());
-            }
-            for &i in &extras {
-                node_a.delete(&k8(i), &mut storage_a, Vec::new());
-            }
-            let trav_a = node_a.traverse(&storage_a);
-
-            // Variant B: shuffled inserts (seed=3), shuffled deletes (seed=4).
-            let mut all: Vec<u64> = (0..SURVIVE + EXTRA).collect();
-            all.shuffle(&mut StdRng::from_seed([3u8; 32]));
-            let mut del_order = extras.clone();
-            del_order.shuffle(&mut StdRng::from_seed([4u8; 32]));
-            let mut storage_b = InMemoryNodeStorage::<32>::default();
-            let mut node_b = make_node(&cfg);
-            for &i in &all {
-                node_b.insert(k8(i), v16(i), &mut storage_b, Vec::new());
-            }
-            for &i in &del_order {
-                node_b.delete(&k8(i), &mut storage_b, Vec::new());
-            }
-            let trav_b = node_b.traverse(&storage_b);
-
-            assert_eq!(
-                trav_a, baseline,
-                "config={} traversal after asc/asc delete diverged from baseline",
-                cfg.0
-            );
-            assert_eq!(
-                trav_b, baseline,
-                "config={} traversal after shuf/shuf delete diverged from baseline",
-                cfg.0
-            );
-        }
-    }
-
-    // ---- Tier 2: full structural convergence (currently broken) ----
-    //
-    // These tests assert the property a content-addressed prolly tree
-    // *should* satisfy: that the Merkle root hash is identical across all
-    // insertion orders. They currently fail because the chunker / balance
-    // path can leave internal-node structure that depends on the order in
-    // which inserts arrived (specifically the merge-with-next-sibling
-    // step in `Balanced::balance` does not always re-chunk to a
-    // canonical layout). Run with `--include-ignored` to surface them.
-
-    #[test]
-    #[ignore = "exposes internal-node structural divergence under different insertion orders; see comment above"]
-    fn test_history_independence_root_hash_varied_configs() {
-        const N: u64 = 256;
-        let orders = order_variants(N);
-        for cfg in config_variants() {
-            let hashes: Vec<(String, ValueDigest<32>)> = orders
-                .iter()
-                .map(|(label, order)| ((*label).to_string(), build_node(&cfg, order, v16)))
-                .collect();
-            let baseline = &hashes[0];
-            for (label, h) in hashes.iter().skip(1) {
-                assert_eq!(
-                    h, &baseline.1,
-                    "config={} order={} root hash diverged from order={}",
-                    cfg.0, label, baseline.0
-                );
-            }
-        }
-    }
-
-    #[test]
-    #[ignore = "exposes internal-node structural divergence under update-replay; see comment above"]
-    fn test_history_independence_root_hash_after_updates() {
-        const N: u64 = 256;
-        for cfg in config_variants() {
-            let asc: Vec<u64> = (0..N).collect();
-            let baseline = build_node(&cfg, &asc, v16);
-
-            let placeholder = |_i: u64| vec![0u8];
-            let mut storage_a = InMemoryNodeStorage::<32>::default();
-            let mut node_a = make_node(&cfg);
-            for &i in &asc {
-                node_a.insert(k8(i), placeholder(i), &mut storage_a, Vec::new());
-            }
-            for i in (0..N).rev() {
-                node_a.insert(k8(i), v16(i), &mut storage_a, Vec::new());
-            }
-            assert_eq!(
-                node_a.get_hash(),
-                baseline,
-                "config={} update-then-final (asc/desc) root hash diverged from baseline",
-                cfg.0
-            );
-        }
-    }
-
-    #[test]
-    #[ignore = "exposes internal-node structural divergence under delete-replay; see comment above"]
-    fn test_history_independence_root_hash_after_deletes() {
-        const SURVIVE: u64 = 256;
-        const EXTRA: u64 = 256;
-        for cfg in config_variants() {
-            let survivors: Vec<u64> = (0..SURVIVE).collect();
-            let extras: Vec<u64> = (SURVIVE..SURVIVE + EXTRA).collect();
-            let baseline = build_node(&cfg, &survivors, v16);
-
-            let mut storage = InMemoryNodeStorage::<32>::default();
-            let mut node = make_node(&cfg);
-            for &i in survivors.iter().chain(extras.iter()) {
-                node.insert(k8(i), v16(i), &mut storage, Vec::new());
-            }
-            for &i in &extras {
-                node.delete(&k8(i), &mut storage, Vec::new());
-            }
-            assert_eq!(
-                node.get_hash(),
-                baseline,
-                "config={} delete-then-final root hash diverged from baseline",
-                cfg.0
             );
         }
     }

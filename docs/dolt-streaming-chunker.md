@@ -224,23 +224,43 @@ when both `cur.at_node_end()` and `muts.peek().is_none()` hold, so the
 expensive `SHA-256` over leaf contents fires at most once per leaf
 boundary on the post-mutation tail.
 
-### Phase 4 - cleanup (future work)
+### Phase 4 - cleanup (done)
 
-- Remove or refactor the 6 `#[ignore]`d tests in `src/node.rs`. They
-  test the *primitive* layer; the property is now provided at a
-  higher abstraction. Either delete them with a note pointing to the
-  streaming-chunker tests, or rewrite them against the chunker
-  directly.
-- Optionally: remove `ProllyTree::canonicalize` entirely and inline
-  its caller, since `apply_changes` is now the only mutation path.
-- Refresh `docs/bench-canonicalize-impact.md` with the final numbers.
+- Removed the 6 `#[ignore]`d node-level tests that documented bugs in
+  the legacy in-place `Balanced::balance` path. They were redundant
+  with the public-API and integration tests of the streaming chunker.
+- `ProllyTree::canonicalize` and its helpers were removed in commit
+  `2c019bf` once `apply_changes` became the only mutation path.
+- `docs/bench-canonicalize-impact.md` refreshed with the Phase 3
+  numbers.
+- An earlier `docs/incremental-rebalance-roadmap.md` (which described
+  the abandoned "rewrite the legacy balance in place" approach) was
+  removed - it's fully superseded by this document.
+
+### Open follow-ups (not Phase 4)
+
+- **Recursive fast-forward**: today `fast_forward_to_end` operates at
+  level 0 → level 1 only; once aligned at level 1, every remaining
+  leaf still gets fed individually to the level-1 chunker. For deep
+  trees, lifting the fast-forward up the spine (write a whole level-1
+  subtree's hash directly to a level-2 chunker when alignment fires
+  at level 1) would amortize the per-leaf splitter cost. The chunker
+  already has `last_emit_hash` per level, so the hook is there.
+- **Multi-mutation batch advance**: implement Dolt's full
+  `chunker.advanceTo(next)` recursive parent walk for scattered
+  mutations across the tree. Today every mutation pays a full
+  leaf-walk; with `advance_to` the cursor can skip whole subtrees
+  between mutations.
+- **Legacy `Balanced::balance`** in `src/node.rs` is no longer on the
+  public mutation path but is still callable via the `ProllyNode`
+  trait directly. Could be removed in a future major-version bump.
 
 ## Verification
 
-1. Integration matrix in `tests/history_independence.rs`: 6 tests
-   pass (was 4 with stop-gap).
-2. ProllyTree-level history-independence tests in `src/tree.rs`: 4 of
-   4 pass (was 1 of 4 with stop-gap).
-3. VersionedKvStore + NamespacedKvStore tests: 6 of 6 pass.
-4. Streaming-chunker module tests: 10 of 10 pass.
-5. Full suite green under all three CI feature flag variants.
+1. Integration matrix in `tests/history_independence.rs`: 6 tests pass.
+2. ProllyTree-level history-independence tests in `src/tree.rs`: 4 pass.
+3. VersionedKvStore + NamespacedKvStore tests: 6 pass.
+4. Streaming-chunker module tests: 10 pass.
+5. Merge canonicality tests in `src/tree.rs`: 3 pass.
+6. Full suite green under all three CI feature flag variants (159 lib
+   tests passing, 0 ignored, 0 failures).
