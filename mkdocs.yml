@@ -95,6 +95,7 @@ nav:
       - Overview: theory/index.md
       - Prolly Trees: theory/prolly_tree.md
       - Probabilistic Balancing: theory/rolling_hash.md
+      - Mutations & Streaming Chunker: theory/mutation.md
       - Merkle Properties & Proofs: theory/merkle.md
       - Versioning & Merge: theory/versioning.md
   - CLI:

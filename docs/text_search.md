@@ -26,7 +26,7 @@ NamespacedKvStore (one git repo)
 └── ...
 ```
 
-A text index turns each document into one or more vectors via a configurable **embedder** and stores them inside a content-addressed proximity tree (a Merkle ANN structure). The proximity tree's *shape* is a pure function of the current `(id, vector)` set, so two replicas with the same data converge to the same root hash regardless of insertion order — the same content-defined-shape property the prolly tree itself has.
+A text index turns each document into one or more vectors via a configurable **embedder** and stores them inside a Dolt-style proximity tree (Merkle ANN structure — see [the design discussion](https://www.dolthub.com/blog/2025-06-23-vector-index-deep-dive/)). The proximity tree's *shape* is a pure function of the current `(id, vector)` set, so two replicas with the same data converge to the same root hash regardless of insertion order — the same content-defined-shape property the prolly tree itself has.
 
 The proximity index stores only `(id, vector)` pairs — never the source text. **The primary KV tree is the source of truth.** Search results give you ids; you resolve back to the original text via the primary tree.
 
