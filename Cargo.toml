@@ -54,7 +54,7 @@ assert_cmd = "2.2"
 bytes = "1.10.1"
 criterion = "0.5"
 predicates = "3.0"
-tempfile = "3.0"
+tempfile = "3.27"
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
