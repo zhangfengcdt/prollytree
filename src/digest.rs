@@ -14,7 +14,6 @@ limitations under the License.
 
 use crate::errors::ProllyTreeError;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// Represents a cryptographic hash of a value in a prolly tree.
 ///
@@ -58,15 +57,15 @@ impl<const N: usize> ValueDigest<N> {
         // Ensure N is not larger than 32 to prevent out-of-bounds errors
         assert!(
             N <= 32,
-            "N must be less than or equal to 32 due to SHA-256 output size"
+            "N must be less than or equal to 32 due to blake3 output size"
         );
 
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-        let result = hasher.finalize();
+        // D-A (SD-5 Phase 0): blake3 is the single internal content hash. blake3 output is a
+        // fixed 32 bytes; truncate-to-N is a sound prefix (only N=32 is instantiated in practice).
+        let result = blake3::hash(data);
 
         let mut hash = [0u8; N];
-        hash.copy_from_slice(&result[..N]);
+        hash.copy_from_slice(&result.as_bytes()[..N]);
         ValueDigest(hash)
     }
 
@@ -158,19 +157,14 @@ impl<'de, const N: usize> Deserialize<'de> for ValueDigest<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::{Digest, Sha256};
 
     #[test]
     fn test_value_digest_new() {
+        // D-A re-pin: ValueDigest::new is blake3 of the data (was SHA-256). This recompute pin AND the
+        // edge-wasm-uu GOLDEN_MERGE_ROOT (spikes/edge-wasm-uu/tests/determinism.rs) are the two D14 root
+        // pins the D-A swap re-captures — the latter guards the prollytree merge tier native==wasm.
         let data = b"test data";
-        let expected_hash = {
-            let mut hasher = Sha256::new();
-            hasher.update(data);
-            let result = hasher.finalize();
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&result[..32]);
-            hash
-        };
+        let expected_hash = *blake3::hash(data).as_bytes();
 
         let value_digest = ValueDigest::<32>::new(data);
         assert_eq!(value_digest.as_bytes(), &expected_hash);

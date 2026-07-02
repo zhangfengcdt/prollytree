@@ -44,14 +44,19 @@ pub enum ProllyError {
 /// Error type for core tree operations (encoding, schema, etc.).
 #[derive(Error, Debug)]
 pub enum ProllyTreeError {
+    #[cfg(feature = "arrow_encoding")]
     #[error("Arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
 
+    #[cfg(feature = "arrow_encoding")]
     #[error("Parquet error: {0}")]
     Parquet(#[from] parquet::errors::ParquetError),
 
     #[error("Serde JSON error: {0}")]
     SerdeJson(#[from] serde_json::Error),
+
+    #[error("Bincode encode error: {0}")]
+    Bincode(#[from] bincode::error::EncodeError),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

@@ -865,7 +865,146 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
         new_node: &ProllyNode<N>,
         diffs: &mut Vec<DiffResult>,
     ) {
-        self.diff_recursive(old_node, new_node, diffs);
+        // O(differences) structural diff (Dolt/Noms): the tree is content-addressed,
+        // so equal get_hash() => byte-identical subtree => zero diffs; skip it without
+        // loading. Descend only into differing children. Emits the IDENTICAL DiffResult
+        // set as the full-leaf flatten (diff_nodes_flatten), guarded by a differential test.
+        if old_node.get_hash() == new_node.get_hash() {
+            return;
+        }
+        match (old_node.is_leaf, new_node.is_leaf) {
+            (true, true) => {
+                let o: Vec<(Vec<u8>, Vec<u8>)> = old_node
+                    .keys
+                    .iter()
+                    .cloned()
+                    .zip(old_node.values.iter().cloned())
+                    .collect();
+                let n: Vec<(Vec<u8>, Vec<u8>)> = new_node
+                    .keys
+                    .iter()
+                    .cloned()
+                    .zip(new_node.values.iter().cloned())
+                    .collect();
+                self.merge_join_pairs(&o, &n, diffs);
+            }
+            (false, false) => self.diff_internal(old_node, new_node, diffs),
+            _ => {
+                // height divergence (one side shallower): flatten the divergent region.
+                let mut op = Vec::new();
+                self.collect_pairs_recursive(old_node, &mut op);
+                let mut np = Vec::new();
+                self.collect_pairs_recursive(new_node, &mut np);
+                self.merge_join_pairs(&op, &np, diffs);
+            }
+        }
+    }
+
+    /// Both nodes internal: skip children whose stored child-hash is equal (O(1), no
+    /// load), flatten + merge-join the rest. Provably identical to the full flatten:
+    /// a common child subtree has identical (k,v) on both sides => contributes no diff.
+    fn diff_internal(
+        &self,
+        old_node: &ProllyNode<N>,
+        new_node: &ProllyNode<N>,
+        diffs: &mut Vec<DiffResult>,
+    ) {
+        use std::collections::HashSet;
+        // The node is content-addressed: an internal node's `values` ARE its child
+        // hashes, so byte-equal `values[i]` <=> identical child subtree (same (k,v)).
+        // Skip common children by hash WITHOUT loading them (the O(diff) win), and
+        // load only the differing children (mirroring `children()`'s raw_hash lookup).
+        let new_hashes: HashSet<&Vec<u8>> = new_node.values.iter().collect();
+        let old_hashes: HashSet<&Vec<u8>> = old_node.values.iter().collect();
+        let mut old_pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        for child_hash in &old_node.values {
+            if new_hashes.contains(child_hash) {
+                continue; // identical subtree on the new side => contributes no diff
+            }
+            if let Some(child) = self
+                .storage
+                .get_node_by_hash(&ValueDigest::raw_hash(child_hash))
+            {
+                self.collect_pairs_recursive(&child, &mut old_pairs);
+            }
+        }
+        let mut new_pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        for child_hash in &new_node.values {
+            if old_hashes.contains(child_hash) {
+                continue;
+            }
+            if let Some(child) = self
+                .storage
+                .get_node_by_hash(&ValueDigest::raw_hash(child_hash))
+            {
+                self.collect_pairs_recursive(&child, &mut new_pairs);
+            }
+        }
+        self.merge_join_pairs(&old_pairs, &new_pairs, diffs);
+    }
+
+    /// Merge-join two sorted (key,value) streams into DiffResults.
+    fn merge_join_pairs(
+        &self,
+        old_pairs: &[(Vec<u8>, Vec<u8>)],
+        new_pairs: &[(Vec<u8>, Vec<u8>)],
+        diffs: &mut Vec<DiffResult>,
+    ) {
+        let mut oi = old_pairs.iter().peekable();
+        let mut ni = new_pairs.iter().peekable();
+        while let (Some((ok, ov)), Some((nk, nv))) = (oi.peek(), ni.peek()) {
+            match ok.cmp(nk) {
+                std::cmp::Ordering::Less => {
+                    diffs.push(DiffResult::Removed(ok.clone(), ov.clone()));
+                    oi.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    diffs.push(DiffResult::Added(nk.clone(), nv.clone()));
+                    ni.next();
+                }
+                std::cmp::Ordering::Equal => {
+                    if ov != nv {
+                        diffs.push(DiffResult::Modified(ok.clone(), ov.clone(), nv.clone()));
+                    }
+                    oi.next();
+                    ni.next();
+                }
+            }
+        }
+        for (ok, ov) in oi {
+            diffs.push(DiffResult::Removed(ok.clone(), ov.clone()));
+        }
+        for (nk, nv) in ni {
+            diffs.push(DiffResult::Added(nk.clone(), nv.clone()));
+        }
+    }
+
+    /// Proven full-leaf flatten diff — kept as the differential-test oracle.
+    #[cfg(test)]
+    fn diff_nodes_flatten(
+        &self,
+        old_node: &ProllyNode<N>,
+        new_node: &ProllyNode<N>,
+        diffs: &mut Vec<DiffResult>,
+    ) {
+        let mut old_pairs = Vec::new();
+        self.collect_pairs_recursive(old_node, &mut old_pairs);
+        let mut new_pairs = Vec::new();
+        self.collect_pairs_recursive(new_node, &mut new_pairs);
+        self.merge_join_pairs(&old_pairs, &new_pairs, diffs);
+    }
+
+    /// Collect all leaf (key, value) pairs of a subtree in sorted order (full traversal).
+    fn collect_pairs_recursive(&self, node: &ProllyNode<N>, pairs: &mut Vec<(Vec<u8>, Vec<u8>)>) {
+        if node.is_leaf {
+            for (k, v) in node.keys.iter().zip(node.values.iter()) {
+                pairs.push((k.clone(), v.clone()));
+            }
+        } else {
+            for child in node.children(&self.storage) {
+                self.collect_pairs_recursive(&child, pairs);
+            }
+        }
     }
 
     /// Find a value for a specific key in a node tree
@@ -1005,6 +1144,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyTree<N, S> {
     /// * `old_node` - The node from the original tree.
     /// * `new_node` - The node from the new tree.
     /// * `diffs` - The vector to store the differences.
+    #[allow(dead_code)]
     fn diff_recursive(
         &self,
         old_node: &ProllyNode<N>,
@@ -2638,6 +2778,516 @@ mod tests {
                 merged.get_root_hash().unwrap(),
                 expected_root,
                 "TakeDestinationResolver merge output is non-canonical"
+            );
+        }
+    }
+}
+
+/// O(diff) structural-diff differential tests: the structural `diff_nodes_recursive`
+/// must emit a BYTE-IDENTICAL `Vec<DiffResult>` to the proven full-leaf flatten oracle
+/// (`diff_nodes_flatten`) on every shape — and load strictly fewer nodes when a large
+/// subtree is shared. prollytree is history-independent, so shape is a function of
+/// CONTENT; divergent shapes come from divergent content with a shared region.
+#[cfg(test)]
+mod odiff_differential {
+    use super::*;
+    use crate::digest::ValueDigest;
+    use crate::storage::{InMemoryNodeStorage, NodeStorage, StorageError};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// InMemoryNodeStorage wrapper that counts `get_node_by_hash` (node loads).
+    #[derive(Clone)]
+    struct CountingStorage<const N: usize> {
+        inner: InMemoryNodeStorage<N>,
+        loads: Arc<AtomicUsize>,
+    }
+    impl<const N: usize> CountingStorage<N> {
+        fn new() -> Self {
+            Self {
+                inner: InMemoryNodeStorage::<N>::default(),
+                loads: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+    impl<const N: usize> NodeStorage<N> for CountingStorage<N> {
+        fn get_node_by_hash(&self, hash: &ValueDigest<N>) -> Option<Arc<ProllyNode<N>>> {
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            self.inner.get_node_by_hash(hash)
+        }
+        fn insert_node(
+            &mut self,
+            hash: ValueDigest<N>,
+            node: ProllyNode<N>,
+        ) -> Result<(), StorageError> {
+            self.inner.insert_node(hash, node)
+        }
+        fn delete_node(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
+            self.inner.delete_node(hash)
+        }
+        fn save_config(&self, key: &str, config: &[u8]) {
+            self.inner.save_config(key, config)
+        }
+        fn get_config(&self, key: &str) -> Option<Vec<u8>> {
+            self.inner.get_config(key)
+        }
+    }
+
+    /// Build BOTH trees into ONE storage. `InMemoryNodeStorage::clone` DEEP-COPIES the
+    /// node map and `insert` persists nodes into the TREE's storage — so we must thread
+    /// one storage through both builds (clone carries old's nodes forward; new's inserts
+    /// add to it) rather than clone-then-copy-only-root (which strands all children and
+    /// makes a multi-level diff trivially empty). Returns (storage_with_both, roots).
+    fn build_two(
+        config: &TreeConfig<32>,
+        old_pairs: &[(Vec<u8>, Vec<u8>)],
+        new_pairs: &[(Vec<u8>, Vec<u8>)],
+    ) -> (CountingStorage<32>, ValueDigest<32>, ValueDigest<32>) {
+        let mut t_old = ProllyTree::new(CountingStorage::<32>::new(), config.clone());
+        for (k, v) in old_pairs {
+            t_old.insert(k.clone(), v.clone());
+        }
+        let old_root = t_old.get_root_hash().unwrap();
+        // Ensure the root node is present even when no insert ran (empty tree:
+        // `insert`/`persist_root` never fired).
+        t_old
+            .storage
+            .insert_node(old_root.clone(), t_old.root.clone())
+            .unwrap();
+        // clone() carries a full copy of old's nodes; new's inserts add new's nodes,
+        // never evicting old's -> the result holds BOTH complete trees.
+        let mut t_new = ProllyTree::new(t_old.storage.clone(), config.clone());
+        for (k, v) in new_pairs {
+            t_new.insert(k.clone(), v.clone());
+        }
+        let new_root = t_new.get_root_hash().unwrap();
+        t_new
+            .storage
+            .insert_node(new_root.clone(), t_new.root.clone())
+            .unwrap();
+        (t_new.storage, old_root, new_root)
+    }
+
+    /// k-th key as a fixed-width sortable 8-byte big-endian blob.
+    fn key(i: u64) -> Vec<u8> {
+        i.to_be_bytes().to_vec()
+    }
+    /// variable-length value (exercises the D14 variable-length canonicality face).
+    fn val(i: u64, tag: u8) -> Vec<u8> {
+        let mut v = vec![tag];
+        v.extend_from_slice(&i.to_le_bytes());
+        v.extend(std::iter::repeat_n(tag, (i % 19) as usize));
+        v
+    }
+
+    /// Assert structural diff == flatten oracle (exact Vec<DiffResult>), return
+    /// (structural_loads, flatten_loads) measured during the diff only.
+    fn assert_identical(
+        old_pairs: &[(Vec<u8>, Vec<u8>)],
+        new_pairs: &[(Vec<u8>, Vec<u8>)],
+        label: &str,
+    ) -> (usize, usize) {
+        let config = TreeConfig::<32>::default();
+        let (storage, old_root, new_root) = build_two(&config, old_pairs, new_pairs);
+
+        // Both full trees are in `storage`; their children resolve (asserted below).
+        let old_node = storage.get_node_by_hash(&old_root).unwrap();
+        let new_node = storage.get_node_by_hash(&new_root).unwrap();
+        // HARNESS GUARD: a non-leaf root's children MUST resolve, else the diff would
+        // be trivially empty (the build_root bug). children() returns all present.
+        if !old_node.is_leaf {
+            assert_eq!(
+                old_node.children(&storage).len(),
+                old_node.values.len(),
+                "[{label}] old root children not all persisted (harness bug)"
+            );
+        }
+        if !new_node.is_leaf {
+            assert_eq!(
+                new_node.children(&storage).len(),
+                new_node.values.len(),
+                "[{label}] new root children not all persisted (harness bug)"
+            );
+        }
+        let facade = ProllyTree::new(storage.clone(), config.clone());
+
+        storage.loads.store(0, Ordering::SeqCst);
+        let mut d_struct = Vec::new();
+        facade.diff_nodes_recursive(&old_node, &new_node, &mut d_struct);
+        let struct_loads = storage.loads.load(Ordering::SeqCst);
+
+        storage.loads.store(0, Ordering::SeqCst);
+        let mut d_flat = Vec::new();
+        facade.diff_nodes_flatten(&old_node, &new_node, &mut d_flat);
+        let flat_loads = storage.loads.load(Ordering::SeqCst);
+
+        assert_eq!(
+            d_struct, d_flat,
+            "[{label}] structural diff diverged from flatten oracle"
+        );
+        (struct_loads, flat_loads)
+    }
+
+    fn range_pairs(lo: u64, hi: u64, tag: u8) -> Vec<(Vec<u8>, Vec<u8>)> {
+        (lo..hi).map(|i| (key(i), val(i, tag))).collect()
+    }
+
+    #[test]
+    fn identical_trees_zero_diff_zero_descent() {
+        let base = range_pairs(0, 1000, 0);
+        let (s, f) = assert_identical(&base, &base, "identical");
+        // equal root hash => structural returns immediately, no descent at all.
+        assert_eq!(s, 0, "identical trees must load zero nodes structurally");
+        assert!(f >= s);
+    }
+
+    #[test]
+    fn localized_modify_skips_shared_subtrees() {
+        let old = range_pairs(0, 1000, 0);
+        let mut new = old.clone();
+        new[500].1 = val(500, 9); // one cell changed deep in the tree
+        let (s, f) = assert_identical(&old, &new, "localized_modify");
+        assert!(
+            s < f,
+            "localized change must load fewer nodes structurally ({s}) than flatten ({f})"
+        );
+        // GROUND TRUTH (not just structural==flatten): the diff must be EXACTLY the one
+        // changed cell — guards against a both-paths-lossy false pass.
+        let config = TreeConfig::<32>::default();
+        let (storage, old_root, new_root) = build_two(&config, &old, &new);
+        let on = storage.get_node_by_hash(&old_root).unwrap();
+        let nn = storage.get_node_by_hash(&new_root).unwrap();
+        let facade = ProllyTree::new(storage.clone(), config.clone());
+        let mut d = Vec::new();
+        facade.diff_nodes_recursive(&on, &nn, &mut d);
+        assert_eq!(
+            d,
+            vec![DiffResult::Modified(key(500), val(500, 0), val(500, 9))],
+            "structural diff must report exactly the one changed cell, got {d:?}"
+        );
+    }
+
+    #[test]
+    fn bulk_suffix_add_shares_prefix() {
+        let old = range_pairs(0, 800, 0);
+        let new = range_pairs(0, 1000, 0); // 200 appended at the high end
+        let (s, f) = assert_identical(&old, &new, "bulk_suffix_add");
+        assert!(
+            s < f,
+            "shared-prefix add should skip prefix subtrees ({s} < {f})"
+        );
+    }
+
+    #[test]
+    fn bulk_prefix_remove() {
+        let old = range_pairs(0, 1000, 0);
+        let new = range_pairs(200, 1000, 0); // low 200 removed
+        assert_identical(&old, &new, "bulk_prefix_remove");
+    }
+
+    #[test]
+    fn scattered_modifications() {
+        let old = range_pairs(0, 1000, 0);
+        let mut new = old.clone();
+        for i in (0..1000).step_by(7) {
+            new[i].1 = val(i as u64, 5); // every 7th cell changed
+        }
+        assert_identical(&old, &new, "scattered_modify");
+    }
+
+    #[test]
+    fn fully_disjoint_keyspaces() {
+        let old = range_pairs(0, 500, 0);
+        let new = range_pairs(10_000, 10_500, 0); // no overlap at all
+        assert_identical(&old, &new, "disjoint");
+    }
+
+    #[test]
+    fn interleaved_add_remove_modify() {
+        let mut old = range_pairs(0, 600, 0);
+        // remove evens, modify multiples of 3, keep odds; then add a high block.
+        let mut new: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        for i in 0..600u64 {
+            if i % 2 == 0 {
+                continue; // removed
+            }
+            let tag = if i % 3 == 0 { 7 } else { 0 };
+            new.push((key(i), val(i, tag)));
+        }
+        new.extend(range_pairs(600, 720, 0));
+        old.sort();
+        new.sort();
+        assert_identical(&old, &new, "interleaved");
+    }
+
+    #[test]
+    fn ground_truth_add_remove_modify() {
+        // base 0..200; new: drop key 50, modify key 100, add key 500. Diff must be
+        // EXACTLY those three ops (sorted by key), regardless of structural pruning.
+        let old = range_pairs(0, 200, 0);
+        let mut new = old.clone();
+        new.retain(|(k, _)| k != &key(50));
+        for p in new.iter_mut() {
+            if p.0 == key(100) {
+                p.1 = val(100, 9);
+            }
+        }
+        new.push((key(500), val(500, 0)));
+        new.sort();
+        let config = TreeConfig::<32>::default();
+        let (storage, old_root, new_root) = build_two(&config, &old, &new);
+        let on = storage.get_node_by_hash(&old_root).unwrap();
+        let nn = storage.get_node_by_hash(&new_root).unwrap();
+        let facade = ProllyTree::new(storage.clone(), config.clone());
+        let mut d = Vec::new();
+        facade.diff_nodes_recursive(&on, &nn, &mut d);
+        // merge-join emits in key order: 50 (Removed) < 100 (Modified) < 500 (Added).
+        assert_eq!(
+            d,
+            vec![
+                DiffResult::Removed(key(50), val(50, 0)),
+                DiffResult::Modified(key(100), val(100, 0), val(100, 9)),
+                DiffResult::Added(key(500), val(500, 0)),
+            ],
+            "structural diff ground truth mismatch, got {d:?}"
+        );
+    }
+
+    #[test]
+    fn report_load_win() {
+        for n in [1_000u64, 4_000u64] {
+            let old = range_pairs(0, n, 0);
+            let mut new = old.clone();
+            new[(n / 2) as usize].1 = val(n / 2, 9); // one cell changed
+            let (s, f) = assert_identical(&old, &new, "report");
+            eprintln!(
+                "ODIFF_LOAD_WIN n={n} one-cell-change: structural_loads={s} flatten_loads={f} ratio={:.1}x",
+                f as f64 / s.max(1) as f64
+            );
+        }
+    }
+
+    #[test]
+    fn small_multilevel_and_single_leaf() {
+        // small trees (single leaf / shallow) must also match exactly.
+        assert_identical(&range_pairs(0, 3, 0), &range_pairs(0, 5, 0), "tiny");
+        assert_identical(
+            &range_pairs(0, 1, 0),
+            &range_pairs(0, 1, 1),
+            "one_key_modify",
+        );
+        assert_identical(&[], &range_pairs(0, 4, 0), "empty_to_small");
+        assert_identical(&range_pairs(0, 4, 0), &[], "small_to_empty");
+    }
+}
+
+#[cfg(test)]
+mod prefix_free_collision_probe {
+    use super::*;
+    use crate::storage::InMemoryNodeStorage;
+
+    /// Red-team attack #1: distinct (k,v) sets must NOT share a root hash. get_hash =
+    /// SHA256(keys.concat() ++ values.concat()) has no length delimiters, so values
+    /// "ab"+"c" and "a"+"bc" both concat to "abc" -> same hash input -> same root.
+    #[test]
+    fn distinct_contents_must_not_share_root() {
+        let cfg = TreeConfig::<32>::default();
+        let mut a = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+        a.insert(b"k1".to_vec(), b"ab".to_vec());
+        a.insert(b"k2".to_vec(), b"c".to_vec());
+        let mut b = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+        b.insert(b"k1".to_vec(), b"a".to_vec());
+        b.insert(b"k2".to_vec(), b"bc".to_vec());
+        let ra = a.get_root_hash().unwrap();
+        let rb = b.get_root_hash().unwrap();
+        // also a key-vs-value boundary collision: key "k1k2" value ... vs keys "k1","k2"
+        assert_ne!(
+            ra.as_bytes(),
+            rb.as_bytes(),
+            "PREFIX-FREE COLLISION CONFIRMED: distinct (k,v) sets share a root hash"
+        );
+    }
+}
+
+#[cfg(test)]
+mod pcanon_property {
+    //! Attack #2: property-test P-CANON (merge head == fresh canonical build) AND the
+    //! merged (k,v) multiset (root-only checks once hid a 22/32 data loss), over RANDOM
+    //! conflict-free merges — variable-length byte keys/values incl. 0x00/0xFF.
+    use super::*;
+    use crate::storage::InMemoryNodeStorage;
+    use proptest::prelude::*;
+
+    fn build_pairs(
+        storage: &mut InMemoryNodeStorage<32>,
+        pairs: &[(Vec<u8>, Vec<u8>)],
+    ) -> ValueDigest<32> {
+        let mut tree = ProllyTree::new(storage.clone(), TreeConfig::default());
+        for (k, v) in pairs {
+            tree.insert(k.clone(), v.clone());
+        }
+        let root = tree.get_root_hash().unwrap();
+        // persist the root explicitly so the empty-tree case (no insert -> no
+        // persist_root) is still loadable by merge().
+        tree.storage
+            .insert_node(root.clone(), tree.root.clone())
+            .unwrap();
+        *storage = tree.storage; // promote all nodes into the shared store
+        root
+    }
+
+    fn get_value(tree: &ProllyTree<32, InMemoryNodeStorage<32>>, key: &[u8]) -> Option<Vec<u8>> {
+        tree.find(key).and_then(|n| {
+            n.keys
+                .iter()
+                .position(|k| k.as_slice() == key)
+                .map(|i| n.values[i].clone())
+        })
+    }
+
+    // one entry: a unique key, a role (0..5), and a value.
+    fn entry_strategy() -> impl Strategy<Value = (Vec<u8>, u8, Vec<u8>)> {
+        (
+            proptest::collection::vec(any::<u8>(), 1..6), // key: 1..6 arbitrary bytes
+            0u8..5,                                       // role
+            proptest::collection::vec(any::<u8>(), 0..6), // value (may be empty)
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200))]
+        #[test]
+        fn p_canon_random_conflict_free_merge(entries in proptest::collection::vec(entry_strategy(), 0..40)) {
+            // Dedupe by key so each key has exactly one role (keeps the merge conflict-free).
+            let mut by_key: std::collections::BTreeMap<Vec<u8>, (u8, Vec<u8>)> =
+                std::collections::BTreeMap::new();
+            for (k, role, v) in entries {
+                by_key.entry(k).or_insert((role, v));
+            }
+
+            // roles: 0 shared-keep, 1 ours-del, 2 theirs-del, 3 ours-add, 4 theirs-add.
+            let mut base = Vec::new();   // roles 0,1,2
+            let mut ours = Vec::new();   // roles 0,2,3
+            let mut theirs = Vec::new(); // roles 0,1,4
+            let mut expected = Vec::new(); // roles 0,3,4
+            for (k, (role, v)) in &by_key {
+                let kv = (k.clone(), v.clone());
+                match role {
+                    0 => { base.push(kv.clone()); ours.push(kv.clone()); theirs.push(kv.clone()); expected.push(kv); }
+                    1 => { base.push(kv.clone()); theirs.push(kv); }
+                    2 => { base.push(kv.clone()); ours.push(kv); }
+                    3 => { ours.push(kv.clone()); expected.push(kv); }
+                    _ => { theirs.push(kv.clone()); expected.push(kv); }
+                }
+            }
+
+            let mut storage = InMemoryNodeStorage::<32>::default();
+            let base_root = build_pairs(&mut storage, &base);
+            let ours_root = build_pairs(&mut storage, &ours);
+            let theirs_root = build_pairs(&mut storage, &theirs);
+            let expected_root = build_pairs(&mut storage, &expected);
+
+            let tool = ProllyTree::new(storage, TreeConfig::default());
+            let results = tool.merge(&ours_root, &theirs_root, &base_root);
+            let merged = tool
+                .apply_merge_results(&theirs_root, &results)
+                .expect("conflict-free merge must not error");
+
+            // (1) P-CANON: merge head == fresh canonical build of the final set.
+            prop_assert_eq!(
+                merged.get_root_hash().unwrap(),
+                expected_root,
+                "P-CANON: merged root != fresh build of final set"
+            );
+
+            // (2) multiset guard: exact key set + per-key value (independent of the root).
+            let mut got_keys = merged.collect_keys();
+            got_keys.sort();
+            let mut want_keys: Vec<Vec<u8>> = expected.iter().map(|(k, _)| k.clone()).collect();
+            want_keys.sort();
+            prop_assert_eq!(&got_keys, &want_keys, "merged key-set != expected (data loss/gain)");
+            for (k, v) in &expected {
+                let got = get_value(&merged, k);
+                prop_assert_eq!(got.as_ref(), Some(v), "merged value mismatch for key");
+            }
+        }
+
+        #[test]
+        fn build_is_history_independent(
+            entries in proptest::collection::vec(
+                (proptest::collection::vec(any::<u8>(), 1..6), proptest::collection::vec(any::<u8>(), 0..6)),
+                0..40,
+            )
+        ) {
+            // Dedupe to a set (last value wins per key).
+            let mut by_key: std::collections::BTreeMap<Vec<u8>, Vec<u8>> =
+                std::collections::BTreeMap::new();
+            for (k, v) in entries {
+                by_key.insert(k, v);
+            }
+            let fwd: Vec<(Vec<u8>, Vec<u8>)> = by_key.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut rev = fwd.clone();
+            rev.reverse();
+            // a third order: sorted by VALUE then key (a different permutation than key order).
+            let mut byval = fwd.clone();
+            byval.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+
+            // Build each ordering in its OWN storage so insertion order is the only variable.
+            let r_fwd = build_pairs(&mut InMemoryNodeStorage::<32>::default(), &fwd);
+            let r_rev = build_pairs(&mut InMemoryNodeStorage::<32>::default(), &rev);
+            let r_val = build_pairs(&mut InMemoryNodeStorage::<32>::default(), &byval);
+            prop_assert_eq!(r_fwd.clone(), r_rev, "root depends on insert order (fwd vs rev)");
+            prop_assert_eq!(r_fwd, r_val, "root depends on insert order (fwd vs by-value)");
+        }
+    }
+}
+
+#[cfg(test)]
+mod chunker_invariants {
+    //! Red-team RT-B F1: does the production streaming path (insert) ever emit a
+    //! degenerate single-child INTERNAL node (e.g. a single-child root when the last
+    //! item triggers a boundary)? Such a form is non-minimal and would diverge from a
+    //! collapsing peer / the batch oracle. Property-search the DEFAULT config.
+    use super::*;
+    use crate::storage::InMemoryNodeStorage;
+    use proptest::prelude::*;
+
+    fn any_single_child_internal(node: &ProllyNode<32>, storage: &InMemoryNodeStorage<32>) -> bool {
+        if node.is_leaf {
+            return false;
+        }
+        if node.values.len() < 2 {
+            return true; // internal node with 0 or 1 child = degenerate spine
+        }
+        for child in node.children(storage) {
+            if any_single_child_internal(&child, storage) {
+                return true;
+            }
+        }
+        false
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+        #[test]
+        fn streaming_build_has_no_single_child_internal_node(
+            entries in proptest::collection::vec(
+                (proptest::collection::vec(any::<u8>(), 1..6), proptest::collection::vec(any::<u8>(), 0..6)),
+                0..60,
+            )
+        ) {
+            let mut by_key: std::collections::BTreeMap<Vec<u8>, Vec<u8>> =
+                std::collections::BTreeMap::new();
+            for (k, v) in entries { by_key.insert(k, v); }
+
+            let storage = InMemoryNodeStorage::<32>::default();
+            let mut tree = ProllyTree::new(storage, TreeConfig::default());
+            for (k, v) in &by_key { tree.insert(k.clone(), v.clone()); }
+
+            prop_assert!(
+                !any_single_child_internal(&tree.root, &tree.storage),
+                "streaming build produced a single-child internal node (RT-B F1): root is_leaf={} children={}",
+                tree.root.is_leaf, tree.root.values.len()
             );
         }
     }
