@@ -17,8 +17,9 @@ name = "prollytree"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 base64 = { version = "0.22.0", optional = true }
-sha2 = "0.10"
+blake3 = "1"
 tracing = { version = "0.1.37", optional = true }
 rand = "0.9.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -27,9 +28,9 @@ thiserror = "2.0"
 parking_lot = "0.12"
 twox-hash = "2.0"
 serde_json = "1.0.117"
-arrow = "58.1.0"
+arrow = { version = "58.1.0", optional = true }
 schemars = "0.8"
-parquet = { version = "58.1.0", features = ["arrow"] }
+parquet = { version = "58.1.0", features = ["arrow"], optional = true }
 gix = { version = "0.81", features = ["blocking-network-client"], optional = true }
 clap = { version = "4.6", features = ["derive"], optional = true }
 lru = { version = "0.18", optional = true }
@@ -51,6 +52,7 @@ dirs = { version = "5.0", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.2"
+proptest = "1"
 bytes = "1.10.1"
 criterion = "0.5"
 predicates = "3.0"
@@ -60,6 +62,7 @@ tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [features]
+arrow_encoding = ["dep:arrow", "dep:parquet"]
 default = ["digest_base64", "prolly_balance_max_nodes", "git", "sql"]
 tracing = ["dep:tracing"]
 digest_base64 = ["dep:base64"]

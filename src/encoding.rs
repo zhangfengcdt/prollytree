@@ -16,21 +16,31 @@ limitations under the License.
 
 use crate::errors::ProllyTreeError;
 use crate::node::ProllyNode;
+#[cfg(feature = "arrow_encoding")]
 use arrow::array::{Array, Float64Array};
+#[cfg(feature = "arrow_encoding")]
 use arrow::array::{ArrayRef, BooleanArray, Int32Array, StringArray};
+#[cfg(feature = "arrow_encoding")]
 use arrow::datatypes::{DataType, Field, Schema};
+#[cfg(feature = "arrow_encoding")]
 use arrow::ipc::writer::StreamWriter;
+#[cfg(feature = "arrow_encoding")]
 use arrow::record_batch::RecordBatch;
+#[cfg(feature = "arrow_encoding")]
 use parquet::arrow::arrow_writer::ArrowWriter;
 use schemars::schema::RootSchema;
 use schemars::schema::SchemaObject;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "arrow_encoding")]
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum EncodingType {
     Json,
+    Bincode,
+    #[cfg(feature = "arrow_encoding")]
     Arrow,
+    #[cfg(feature = "arrow_encoding")]
     Parquet,
 }
 
@@ -38,7 +48,10 @@ impl<const N: usize> ProllyNode<N> {
     pub fn encode_pairs(&mut self, encoding_index: usize) -> Result<(), ProllyTreeError> {
         let encoded_value = match self.encode_types[encoding_index] {
             EncodingType::Json => self.encode_json()?,
+            EncodingType::Bincode => self.encode_bincode()?,
+            #[cfg(feature = "arrow_encoding")]
             EncodingType::Arrow => self.encode_arrow()?,
+            #[cfg(feature = "arrow_encoding")]
             EncodingType::Parquet => self.encode_parquet()?,
         };
         self.encode_values[encoding_index] = encoded_value;
@@ -50,6 +63,13 @@ impl<const N: usize> ProllyNode<N> {
         Ok(serde_json::to_vec(&pairs)?)
     }
 
+    /// Canonical, byte-stable storage encoding (bincode legacy: fixed-int LE) — wasm-clean, D14.
+    fn encode_bincode(&self) -> Result<Vec<u8>, ProllyTreeError> {
+        let pairs: Vec<(&Vec<u8>, &Vec<u8>)> = self.keys.iter().zip(self.values.iter()).collect();
+        Ok(crate::serde_bincode::serialize(&pairs)?)
+    }
+
+    #[cfg(feature = "arrow_encoding")]
     fn encode_arrow(&self) -> Result<Vec<u8>, ProllyTreeError> {
         // Convert keys and values to arrays based on their schemas
         let key_batch = self.convert_to_arrow_array(&self.keys, &self.key_schema)?;
@@ -72,6 +92,7 @@ impl<const N: usize> ProllyNode<N> {
         Ok(encoded_data)
     }
 
+    #[cfg(feature = "arrow_encoding")]
     fn encode_parquet(&self) -> Result<Vec<u8>, ProllyTreeError> {
         // Convert keys and values to arrays based on their schemas
         let key_batch = self.convert_to_arrow_array(&self.keys, &self.key_schema)?;
@@ -90,6 +111,7 @@ impl<const N: usize> ProllyNode<N> {
         Ok(encoded_data)
     }
 
+    #[cfg(feature = "arrow_encoding")]
     fn combine_record_batches(
         &self,
         key_batch: RecordBatch,
@@ -122,6 +144,7 @@ impl<const N: usize> ProllyNode<N> {
         Ok(RecordBatch::try_new(schema, columns)?)
     }
 
+    #[cfg(feature = "arrow_encoding")]
     fn convert_to_arrow_array(
         &self,
         data: &[Vec<u8>],
@@ -244,7 +267,7 @@ impl<const N: usize> ProllyNode<N> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "arrow_encoding"))]
 mod tests {
     use super::*;
     use arrow::ipc::reader::StreamReader;
@@ -338,6 +361,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "arrow_encoding")]
     #[test]
     fn test_encode_arrow() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
@@ -414,6 +438,7 @@ name: name1, name2
         }
     }
 
+    #[cfg(feature = "arrow_encoding")]
     #[test]
     fn test_encode_parquet() {
         let mut node: ProllyNode<1024> = ProllyNode::default();
@@ -549,5 +574,44 @@ balance: 100, -50
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod canonical_encoding_tests {
+    use super::*;
+    use crate::node::ProllyNode;
+    #[test]
+    fn root_hash_probe() {
+        let mut node = ProllyNode::<32>::init_root(b"alpha".to_vec(), b"1".to_vec());
+        for (k, v) in [
+            ("beta", "2"),
+            ("gamma", "3"),
+            ("delta", "4"),
+            ("epsilon", "5"),
+        ] {
+            node.keys.push(k.as_bytes().to_vec());
+            node.values.push(v.as_bytes().to_vec());
+        }
+        let h = node.get_hash();
+        let hex: String = h.0.iter().map(|b| format!("{:02x}", b)).collect();
+        println!("ROOT_HASH_PROBE={}", hex);
+    }
+
+    #[test]
+    fn bincode_encoding_is_byte_stable() {
+        let mut a = ProllyNode::<32>::init_root(b"key1".to_vec(), b"val1".to_vec());
+        a.keys.push(b"key2".to_vec());
+        a.values.push(b"val2".to_vec());
+        a.encode_types = vec![EncodingType::Bincode];
+        a.encode_values = vec![Vec::new()];
+        a.encode_pairs(0).unwrap();
+        let first = a.encode_values[0].clone();
+        a.encode_pairs(0).unwrap();
+        assert_eq!(
+            first, a.encode_values[0],
+            "bincode encoding must be byte-stable across runs"
+        );
+        assert!(!first.is_empty());
     }
 }

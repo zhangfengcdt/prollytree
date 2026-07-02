@@ -20,7 +20,7 @@ use crate::proof::Proof;
 use crate::storage::NodeStorage;
 use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
-use std::hash::Hash;
+
 use std::hash::Hasher;
 use std::sync::Arc;
 use twox_hash::XxHash64;
@@ -747,7 +747,7 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
 
     fn hash_item(item: &[u8], _base: u64, modulus: u64) -> u64 {
         let mut hasher = XxHash64::with_seed(HASH_SEED);
-        item.hash(&mut hasher);
+        hasher.write(item);
         hasher.finish() % modulus
     }
 }
@@ -1122,9 +1122,27 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
 // implement get hash function of the ProllyNode
 impl<const N: usize> ProllyNode<N> {
     pub fn get_hash(&self) -> ValueDigest<N> {
-        let mut keys_and_values = self.keys.concat();
-        keys_and_values.extend(&self.values.concat());
-        ValueDigest::new(&keys_and_values)
+        // PREFIX-FREE content hash. The previous `keys.concat() ++ values.concat()`
+        // had no length delimiters, so distinct (k,v) sets could collide (e.g. values
+        // "ab","c" and "a","bc" both concat to "abc") -> same root -> broken content
+        // addressing / false merge convergence. Length-frame every element (u32 BE,
+        // never usize, for native==wasm), separate the key region from the value
+        // region by count, and bind is_leaf/level so a leaf cannot collide with an
+        // internal node of identical bytes.
+        let mut buf: Vec<u8> = Vec::new();
+        buf.push(self.is_leaf as u8);
+        buf.push(self.level);
+        buf.extend_from_slice(&(self.keys.len() as u32).to_be_bytes());
+        for k in &self.keys {
+            buf.extend_from_slice(&(k.len() as u32).to_be_bytes());
+            buf.extend_from_slice(k);
+        }
+        buf.extend_from_slice(&(self.values.len() as u32).to_be_bytes());
+        for v in &self.values {
+            buf.extend_from_slice(&(v.len() as u32).to_be_bytes());
+            buf.extend_from_slice(v);
+        }
+        ValueDigest::new(&buf)
     }
 }
 
@@ -1711,7 +1729,7 @@ mod tests {
 
         node.insert(vec![32], value_for_all.clone(), &mut storage, Vec::new());
 
-        assert_eq!(node.traverse(&storage), "[L0:[[17], [20], [32]]]");
+        assert_eq!(node.traverse(&storage), "[L0:[[17]]][L0:[[20], [32]]]");
     }
 
     #[test]
