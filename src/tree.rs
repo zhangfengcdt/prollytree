@@ -2642,3 +2642,32 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod prefix_free_collision_probe {
+    use super::*;
+    use crate::storage::InMemoryNodeStorage;
+
+    /// Red-team attack #1: distinct (k,v) sets must NOT share a root hash. get_hash =
+    /// SHA256(keys.concat() ++ values.concat()) has no length delimiters, so values
+    /// "ab"+"c" and "a"+"bc" both concat to "abc" -> same hash input -> same root.
+    #[test]
+    fn distinct_contents_must_not_share_root() {
+        let cfg = TreeConfig::<32>::default();
+        let mut a = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+        a.insert(b"k1".to_vec(), b"ab".to_vec());
+        a.insert(b"k2".to_vec(), b"c".to_vec());
+        let mut b = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+        b.insert(b"k1".to_vec(), b"a".to_vec());
+        b.insert(b"k2".to_vec(), b"bc".to_vec());
+        let ra = a.get_root_hash().unwrap();
+        let rb = b.get_root_hash().unwrap();
+        // also a key-vs-value boundary collision: key "k1k2" value ... vs keys "k1","k2"
+        assert_ne!(
+            ra.as_bytes(),
+            rb.as_bytes(),
+            "PREFIX-FREE COLLISION CONFIRMED: distinct (k,v) sets share a root hash"
+        );
+    }
+}
+
