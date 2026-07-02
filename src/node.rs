@@ -20,7 +20,6 @@ use crate::proof::Proof;
 use crate::storage::NodeStorage;
 use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
-use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 use twox_hash::XxHash64;
@@ -747,7 +746,7 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
 
     fn hash_item(item: &[u8], _base: u64, modulus: u64) -> u64 {
         let mut hasher = XxHash64::with_seed(HASH_SEED);
-        item.hash(&mut hasher);
+        hasher.write(item);
         hasher.finish() % modulus
     }
 }
@@ -1711,7 +1710,9 @@ mod tests {
 
         node.insert(vec![32], value_for_all.clone(), &mut storage, Vec::new());
 
-        assert_eq!(node.traverse(&storage), "[L0:[[17], [20], [32]]]");
+        // hash_item now hashes raw bytes (platform-independent), which shifts the
+        // content-defined chunk boundary: [17] seals its own chunk.
+        assert_eq!(node.traverse(&storage), "[L0:[[17]]][L0:[[20], [32]]]");
     }
 
     #[test]

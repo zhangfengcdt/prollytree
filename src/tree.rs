@@ -3081,3 +3081,54 @@ mod odiff_differential {
     }
 }
 
+
+#[cfg(test)]
+mod chunker_invariants {
+    //! Red-team RT-B F1: does the production streaming path (insert) ever emit a
+    //! degenerate single-child INTERNAL node (e.g. a single-child root when the last
+    //! item triggers a boundary)? Such a form is non-minimal and would diverge from a
+    //! collapsing peer / the batch oracle. Property-search the DEFAULT config.
+    use super::*;
+    use crate::storage::InMemoryNodeStorage;
+    use proptest::prelude::*;
+
+    fn any_single_child_internal(node: &ProllyNode<32>, storage: &InMemoryNodeStorage<32>) -> bool {
+        if node.is_leaf {
+            return false;
+        }
+        if node.values.len() < 2 {
+            return true; // internal node with 0 or 1 child = degenerate spine
+        }
+        for child in node.children(storage) {
+            if any_single_child_internal(&child, storage) {
+                return true;
+            }
+        }
+        false
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+        #[test]
+        fn streaming_build_has_no_single_child_internal_node(
+            entries in proptest::collection::vec(
+                (proptest::collection::vec(any::<u8>(), 1..6), proptest::collection::vec(any::<u8>(), 0..6)),
+                0..60,
+            )
+        ) {
+            let mut by_key: std::collections::BTreeMap<Vec<u8>, Vec<u8>> =
+                std::collections::BTreeMap::new();
+            for (k, v) in entries { by_key.insert(k, v); }
+
+            let storage = InMemoryNodeStorage::<32>::default();
+            let mut tree = ProllyTree::new(storage, TreeConfig::default());
+            for (k, v) in &by_key { tree.insert(k.clone(), v.clone()); }
+
+            prop_assert!(
+                !any_single_child_internal(&tree.root, &tree.storage),
+                "streaming build produced a single-child internal node (RT-B F1): root is_leaf={} children={}",
+                tree.root.is_leaf, tree.root.values.len()
+            );
+        }
+    }
+}
