@@ -435,10 +435,10 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
         }
         for (idx, chunk_text) in chunks.iter().enumerate() {
             let vec = self.embedder.embed(chunk_text)?;
-            if vec.len() as u16 != self.embedder.dim() {
+            if vec.len() != usize::from(self.embedder.dim()) {
                 return Err(TextIndexError::Embed(EmbedError::DimensionMismatch {
                     expected: self.embedder.dim(),
-                    got: vec.len() as u16,
+                    got: vec.len(),
                 }));
             }
             let chunk_id = make_chunk_id(id, idx as u32);

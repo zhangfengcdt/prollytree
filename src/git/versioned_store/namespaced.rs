@@ -2481,7 +2481,7 @@ where
                     if loaded.config().dim != config.dim {
                         return Err(ProximityError::DimensionMismatch {
                             expected: loaded.config().dim,
-                            got: config.dim,
+                            got: usize::from(config.dim),
                         });
                     }
                     loaded
