@@ -22,9 +22,18 @@ use prollytree::sql::ProllyStorage;
 use tempfile::TempDir;
 
 #[cfg(feature = "sql")]
-async fn setup_database(record_count: usize) -> (Glue<ProllyStorage<32>>, TempDir) {
+fn init_sql_bench_storage() -> (ProllyStorage<32>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    let storage = ProllyStorage::<32>::init(temp_dir.path()).unwrap();
+    gix::init(temp_dir.path()).unwrap();
+    let dataset_dir = temp_dir.path().join("dataset");
+    std::fs::create_dir_all(&dataset_dir).unwrap();
+    let storage = ProllyStorage::<32>::init(&dataset_dir).unwrap();
+    (storage, temp_dir)
+}
+
+#[cfg(feature = "sql")]
+async fn setup_database(record_count: usize) -> (Glue<ProllyStorage<32>>, TempDir) {
+    let (storage, temp_dir) = init_sql_bench_storage();
     let mut glue = Glue::new(storage);
 
     // Create table
@@ -64,8 +73,7 @@ fn bench_sql_insert(c: &mut Criterion) {
 
             b.iter(|| {
                 runtime.block_on(async {
-                    let temp_dir = TempDir::new().unwrap();
-                    let storage = ProllyStorage::<32>::init(temp_dir.path()).unwrap();
+                    let (storage, _temp_dir) = init_sql_bench_storage();
                     let mut glue = Glue::new(storage);
 
                     // Create table
