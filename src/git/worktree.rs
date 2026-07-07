@@ -32,6 +32,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
+fn short_commit_id(commit: &str) -> &str {
+    commit.get(0..8).unwrap_or(commit)
+}
+
 /// Represents a worktree for a VersionedKvStore
 #[derive(Clone)]
 pub struct WorktreeInfo {
@@ -633,7 +637,7 @@ impl WorktreeManager {
 
             Ok(format!(
                 "Fast-forward merge completed (Git-level fallback). Main branch updated to {}",
-                &source_commit[0..8]
+                short_commit_id(&source_commit)
             ))
         } else {
             // Create merge commit using VersionedKvStore if possible
@@ -678,8 +682,8 @@ impl WorktreeManager {
 
                 Ok(format!(
                     "Merge completed (fallback mode). Main branch updated to {} (was {})",
-                    &source_commit[0..8],
-                    &main_commit[0..8]
+                    short_commit_id(source_commit),
+                    short_commit_id(main_commit)
                 ))
             }
         }
@@ -847,7 +851,7 @@ impl WorktreeManager {
             "Merged {} into {} (Git-level fallback). Target branch updated to {}",
             source_branch,
             target_branch,
-            &source_commit[0..8]
+            short_commit_id(&source_commit)
         ))
     }
 
@@ -1388,6 +1392,92 @@ mod tests {
         println!("      • Actual data insertion and commits");
         println!("      • Successful branch merging with data verification");
         println!("      • Data integrity verification after merge");
+    }
+
+    #[test]
+    fn test_merge_to_main_handles_short_commit_ids() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
+
+        init_test_git_repo(repo_path);
+
+        let mut manager = WorktreeManager::new(repo_path).unwrap();
+        let worktree_path = temp_dir.path().join("short_commit_workspace");
+        let feature_info = manager
+            .add_worktree(&worktree_path, "short-commit-branch", true)
+            .unwrap();
+
+        let refs_dir = repo_path.join(".git").join("refs").join("heads");
+        std::fs::write(refs_dir.join("main"), "a").unwrap();
+        std::fs::write(refs_dir.join("short-commit-branch"), "bc").unwrap();
+
+        let merge_result = manager
+            .merge_to_main(&feature_info.id, "Merge short commit")
+            .unwrap();
+
+        assert!(
+            merge_result.contains("bc"),
+            "merge result should include the complete short commit id"
+        );
+        assert_eq!(manager.get_branch_commit("main").unwrap(), "bc");
+    }
+
+    #[test]
+    fn test_merge_branch_handles_short_commit_ids() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
+
+        init_test_git_repo(repo_path);
+
+        let mut manager = WorktreeManager::new(repo_path).unwrap();
+        let source_path = temp_dir.path().join("short_source_workspace");
+        let source_info = manager
+            .add_worktree(&source_path, "short-source", true)
+            .unwrap();
+        let target_path = temp_dir.path().join("short_target_workspace");
+        manager
+            .add_worktree(&target_path, "short-target", true)
+            .unwrap();
+
+        let refs_dir = repo_path.join(".git").join("refs").join("heads");
+        std::fs::write(refs_dir.join("short-source"), "xy").unwrap();
+        std::fs::write(refs_dir.join("short-target"), "z").unwrap();
+
+        let merge_result = manager
+            .merge_branch(&source_info.id, "short-target", "Merge short branch")
+            .unwrap();
+
+        assert!(
+            merge_result.contains("xy"),
+            "merge result should include the complete short commit id"
+        );
+        assert_eq!(manager.get_branch_commit("short-target").unwrap(), "xy");
+    }
+
+    #[test]
+    fn test_merge_commit_fallback_handles_short_commit_ids() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
+
+        init_test_git_repo(repo_path);
+
+        let manager = WorktreeManager::new(repo_path).unwrap();
+        let refs_dir = repo_path.join(".git").join("refs").join("heads");
+        std::fs::write(refs_dir.join("main"), "a").unwrap();
+        std::fs::write(refs_dir.join("feature"), "bc").unwrap();
+
+        let merge_result = manager
+            .create_merge_commit("a", "bc", "Merge short commit fallback")
+            .unwrap();
+
+        assert!(
+            merge_result.contains("bc") && merge_result.contains("a"),
+            "merge result should include complete short commit ids"
+        );
+        assert_eq!(manager.get_branch_commit("main").unwrap(), "bc");
     }
 
     #[test]
