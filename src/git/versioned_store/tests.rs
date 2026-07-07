@@ -215,6 +215,78 @@ mod proof_tests {
             Some(&b"value3".to_vec())
         );
     }
+
+    #[test]
+    fn get_keys_at_ref_errors_when_committed_hash_mappings_are_missing() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = temp_dir.path().to_str().unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to initialize git repo");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to set git user name");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to set git user email");
+
+        let dataset_path = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_path).expect("Failed to create dataset directory");
+
+        let _cwd_guard = CwdGuard::set(&dataset_path);
+        let mut store =
+            GitVersionedKvStore::<32>::init(&dataset_path).expect("Failed to initialize store");
+
+        store
+            .insert(b"key1".to_vec(), b"value1".to_vec())
+            .expect("Failed to insert key1");
+        let good_commit = store.commit("Add key1").expect("Failed to commit");
+        let good_keys = store
+            .get_keys_at_ref(&good_commit.to_hex().to_string())
+            .expect("good commit should be readable");
+        assert_eq!(good_keys.get(&b"key1".to_vec()), Some(&b"value1".to_vec()));
+
+        drop(store);
+
+        let rm_output = std::process::Command::new("git")
+            .args(["rm", "dataset/prolly_hash_mappings"])
+            .current_dir(repo_path)
+            .output()
+            .expect("git rm failed to run");
+        assert!(
+            rm_output.status.success(),
+            "git rm failed: {}",
+            String::from_utf8_lossy(&rm_output.stderr)
+        );
+        let commit_output = std::process::Command::new("git")
+            .args(["commit", "-m", "Remove hash mappings"])
+            .current_dir(repo_path)
+            .output()
+            .expect("git commit failed to run");
+        assert!(
+            commit_output.status.success(),
+            "git commit failed: {}",
+            String::from_utf8_lossy(&commit_output.stderr)
+        );
+
+        let store =
+            GitVersionedKvStore::<32>::open(&dataset_path).expect("corrupt store still opens");
+        let err = store
+            .get_keys_at_ref("HEAD")
+            .expect_err("missing committed mappings must not look like an empty store");
+
+        assert!(
+            err.to_string().contains("prolly_hash_mappings"),
+            "unexpected error: {err}"
+        );
+    }
 }
 
 #[cfg(test)]
