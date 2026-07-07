@@ -51,6 +51,19 @@ fn text_index_insert_search_basic() {
 }
 
 #[test]
+fn text_index_search_saturates_overfetch_for_huge_k() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    let mut personal = store.namespace("personal");
+    let mut docs = personal.text_index("docs", cfg(8, 0)).unwrap();
+    docs.insert(b"doc:1", "the quick brown fox").unwrap();
+
+    let hits = docs.search("the quick brown fox", usize::MAX).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, b"doc:1".to_vec());
+}
+
+#[test]
 fn text_index_survives_commit_and_reopen() {
     let (_temp, dataset) = setup_repo_and_dataset();
     let query = "lazy dog naps in sun";
