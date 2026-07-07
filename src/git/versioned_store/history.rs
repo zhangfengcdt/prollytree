@@ -75,22 +75,22 @@ where
     ) -> Result<TreeConfig<N>, GitKvError> {
         let config_path = self.get_config_file_path_relative_to_git_root()?;
 
-        match self.metadata.read_file_at_commit(commit_id, &config_path) {
-            Ok(config_data) => {
-                let tree_config: TreeConfig<N> =
-                    serde_json::from_slice(&config_data).map_err(|e| {
-                        GitKvError::GitObjectError(format!("Failed to parse tree config: {e}"))
-                    })?;
-                Ok(tree_config)
-            }
-            Err(_) => {
-                eprintln!(
-                    "Warning: {} not found in commit {commit_id}, using default config",
+        let config_data = self
+            .metadata
+            .read_file_at_commit(commit_id, &config_path)
+            .map_err(|e| {
+                GitKvError::GitObjectError(format!(
+                    "Failed to read {} from commit {commit_id}: {e}",
                     self.config_filename
-                );
-                Ok(TreeConfig::default())
-            }
-        }
+                ))
+            })?;
+
+        serde_json::from_slice(&config_data).map_err(|e| {
+            GitKvError::GitObjectError(format!(
+                "Failed to parse {} from commit {commit_id}: {e}",
+                self.config_filename
+            ))
+        })
     }
 
     /// Collect all key-value pairs from storage using a tree config (with root hash)
@@ -100,26 +100,20 @@ where
         tree_config: &TreeConfig<N>,
     ) -> Result<HashMap<Vec<u8>, Vec<u8>>, GitKvError> {
         // Get the root hash from the config
-        let root_hash = match tree_config.root_hash.as_ref() {
-            Some(hash) => hash,
-            None => {
-                // If no root hash in config, return empty result
-                // This can happen for initial commits or when config wasn't properly saved
-                eprintln!("Warning: No root hash in tree config, returning empty key set");
-                return Ok(HashMap::new());
-            }
-        };
+        let root_hash = tree_config.root_hash.as_ref().ok_or_else(|| {
+            GitKvError::GitObjectError("Historical tree config is missing a root hash".to_string())
+        })?;
 
         // Reconstruct the tree from storage using the root hash
-        let root_node = match self.tree.storage.get_node_by_hash(root_hash) {
-            Some(node) => node,
-            None => {
-                // Root node not found in storage, return empty result
-                // This can happen if the historical state is not available in current storage
-                eprintln!("Warning: Root node not found in storage for hash {root_hash:?}, returning empty key set");
-                return Ok(HashMap::new());
-            }
-        };
+        let root_node = self
+            .tree
+            .storage
+            .get_node_by_hash(root_hash)
+            .ok_or_else(|| {
+                GitKvError::GitObjectError(format!(
+                    "Root node not found in storage for historical root hash {root_hash:x}"
+                ))
+            })?;
 
         // Traverse the tree to collect all keys
         let mut result = HashMap::new();
@@ -140,18 +134,26 @@ where
                 result.insert(key.clone(), value.clone());
             }
         } else {
-            // Internal node: recursively visit children
+            // Internal node: recursively visit children. Missing children mean
+            // the historical tree is corrupt; returning partial or empty data
+            // would make corruption indistinguishable from a valid commit.
             for value in &node.values {
-                // Value contains the hash of the child node
-                if value.len() == N {
-                    let mut hash_array = [0u8; N];
-                    hash_array.copy_from_slice(value);
-                    let child_hash = ValueDigest(hash_array);
-
-                    if let Some(child_node) = self.tree.storage.get_node_by_hash(&child_hash) {
-                        self.collect_keys_recursive(&child_node, result)?;
-                    }
+                if value.len() != N {
+                    return Err(GitKvError::GitObjectError(format!(
+                        "Invalid child hash length {} in historical tree node; expected {N}",
+                        value.len()
+                    )));
                 }
+
+                let mut hash_array = [0u8; N];
+                hash_array.copy_from_slice(value);
+                let child_hash = ValueDigest(hash_array);
+                let Some(child_node) = self.tree.storage.get_node_by_hash(&child_hash) else {
+                    return Err(GitKvError::GitObjectError(format!(
+                        "Child node not found in storage for historical hash {child_hash:x}"
+                    )));
+                };
+                self.collect_keys_recursive(&child_node, result)?;
             }
         }
         Ok(())
@@ -176,18 +178,12 @@ where
         let mut previous_value: Option<Vec<u8>> = None; // None = key not present, Some(val) = key present with value
 
         for commit in commit_history {
-            // Get the key value at this commit by reconstructing tree state
-            let current_value = {
-                if let Ok(tree_config) = self.read_tree_config_from_commit(&commit.id) {
-                    if let Ok(keys_at_commit) = self.collect_keys_from_config(&tree_config) {
-                        keys_at_commit.get(key).cloned()
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
+            // Get the key value at this commit by reconstructing tree state.
+            // Reconstruction errors are surfaced because otherwise corrupted
+            // historical storage is reported as a legitimate key deletion.
+            let tree_config = self.read_tree_config_from_commit(&commit.id)?;
+            let keys_at_commit = self.collect_keys_from_config(&tree_config)?;
+            let current_value = keys_at_commit.get(key).cloned();
 
             // Check if the value changed from the previous commit
             let value_changed = previous_value != current_value;
