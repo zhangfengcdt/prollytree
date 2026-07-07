@@ -115,7 +115,7 @@ where
 
     /// Check if the given path is the git repository root directory
     /// This is used to prevent initializing a dataset at the git root,
-    /// which could cause `git add -A .` to stage unrelated files.
+    /// where scoped staging would still target the whole repository.
     pub(super) fn is_in_git_root<P: AsRef<Path>>(path: P) -> Result<bool, GitKvError> {
         let path = path.as_ref();
 
@@ -301,7 +301,7 @@ where
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
         // Stage and write tree via metadata backend
-        let tree_id = self.metadata.stage_and_write_tree(&git_root)?;
+        let tree_id = self.metadata.stage_and_write_tree(&git_root, dataset_dir)?;
 
         // Create commit via metadata backend
         let commit_id = self.metadata.write_commit(tree_id, message)?;

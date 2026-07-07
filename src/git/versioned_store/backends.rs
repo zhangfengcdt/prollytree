@@ -439,7 +439,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
             .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
-        let tree_id = self.metadata.stage_and_write_tree(&git_root)?;
+        let tree_id = self.metadata.stage_and_write_tree(&git_root, dataset_dir)?;
 
         // Create merge commit with two parents using gix (bypasses shell hooks)
         let now = std::time::SystemTime::now()
@@ -541,7 +541,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
     ) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Refuse to init at git root — `git add -A .` would stage everything.
+        // Refuse to init at git root: scoped staging would still target the whole repo.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot initialize git-prolly in git root directory. \
@@ -606,7 +606,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
     ) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Refuse to open at git root — `git add -A .` would stage everything.
+        // Refuse to open at git root: scoped staging would still target the whole repo.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot open git-prolly in git root directory. \
@@ -876,7 +876,7 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBack
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent initializing at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot initialize in-memory store in git root directory. \
@@ -971,7 +971,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent initializing at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot initialize file store in git root directory. \
@@ -1037,7 +1037,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
         let path = path.as_ref();
         let dataset_dir = path.to_path_buf();
 
-        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent opening at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot open file store in git root directory. \
@@ -1170,7 +1170,7 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBacke
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent initializing at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot initialize RocksDB store in git root directory. \
@@ -1235,7 +1235,7 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBacke
         let path = path.as_ref();
         let dataset_dir = path.to_path_buf();
 
-        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent opening at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot open RocksDB store in git root directory. \
