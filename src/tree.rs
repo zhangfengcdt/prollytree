@@ -357,6 +357,11 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn insert_batch(&mut self, keys: &[Vec<u8>], values: &[Vec<u8>]) {
+        assert_eq!(
+            keys.len(),
+            values.len(),
+            "insert_batch requires the same number of keys and values"
+        );
         let batch = keys.iter().cloned().zip(values.iter().cloned().map(Some));
         self.apply_changes(batch);
     }
@@ -1334,6 +1339,18 @@ mod tests {
         assert!(tree.find(b"key2").is_some());
         assert!(tree.find(b"key3").is_some());
         assert!(tree.find(b"key4").is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "insert_batch requires the same number of keys and values")]
+    fn test_insert_batch_rejects_length_mismatch() {
+        let storage = InMemoryNodeStorage::<32>::default();
+        let mut tree = ProllyTree::new(storage, TreeConfig::default());
+
+        let keys = vec![b"key1".to_vec(), b"key2".to_vec()];
+        let values = vec![b"value1".to_vec()];
+
+        tree.insert_batch(&keys, &values);
     }
 
     #[test]
