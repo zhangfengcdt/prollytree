@@ -98,21 +98,20 @@ pub fn parse_envelope<const N: usize>(bytes: &[u8]) -> Option<(ValueDigest<N>, u
 /// Resolve a raw in-leaf byte slice to the user-visible value.
 ///
 /// If `raw` parses as an envelope **and** `storage` actually has a blob at
-/// the embedded hash, the blob bytes are returned. Otherwise the original
-/// `raw` bytes are returned unchanged.
+/// the embedded hash, the blob bytes are returned. If `raw` is not an envelope,
+/// the original bytes are returned unchanged.
 ///
-/// This **fall-through-on-miss** behaviour is what makes false-positive
-/// envelope parses (a real user value that coincidentally has the magic
-/// prefix and exact envelope length) recoverable: the hash won't point at
-/// any blob, so we degrade gracefully to inline.
-pub fn unwrap_value<const N: usize, S: NodeStorage<N>>(raw: &[u8], storage: &S) -> Vec<u8> {
+/// If `raw` is envelope-shaped but its blob is missing, returns `None` instead
+/// of the raw envelope bytes. This makes corruption visible to callers rather
+/// than silently returning the 44-byte envelope as user data.
+pub fn unwrap_value<const N: usize, S: NodeStorage<N>>(raw: &[u8], storage: &S) -> Option<Vec<u8>> {
     if let Some((hash, _original_size)) = parse_envelope::<N>(raw) {
         if let Some(blob) = storage.get_blob(&hash) {
-            return blob;
+            return Some(blob);
         }
-        // Envelope-shaped bytes but no matching blob → treat as inline.
+        return None;
     }
-    raw.to_vec()
+    Some(raw.to_vec())
 }
 
 #[cfg(test)]
@@ -176,26 +175,24 @@ mod tests {
         storage.insert_blob(hash.clone(), &payload).unwrap();
 
         let env = make_envelope::<32>(&hash, payload.len() as u64);
-        assert_eq!(unwrap_value::<32, _>(&env, &storage), payload);
+        assert_eq!(unwrap_value::<32, _>(&env, &storage), Some(payload));
     }
 
     #[test]
     fn unwrap_value_returns_raw_when_not_envelope() {
         let storage = InMemoryNodeStorage::<32>::new();
         let raw = b"a small inline value".to_vec();
-        assert_eq!(unwrap_value::<32, _>(&raw, &storage), raw);
+        assert_eq!(unwrap_value::<32, _>(&raw, &storage), Some(raw));
     }
 
     #[test]
-    fn unwrap_value_falls_back_when_envelope_hash_missing() {
-        // Envelope-shaped bytes but no blob behind the hash → graceful fallback
-        // returns the envelope bytes as-is. This is the false-positive recovery
-        // path that makes the magic-prefix scheme safe.
+    fn unwrap_value_returns_none_when_envelope_hash_missing() {
+        // Envelope-shaped bytes with no blob behind the hash represent a broken
+        // externalized value. Do not return the envelope as user data.
         let storage = InMemoryNodeStorage::<32>::new();
         let phantom_hash = ValueDigest::<32>::new(b"never_inserted");
         let env = make_envelope::<32>(&phantom_hash, 100);
         let got = unwrap_value::<32, _>(&env, &storage);
-        // Got back the envelope bytes (not crashed, not data loss).
-        assert_eq!(got, env);
+        assert_eq!(got, None);
     }
 }

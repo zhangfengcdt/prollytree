@@ -27,8 +27,31 @@ use common::setup_repo_and_dataset;
 use prollytree::digest::ValueDigest;
 use prollytree::git::versioned_store::FileNamespacedKvStore;
 use prollytree::storage::NodeStorage;
+use std::path::Path;
+use std::process::Command;
 
 const N: usize = 32;
+
+fn run_git(repo_path: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo_path)
+        .output()
+        .expect("failed to run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn insert_orphan_blob(store: &FileNamespacedKvStore<N>, payload: &[u8]) -> ValueDigest<N> {
+    let hash = ValueDigest::<N>::new(payload);
+    let mut storage = store.inner_storage().clone();
+    storage.insert_blob(hash.clone(), payload).unwrap();
+    hash
+}
 
 #[test]
 fn small_value_stays_inline_when_threshold_set() {
@@ -298,9 +321,7 @@ fn gc_blobs_keeps_referenced_blobs() {
 }
 
 #[test]
-fn gc_blobs_removes_orphans_from_upsert() {
-    // Inserting v1 then v2 at the same key leaves v1's blob as an orphan.
-    // GC should remove it.
+fn gc_blobs_keeps_upsert_history_and_removes_true_orphan() {
     let (_temp, dataset) = setup_repo_and_dataset();
     let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
     store.set_externalize_threshold(Some(64));
@@ -324,16 +345,20 @@ fn gc_blobs_removes_orphans_from_upsert() {
     // Pre-GC: both blobs are still around.
     assert!(store.inner_storage().get_blob(&h1).is_some());
     assert!(store.inner_storage().get_blob(&h2).is_some());
+    let orphan = vec![0xCC; 350];
+    let orphan_hash = insert_orphan_blob(&store, &orphan);
+    assert!(store.inner_storage().get_blob(&orphan_hash).is_some());
 
     let report = store.gc_blobs().unwrap();
-    assert_eq!(report.total, 2);
-    assert_eq!(report.referenced, 1);
+    assert_eq!(report.total, 3);
+    assert_eq!(report.referenced, 2);
     assert_eq!(report.removed, 1);
-    assert_eq!(report.remaining(), 1);
+    assert_eq!(report.remaining(), 2);
 
-    // The current value's blob survives; the orphan is gone.
-    assert!(store.inner_storage().get_blob(&h1).is_none());
+    // Both committed blobs survive; only the never-referenced blob is gone.
+    assert!(store.inner_storage().get_blob(&h1).is_some());
     assert!(store.inner_storage().get_blob(&h2).is_some());
+    assert!(store.inner_storage().get_blob(&orphan_hash).is_none());
 
     // The user still reads the latest value normally.
     let personal = store.namespace("personal");
@@ -341,8 +366,52 @@ fn gc_blobs_removes_orphans_from_upsert() {
 }
 
 #[test]
-fn gc_blobs_removes_orphans_from_delete() {
-    // Deleting a key doesn't eagerly delete the referenced blob; gc_blobs does.
+fn gc_blobs_keeps_blobs_referenced_by_historical_commits() {
+    let (temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    store.set_externalize_threshold(Some(64));
+
+    let old_value = vec![0xA1; 256];
+    let new_value = vec![0xB2; 300];
+    let old_hash = ValueDigest::<N>::new(&old_value);
+    let new_hash = ValueDigest::<N>::new(&new_value);
+
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"k".to_vec(), old_value.clone()).unwrap();
+    }
+    store.commit("old externalized value").unwrap();
+    store.create_branch("old-value").unwrap();
+    drop(store);
+    run_git(temp.path(), &["checkout", "main"]);
+
+    let mut store = FileNamespacedKvStore::<N>::open(&dataset).unwrap();
+    store.set_externalize_threshold(Some(64));
+    {
+        let mut personal = store.namespace("personal");
+        personal.insert(b"k".to_vec(), new_value.clone()).unwrap();
+    }
+    store.commit("new externalized value").unwrap();
+
+    assert!(store.inner_storage().get_blob(&old_hash).is_some());
+    assert!(store.inner_storage().get_blob(&new_hash).is_some());
+
+    let report = store.gc_blobs().unwrap();
+    assert_eq!(report.total, 2);
+    assert_eq!(report.referenced, 2);
+    assert_eq!(report.removed, 0);
+    assert!(store.inner_storage().get_blob(&old_hash).is_some());
+    assert!(store.inner_storage().get_blob(&new_hash).is_some());
+
+    drop(store);
+    run_git(temp.path(), &["checkout", "old-value"]);
+    let mut old_store = FileNamespacedKvStore::<N>::open(&dataset).unwrap();
+    let personal = old_store.namespace("personal");
+    assert_eq!(personal.get(b"k"), Some(old_value));
+}
+
+#[test]
+fn gc_blobs_keeps_deleted_history_and_removes_true_orphan() {
     let (_temp, dataset) = setup_repo_and_dataset();
     let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
     store.set_externalize_threshold(Some(64));
@@ -362,16 +431,18 @@ fn gc_blobs_removes_orphans_from_delete() {
     }
     store.commit("delete").unwrap();
 
-    // Blob still around after delete commit — that's PR 0b behaviour.
+    // Blob still around after delete commit and remains referenced by history.
     assert!(store.inner_storage().get_blob(&hash).is_some());
+    let orphan = vec![0xDD; 350];
+    let orphan_hash = insert_orphan_blob(&store, &orphan);
 
     let report = store.gc_blobs().unwrap();
-    assert_eq!(report.total, 1);
-    assert_eq!(report.referenced, 0);
+    assert_eq!(report.total, 2);
+    assert_eq!(report.referenced, 1);
     assert_eq!(report.removed, 1);
 
-    // Blob is gone.
-    assert!(store.inner_storage().get_blob(&hash).is_none());
+    assert!(store.inner_storage().get_blob(&hash).is_some());
+    assert!(store.inner_storage().get_blob(&orphan_hash).is_none());
 }
 
 #[test]
@@ -436,13 +507,17 @@ fn gc_blobs_idempotent() {
     }
     store.commit("v2").unwrap();
 
+    let orphan = vec![0xCC; 350];
+    let orphan_hash = insert_orphan_blob(&store, &orphan);
+    assert!(store.inner_storage().get_blob(&orphan_hash).is_some());
+
     let first = store.gc_blobs().unwrap();
     assert_eq!(first.removed, 1);
 
     // Second GC has nothing to do.
     let second = store.gc_blobs().unwrap();
-    assert_eq!(second.total, 1);
-    assert_eq!(second.referenced, 1);
+    assert_eq!(second.total, 2);
+    assert_eq!(second.referenced, 2);
     assert_eq!(second.removed, 0);
 }
 
