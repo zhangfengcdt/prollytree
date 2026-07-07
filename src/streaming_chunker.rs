@@ -138,13 +138,23 @@ impl Splitter for RollingHashSplitter {
         if self.window.len() < self.min_chunk_size {
             // Building the initial window. This mirrors
             // `initialize_rolling_hash`: hash = hash * base + kh + vh.
-            self.hash = (self.hash.wrapping_mul(self.base) + kh + vh) % self.modulus;
+            self.hash = self
+                .hash
+                .wrapping_mul(self.base)
+                .wrapping_add(kh)
+                .wrapping_add(vh)
+                % self.modulus;
             self.window.push_back((kh, vh));
         } else {
             // Slide: drop the front of the window, add the new item.
             // Matches `update_rolling_hash`.
             let (old_kh, old_vh) = self.window.pop_front().unwrap();
-            let mut h = (self.hash.wrapping_mul(self.base) + kh + vh) % self.modulus;
+            let mut h = self
+                .hash
+                .wrapping_mul(self.base)
+                .wrapping_add(kh)
+                .wrapping_add(vh)
+                % self.modulus;
             h = (h + self.modulus - (old_kh.wrapping_mul(self.base_exp_min)) % self.modulus)
                 % self.modulus;
             h = (h + self.modulus - (old_vh.wrapping_mul(self.base_exp_min)) % self.modulus)
