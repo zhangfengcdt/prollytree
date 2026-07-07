@@ -19,12 +19,25 @@ use gix::prelude::*;
 use lru::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const DEFAULT_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
+static SYNC_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 use parking_lot::Mutex;
 use std::sync::Arc;
 
 use super::{NodeStorage, StorageError};
+
+fn sync_temp_path(dataset_dir: &Path, nanos: u64) -> std::path::PathBuf {
+    let counter = SYNC_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    dataset_dir.join(format!(
+        ".prolly_hash_mappings.{}.{}.{}",
+        std::process::id(),
+        nanos,
+        counter
+    ))
+}
 
 /// Git-backed storage for ProllyTree nodes
 ///
@@ -308,11 +321,7 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        let tmp = self.dataset_dir.join(format!(
-            ".prolly_hash_mappings.{}.{}",
-            std::process::id(),
-            nanos
-        ));
+        let tmp = sync_temp_path(&self.dataset_dir, nanos);
         {
             use std::io::Write as _;
             let mut f = std::fs::File::create(&tmp).map_err(StorageError::Io)?;
@@ -437,5 +446,17 @@ mod tests {
         // Get from cache
         let cached = storage.get_node_by_hash(&hash1);
         assert!(cached.is_some());
+    }
+
+    #[test]
+    fn sync_temp_path_uses_counter_for_same_timestamp() {
+        let temp_dir = TempDir::new().unwrap();
+        let first = sync_temp_path(temp_dir.path(), 123);
+        let second = sync_temp_path(temp_dir.path(), 123);
+
+        assert_ne!(
+            first, second,
+            "same-process sync temp paths must not collide for the same timestamp"
+        );
     }
 }
