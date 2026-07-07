@@ -115,7 +115,7 @@ path = "examples/proof.rs"
 [[example]]
 name = "sql"
 path = "examples/sql.rs"
-required-features = ["sql"]
+required-features = ["git", "sql"]
 
 [[example]]
 name = "versioning"
