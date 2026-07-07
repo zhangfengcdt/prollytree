@@ -91,13 +91,16 @@ impl<const N: usize> NodeStorage<N> for InMemoryNodeStorage<N> {
     }
 
     fn insert_blob(&mut self, hash: ValueDigest<N>, bytes: &[u8]) -> Result<(), StorageError> {
-        // Content-addressed: if the hash is already present, leave it alone.
-        // `entry().or_insert_with()` avoids an unnecessary `to_vec()` clone
-        // when the blob already exists.
         let mut blobs = self.blobs.write();
-        blobs
-            .entry(hash)
-            .or_insert_with(|| Arc::new(bytes.to_vec()));
+        if let Some(existing) = blobs.get(&hash) {
+            if existing.as_slice() == bytes {
+                return Ok(());
+            }
+            return Err(StorageError::Other(format!(
+                "blob {hash:x} already exists with different bytes"
+            )));
+        }
+        blobs.insert(hash, Arc::new(bytes.to_vec()));
         Ok(())
     }
 
