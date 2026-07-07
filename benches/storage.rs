@@ -247,6 +247,7 @@ fn bench_node_storage_direct(c: &mut Criterion) {
             merged: false,
             encode_types: Vec::new(),
             encode_values: Vec::new(),
+            content_hash: config.content_hash,
         };
         nodes.push((node.get_hash(), node));
     }
