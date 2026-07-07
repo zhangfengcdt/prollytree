@@ -269,6 +269,56 @@ mod tests {
     }
 
     #[test]
+    fn get_keys_at_ref_rejects_invalid_committed_hash_mapping_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        std::process::Command::new("git")
+            .args(["config", "user.name", "ProllyTree Test"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config user.name");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "prollytree@example.test"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config user.email");
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        store.insert(b"key".to_vec(), b"value".to_vec()).unwrap();
+        store.commit("valid mappings").unwrap();
+
+        let mapping_path = dataset_dir.join("prolly_hash_mappings");
+        let mut mappings = std::fs::read_to_string(&mapping_path).unwrap();
+        mappings.push_str("not-hex:also-not-a-git-object\n");
+        std::fs::write(&mapping_path, mappings).unwrap();
+
+        let add = std::process::Command::new("git")
+            .args(["add", "dataset/prolly_hash_mappings"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git add");
+        assert!(add.status.success(), "git add failed: {add:?}");
+        let commit = std::process::Command::new("git")
+            .args(["commit", "-m", "corrupt mappings"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success(), "git commit failed: {commit:?}");
+
+        let err = store
+            .get_keys_at_ref("HEAD")
+            .expect_err("invalid committed mapping entries must fail");
+        assert!(
+            err.to_string().contains("Invalid prolly hash"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn test_basic_kv_operations() {
         let temp_dir = TempDir::new().unwrap();
         // Initialize git repository (regular, not bare)
