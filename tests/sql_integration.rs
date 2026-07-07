@@ -18,7 +18,12 @@ limitations under the License.
 
 mod common;
 
-use gluesql_core::prelude::Glue;
+use futures::StreamExt;
+use gluesql_core::{
+    data::{Key, Value},
+    prelude::Glue,
+    store::{DataRow, Store, StoreMut},
+};
 use prollytree::sql::ProllyStorage;
 
 // ---------------------------------------------------------------------------
@@ -102,6 +107,48 @@ async fn test_sql_multiple_tables() {
 
     assert!(!r1.is_empty());
     assert!(!r2.is_empty());
+}
+
+#[tokio::test]
+async fn test_sql_storage_scan_preserves_text_primary_key_order() {
+    let (_temp, dataset) = common::setup_repo_and_dataset();
+    let mut storage = ProllyStorage::<32>::init(&dataset).expect("ProllyStorage init");
+
+    storage
+        .insert_data(
+            "text_keys",
+            vec![
+                (
+                    Key::Str("2".into()),
+                    DataRow::Vec(vec![Value::Str("two".into())]),
+                ),
+                (
+                    Key::Str("10".into()),
+                    DataRow::Vec(vec![Value::Str("ten".into())]),
+                ),
+                (
+                    Key::Str("42".into()),
+                    DataRow::Vec(vec![Value::Str("forty-two".into())]),
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let mut rows = storage.scan_data("text_keys").await.unwrap();
+    let mut keys = Vec::new();
+    while let Some(row) = rows.next().await {
+        keys.push(row.unwrap().0);
+    }
+
+    assert_eq!(
+        keys,
+        [
+            Key::Str("10".into()),
+            Key::Str("2".into()),
+            Key::Str("42".into())
+        ]
+    );
 }
 
 // ---------------------------------------------------------------------------
