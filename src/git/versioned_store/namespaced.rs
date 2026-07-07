@@ -1880,10 +1880,20 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
 
         let mut hash_mappings: HashMap<ValueDigest<N>, gix::ObjectId> = HashMap::new();
 
-        // Load from both mapping files
+        let mut loaded_mapping_file = false;
+
+        // Load from both mapping files. The namespace-specific mapping file is
+        // optional for older commits; the global mapping file may carry all
+        // namespace nodes. If neither file is readable for a namespace with a
+        // committed root, the source state is corrupt rather than empty.
         for path in [&ns_mapping_path, &global_mapping_path] {
             if let Ok(data) = self.inner.metadata.read_file_at_commit(commit_id, path) {
-                let mapping_str = String::from_utf8(data).unwrap_or_default();
+                loaded_mapping_file = true;
+                let mapping_str = String::from_utf8(data).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid UTF-8 in namespace hash mappings {path}: {e}"
+                    ))
+                })?;
                 for line in mapping_str.lines() {
                     if let Some((hash_hex, object_hex)) = line.split_once(':') {
                         if hash_hex.len() == N * 2 {
@@ -1911,8 +1921,16 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             }
         }
 
+        if !loaded_mapping_file {
+            return Err(GitKvError::GitObjectError(format!(
+                "Historical namespace {ns_name} at commit {commit_id} has root {root_hash:x} but no committed hash mappings"
+            )));
+        }
+
         if hash_mappings.is_empty() {
-            return Ok(HashMap::new());
+            return Err(GitKvError::GitObjectError(format!(
+                "Historical namespace {ns_name} at commit {commit_id} has root {root_hash:x} but committed hash mappings contain no usable entries"
+            )));
         }
 
         // Create temp storage and try to load tree
@@ -1925,19 +1943,73 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
         let mut config = entry.config.clone();
         config.root_hash = Some(root_hash.clone());
 
-        let tree = match ProllyTree::load_from_storage(temp_storage, config) {
-            Some(t) => t,
-            None => return Ok(HashMap::new()),
-        };
+        let tree = ProllyTree::load_from_storage(temp_storage, config).ok_or_else(|| {
+            GitKvError::GitObjectError(format!(
+                "Failed to load historical namespace {ns_name} root {root_hash:x} from storage"
+            ))
+        })?;
 
         let mut kv = HashMap::new();
-        for key in tree.collect_keys() {
-            if let Some(node) = tree.find(&key) {
-                if let Some(idx) = node.keys.iter().position(|k| k == &key) {
-                    kv.insert(key, node.values[idx].clone());
+        let mut active = HashSet::new();
+        let mut validated = HashSet::new();
+
+        fn collect_checked<const N: usize, S: NodeStorage<N>>(
+            node_hash: &ValueDigest<N>,
+            node: &crate::node::ProllyNode<N>,
+            storage: &S,
+            kv: &mut HashMap<Vec<u8>, Vec<u8>>,
+            active: &mut HashSet<ValueDigest<N>>,
+            validated: &mut HashSet<ValueDigest<N>>,
+        ) -> Result<(), GitKvError> {
+            if validated.contains(node_hash) {
+                return Ok(());
+            }
+            if !active.insert(node_hash.clone()) {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Historical namespace tree contains a cyclic child reference at node {node_hash:x}"
+                )));
+            }
+
+            if node.is_leaf {
+                for (key, value) in node.keys.iter().zip(node.values.iter()) {
+                    kv.insert(key.clone(), value.clone());
+                }
+            } else {
+                for child_hash_bytes in &node.values {
+                    if child_hash_bytes.len() != N {
+                        return Err(GitKvError::GitObjectError(format!(
+                            "Historical namespace tree contains an invalid child hash length {}; expected {N}",
+                            child_hash_bytes.len()
+                        )));
+                    }
+                    let child_hash = ValueDigest::raw_hash(child_hash_bytes);
+                    if active.contains(&child_hash) {
+                        return Err(GitKvError::GitObjectError(format!(
+                            "Historical namespace tree contains a cyclic child reference from node {node_hash:x} to {child_hash:x}"
+                        )));
+                    }
+                    let child_node = storage.get_node_by_hash(&child_hash).ok_or_else(|| {
+                        GitKvError::GitObjectError(format!(
+                            "Failed to load historical namespace child node {child_hash:x} from storage"
+                        ))
+                    })?;
+                    collect_checked(&child_hash, &child_node, storage, kv, active, validated)?;
                 }
             }
+
+            active.remove(node_hash);
+            validated.insert(node_hash.clone());
+            Ok(())
         }
+
+        collect_checked(
+            root_hash,
+            &tree.root,
+            &tree.storage,
+            &mut kv,
+            &mut active,
+            &mut validated,
+        )?;
         Ok(kv)
     }
 }
