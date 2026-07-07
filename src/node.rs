@@ -66,6 +66,11 @@ pub trait Node<const N: usize> {
         storage: &mut S,
         path_hashes: Vec<ValueDigest<N>>,
     ) {
+        assert_eq!(
+            keys.len(),
+            values.len(),
+            "insert_batch requires the same number of keys and values"
+        );
         for (key, value) in keys.iter().zip(values) {
             self.insert(key.clone(), value.clone(), storage, path_hashes.clone());
         }
@@ -887,6 +892,11 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         storage: &mut S,
         path_hashes: Vec<ValueDigest<N>>,
     ) {
+        assert_eq!(
+            keys.len(),
+            values.len(),
+            "insert_batch requires the same number of keys and values"
+        );
         // Sort the keys and corresponding values
         let mut key_value_pairs: Vec<(Vec<u8>, Vec<u8>)> =
             keys.iter().cloned().zip(values.iter().cloned()).collect();
@@ -1430,6 +1440,17 @@ mod tests {
 
         // Verify that both trees have the same structure
         assert_eq!(node_ref.traverse(&storage), node.traverse(&storage));
+    }
+
+    #[test]
+    #[should_panic(expected = "insert_batch requires the same number of keys and values")]
+    fn test_insert_batch_rejects_length_mismatch() {
+        let mut storage = InMemoryNodeStorage::<32>::default();
+        let mut node: ProllyNode<32> = ProllyNode::default();
+        let keys = vec![vec![1], vec![2]];
+        let values = vec![vec![10]];
+
+        node.insert_batch(&keys, &values, &mut storage, Vec::new());
     }
 
     #[test]
