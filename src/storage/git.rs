@@ -47,7 +47,7 @@ impl<const N: usize> Clone for GitNodeStorage<N> {
         let cloned = Self {
             _repository: self._repository.clone(),
             cache: Mutex::new(LruCache::new(DEFAULT_CACHE_SIZE)),
-            configs: Mutex::new(HashMap::new()),
+            configs: Mutex::new(self.configs.lock().clone()),
             hash_to_object_id: Mutex::new(HashMap::new()),
             dataset_dir: self.dataset_dir.clone(),
         };
@@ -437,5 +437,32 @@ mod tests {
         // Get from cache
         let cached = storage.get_node_by_hash(&hash1);
         assert!(cached.is_some());
+    }
+
+    #[test]
+    fn clone_preserves_memory_only_tree_config() {
+        let (temp_dir, repo) = create_test_repo();
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let storage = GitNodeStorage::<32>::new(repo, dataset_dir.clone()).unwrap();
+        let config = br#"{"root_hash":null}"#;
+
+        storage.save_config("tree_config", config);
+        assert_eq!(
+            storage.get_config("tree_config").as_deref(),
+            Some(&config[..])
+        );
+        assert!(
+            !dataset_dir.join("prolly_config_tree_config").exists(),
+            "tree_config is intentionally memory-only for GitNodeStorage"
+        );
+
+        let cloned = storage.clone();
+
+        assert_eq!(
+            cloned.get_config("tree_config").as_deref(),
+            Some(&config[..]),
+            "cloning GitNodeStorage must preserve memory-only tree_config"
+        );
     }
 }
