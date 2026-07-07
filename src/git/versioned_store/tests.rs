@@ -681,6 +681,55 @@ mod tests {
     }
 
     #[test]
+    fn file_get_commits_reports_missing_historical_child_node() {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = FileVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        store.tree.config.min_chunk_size = 2;
+        store.tree.config.max_chunk_size = 2;
+        store.tree.config.pattern = 0;
+        for i in 0..8 {
+            store
+                .insert(
+                    format!("key{i:02}").into_bytes(),
+                    format!("value{i:02}").into_bytes(),
+                )
+                .unwrap();
+        }
+        store.commit("Add multi-level data").unwrap();
+
+        assert!(
+            !store.tree.root.is_leaf,
+            "test setup must create an internal root"
+        );
+        let child_hash = crate::digest::ValueDigest::<32>::raw_hash(&store.tree.root.values[0]);
+        let child_path = temp_dir
+            .path()
+            .join(".git")
+            .join("prolly")
+            .join("nodes")
+            .join("files")
+            .join(format!("{child_hash:x}"));
+        std::fs::remove_file(child_path).unwrap();
+
+        let err = match store.get_commits(b"key00") {
+            Ok(commits) => panic!(
+                "history lookup with a missing historical child node must fail, got {commits:?}"
+            ),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("child") || err.to_string().contains("Child"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn test_get_commits_with_repeated_changes() {
         let temp_dir = TempDir::new().unwrap();
 

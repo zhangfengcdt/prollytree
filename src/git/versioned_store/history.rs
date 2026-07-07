@@ -176,18 +176,9 @@ where
         let mut previous_value: Option<Vec<u8>> = None; // None = key not present, Some(val) = key present with value
 
         for commit in commit_history {
-            // Get the key value at this commit by reconstructing tree state
-            let current_value = {
-                if let Ok(tree_config) = self.read_tree_config_from_commit(&commit.id) {
-                    if let Ok(keys_at_commit) = self.collect_keys_from_config(&tree_config) {
-                        keys_at_commit.get(key).cloned()
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
+            let tree_config = self.read_tree_config_from_commit(&commit.id)?;
+            let keys_at_commit = self.collect_keys_from_config(&tree_config)?;
+            let current_value = keys_at_commit.get(key).cloned();
 
             // Check if the value changed from the previous commit
             let value_changed = previous_value != current_value;
