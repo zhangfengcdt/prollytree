@@ -1883,30 +1883,42 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
         // Load from both mapping files
         for path in [&ns_mapping_path, &global_mapping_path] {
             if let Ok(data) = self.inner.metadata.read_file_at_commit(commit_id, path) {
-                let mapping_str = String::from_utf8(data).unwrap_or_default();
-                for line in mapping_str.lines() {
-                    if let Some((hash_hex, object_hex)) = line.split_once(':') {
-                        if hash_hex.len() == N * 2 {
-                            let mut hash_bytes = Vec::new();
-                            for i in 0..N {
-                                if let Ok(byte) =
-                                    u8::from_str_radix(&hash_hex[i * 2..i * 2 + 2], 16)
-                                {
-                                    hash_bytes.push(byte);
-                                } else {
-                                    break;
-                                }
-                            }
-                            if hash_bytes.len() == N {
-                                if let Ok(object_id) =
-                                    gix::ObjectId::from_hex(object_hex.as_bytes())
-                                {
-                                    let hash = ValueDigest::raw_hash(&hash_bytes);
-                                    hash_mappings.insert(hash, object_id);
-                                }
-                            }
-                        }
+                let mapping_str = String::from_utf8(data).map_err(|e| {
+                    GitKvError::GitObjectError(format!("Invalid UTF-8 in {path}: {e}"))
+                })?;
+                for (line_index, line) in mapping_str.lines().enumerate() {
+                    if line.trim().is_empty() {
+                        continue;
                     }
+
+                    let line_number = line_index + 1;
+                    let (hash_hex, object_hex) = line.split_once(':').ok_or_else(|| {
+                        GitKvError::GitObjectError(format!(
+                            "Malformed hash mapping in {path} on line {line_number}"
+                        ))
+                    })?;
+
+                    if hash_hex.len() != N * 2 {
+                        return Err(GitKvError::GitObjectError(format!(
+                            "Invalid prolly hash in {path} on line {line_number}: expected {} hex chars, got {}",
+                            N * 2,
+                            hash_hex.len()
+                        )));
+                    }
+
+                    let hash_bytes = hex::decode(hash_hex).map_err(|e| {
+                        GitKvError::GitObjectError(format!(
+                            "Invalid prolly hash in {path} on line {line_number}: {e}"
+                        ))
+                    })?;
+                    let object_id =
+                        gix::ObjectId::from_hex(object_hex.as_bytes()).map_err(|e| {
+                            GitKvError::GitObjectError(format!(
+                                "Invalid git object id in {path} on line {line_number}: {e}"
+                            ))
+                        })?;
+                    let hash = ValueDigest::raw_hash(&hash_bytes);
+                    hash_mappings.insert(hash, object_id);
                 }
             }
         }
