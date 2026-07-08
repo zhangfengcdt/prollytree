@@ -104,7 +104,7 @@ harness = false
 [[bench]]
 name = "sql"
 harness = false
-required-features = ["sql"]
+required-features = ["git", "sql"]
 
 [[bench]]
 name = "git"

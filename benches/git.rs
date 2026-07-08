@@ -30,6 +30,16 @@ use prollytree::tree::{ProllyTree, Tree};
 use tempfile::TempDir;
 
 #[cfg(all(feature = "git", feature = "sql"))]
+fn init_sql_bench_storage() -> (ProllyStorage<32>, TempDir) {
+    let temp_dir = TempDir::new().unwrap();
+    gix::init(temp_dir.path()).unwrap();
+    let dataset_dir = temp_dir.path().join("dataset");
+    std::fs::create_dir_all(&dataset_dir).unwrap();
+    let storage = ProllyStorage::<32>::init(&dataset_dir).unwrap();
+    (storage, temp_dir)
+}
+
+#[cfg(all(feature = "git", feature = "sql"))]
 fn generate_versioned_data(
     versions: usize,
     records_per_version: usize,
@@ -106,8 +116,7 @@ fn bench_git_sql_integration(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     runtime.block_on(async {
-                        let temp_dir = TempDir::new().unwrap();
-                        let storage = ProllyStorage::<32>::init(temp_dir.path()).unwrap();
+                        let (storage, temp_dir) = init_sql_bench_storage();
                         let mut glue = Glue::new(storage);
 
                         // Create table with versioning in mind
@@ -274,8 +283,7 @@ fn bench_sql_time_travel_queries(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     runtime.block_on(async {
-                        let temp_dir = TempDir::new().unwrap();
-                        let storage = ProllyStorage::<32>::init(temp_dir.path()).unwrap();
+                        let (storage, temp_dir) = init_sql_bench_storage();
                         let mut glue = Glue::new(storage);
 
                         // Create table
@@ -341,8 +349,7 @@ fn bench_concurrent_operations(c: &mut Criterion) {
 
             b.iter(|| {
                 runtime.block_on(async {
-                    let temp_dir = TempDir::new().unwrap();
-                    let storage = ProllyStorage::<32>::init(temp_dir.path()).unwrap();
+                    let (storage, _temp_dir) = init_sql_bench_storage();
                     let mut glue = Glue::new(storage);
 
                     // Create tables sequentially (GlueSQL doesn't support concurrent operations well)
