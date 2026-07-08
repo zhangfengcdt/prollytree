@@ -66,7 +66,14 @@ digest_base64 = ["dep:base64"]
 prolly_balance_max_nodes = []
 prolly_balance_rolling_hash = []
 git = ["dep:gix", "dep:clap", "dep:lru", "dep:hex", "dep:chrono", "dep:uuid"]
-sql = ["dep:gluesql-core", "dep:async-trait", "dep:uuid", "dep:futures", "dep:tokio"]
+sql = [
+    "git",
+    "dep:gluesql-core",
+    "dep:async-trait",
+    "dep:uuid",
+    "dep:futures",
+    "dep:tokio",
+]
 python = ["dep:pyo3"]
 rocksdb_storage = ["dep:rocksdb", "dep:lru"]
 proximity = []

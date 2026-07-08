@@ -145,7 +145,7 @@ Embedder identity (`id` + `version`) is persisted with the index. Reopening with
 | Feature | Description | Default |
 |---|---|---|
 | `git` | Git-backed versioned storage with branching, merging, history | Yes |
-| `sql` | SQL query interface via GlueSQL | Yes |
+| `sql` | SQL query interface via GlueSQL; enables `git` storage | Yes |
 | `proximity` | Vector index + text-search infrastructure (ML-free) | No |
 | `proximity_text` | Bundled Candle + all-MiniLM-L6-v2 embedder | No |
 | `rocksdb_storage` | RocksDB persistent storage backend | No |
