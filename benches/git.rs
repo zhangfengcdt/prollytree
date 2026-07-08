@@ -317,15 +317,15 @@ fn bench_sql_time_travel_queries(c: &mut Criterion) {
                         let result = glue.execute(
                             "SELECT
                                 metric,
-                                DATE_TRUNC('hour', timestamp) as hour,
+                                timestamp,
                                 AVG(value) as avg_value,
                                 MIN(value) as min_value,
                                 MAX(value) as max_value
                              FROM time_series
                              WHERE timestamp >= TIMESTAMP '2024-01-01 06:00:00'
                                AND timestamp <= TIMESTAMP '2024-01-01 18:00:00'
-                             GROUP BY metric, DATE_TRUNC('hour', timestamp)
-                             ORDER BY metric, hour"
+                             GROUP BY metric, timestamp
+                             ORDER BY metric, timestamp"
                         ).await.unwrap();
                         black_box(result);
                     })
