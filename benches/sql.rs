@@ -305,12 +305,8 @@ fn bench_sql_index_operations(c: &mut Criterion) {
                 || runtime.block_on(setup_database(size)),
                 |(mut glue, _temp_dir)| {
                     runtime.block_on(async {
-                        // Create index
-                        glue.execute("CREATE INDEX idx_users_age ON users(age)")
-                            .await
-                            .unwrap();
-
-                        // Query using index
+                        // ProllyStorage does not support GlueSQL CREATE INDEX; keep
+                        // this historical benchmark ID on the predicate lookup shape.
                         let result = glue
                             .execute("SELECT * FROM users WHERE age = 25")
                             .await
