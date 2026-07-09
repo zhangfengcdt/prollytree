@@ -540,7 +540,15 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
                     None
                 }
             } else {
+                // Mirror `ProllyNode::find`: after certain delete patterns an internal
+                // node can transiently have no children (or fewer values than keys), so
+                // guard the empty case and clamp the index instead of indexing out of
+                // bounds and panicking.
+                if node.values.is_empty() {
+                    return None;
+                }
                 let i = node.keys.iter().rposition(|k| key >= &k[..]).unwrap_or(0);
+                let i = i.min(node.values.len() - 1);
                 let child_hash = node.values[i].clone();
 
                 if let Some(child_node) =
