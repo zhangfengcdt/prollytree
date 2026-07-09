@@ -219,12 +219,13 @@ mod proof_tests {
 
 #[cfg(test)]
 mod tests {
+    use crate::diff::IgnoreConflictsResolver;
     use crate::git::types::DiffOperation;
     #[cfg(feature = "rocksdb_storage")]
     use crate::git::versioned_store::RocksDBVersionedKvStore;
     use crate::git::versioned_store::{
-        FileVersionedKvStore, GitVersionedKvStore, HistoricalAccess, HistoricalCommitAccess,
-        InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
+        FileVersionedKvStore, GitNamespacedKvStore, GitVersionedKvStore, HistoricalAccess,
+        HistoricalCommitAccess, InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
     };
     use tempfile::TempDir;
 
@@ -266,6 +267,67 @@ mod tests {
         let _cwd = CwdGuard::set(&dataset_dir);
         let store = GitVersionedKvStore::<32>::init(&dataset_dir);
         assert!(store.is_ok());
+    }
+
+    #[test]
+    fn namespaced_merge_rejects_invalid_committed_hash_mapping_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        std::process::Command::new("git")
+            .args(["config", "user.name", "ProllyTree Test"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config user.name");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "prollytree@example.test"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config user.email");
+
+        let mut store = GitNamespacedKvStore::<32>::init(&dataset_dir).unwrap();
+        store
+            .namespace("personal")
+            .insert(b"base".to_vec(), b"base-value".to_vec())
+            .unwrap();
+        store.commit("base").unwrap();
+
+        store.create_branch("feature").unwrap();
+        store
+            .namespace("personal")
+            .insert(b"feature".to_vec(), b"feature-value".to_vec())
+            .unwrap();
+        store.commit("feature data").unwrap();
+
+        let mapping_path = dataset_dir.join("prolly_hash_mappings");
+        let mut mappings = std::fs::read_to_string(&mapping_path).unwrap();
+        mappings.push_str("not-hex:also-not-a-git-object\n");
+        std::fs::write(&mapping_path, mappings).unwrap();
+
+        let add = std::process::Command::new("git")
+            .args(["add", "dataset/prolly_hash_mappings"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git add");
+        assert!(add.status.success(), "git add failed: {add:?}");
+        let commit = std::process::Command::new("git")
+            .args(["commit", "-m", "corrupt feature mappings"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success(), "git commit failed: {commit:?}");
+
+        store.checkout("main").unwrap();
+        let err = store
+            .merge("feature", &IgnoreConflictsResolver)
+            .expect_err("invalid committed mapping entries must fail merge");
+        assert!(
+            err.to_string().contains("Invalid prolly hash"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
