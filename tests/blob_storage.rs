@@ -28,7 +28,7 @@ limitations under the License.
 
 use prollytree::digest::ValueDigest;
 use prollytree::node::ProllyNode;
-use prollytree::storage::{FileNodeStorage, NodeStorage};
+use prollytree::storage::{FileNodeStorage, InMemoryNodeStorage, NodeStorage};
 use tempfile::TempDir;
 
 const N: usize = 32;
@@ -129,6 +129,26 @@ fn file_large_blob_round_trip() {
 }
 
 // ---------------------------------------------------------------------------
+// In-memory backend
+// ---------------------------------------------------------------------------
+
+#[test]
+fn memory_blob_insert_existing_mismatch_errors() {
+    let mut s = InMemoryNodeStorage::<N>::new();
+    let hash = h(b"correct");
+    s.insert_blob(hash.clone(), b"correct").unwrap();
+
+    let err = s
+        .insert_blob(hash.clone(), b"wrong")
+        .expect_err("same hash with different bytes must not report success");
+    assert!(
+        err.to_string().contains("already exists"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(s.get_blob(&hash).as_deref(), Some(b"correct" as &[u8]));
+}
+
+// ---------------------------------------------------------------------------
 // RocksDB backend
 // ---------------------------------------------------------------------------
 
@@ -164,6 +184,23 @@ mod rocksdb_backend {
         s.insert_blob(hash.clone(), b"v").unwrap();
         s.insert_blob(hash.clone(), b"v").unwrap();
         assert_eq!(s.get_blob(&hash).as_deref(), Some(b"v" as &[u8]));
+    }
+
+    #[test]
+    fn rocksdb_blob_insert_existing_mismatch_errors() {
+        let temp = TempDir::new().unwrap();
+        let mut s = RocksDBNodeStorage::<N>::new(temp.path().to_path_buf()).unwrap();
+        let hash = h(b"correct");
+        s.insert_blob(hash.clone(), b"correct").unwrap();
+
+        let err = s
+            .insert_blob(hash.clone(), b"wrong")
+            .expect_err("same hash with different bytes must not report success");
+        assert!(
+            err.to_string().contains("already exists"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(s.get_blob(&hash).as_deref(), Some(b"correct" as &[u8]));
     }
 
     #[test]

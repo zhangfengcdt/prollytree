@@ -208,11 +208,18 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
 
     fn insert_blob(&mut self, hash: ValueDigest<N>, bytes: &[u8]) -> Result<(), StorageError> {
         let db_key = Self::blob_key(&hash);
-        // Content-addressed: if the key is already present, skip writing.
-        // Avoids needlessly bumping RocksDB write counters on repeated
-        // inserts of the same blob.
-        if self.db.get(&db_key).ok().flatten().is_some() {
-            return Ok(());
+        match self
+            .db
+            .get(&db_key)
+            .map_err(|e| StorageError::Other(e.to_string()))?
+        {
+            Some(existing) if existing == bytes => return Ok(()),
+            Some(_) => {
+                return Err(StorageError::Other(format!(
+                    "blob {hash:x} already exists with different bytes"
+                )));
+            }
+            None => {}
         }
         self.db
             .put(&db_key, bytes)
