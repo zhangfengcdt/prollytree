@@ -748,40 +748,60 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         let mut hash_mappings = HashMap::new();
         let mut is_simple_mapping = false;
 
-        for line in mapping_str.lines() {
-            if let Some((prefix, rest)) = line.split_once(':') {
-                if prefix == "key" {
-                    // This is a simple key-value mapping from InMemory storage
-                    is_simple_mapping = true;
-                    if let Some((key_hex, value_hex)) = rest.split_once(':') {
-                        if let (Ok(key), Ok(value)) = (hex::decode(key_hex), hex::decode(value_hex))
-                        {
-                            key_values.insert(key, value);
-                        }
-                    }
-                } else {
-                    // This is a hash mapping from Git storage
-                    let hash_hex = prefix;
-                    let object_hex = rest;
+        for (line_index, line) in mapping_str.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
 
-                    if hash_hex.len() == N * 2 {
-                        let mut hash_bytes = Vec::new();
-                        for i in 0..N {
-                            if let Ok(byte) = u8::from_str_radix(&hash_hex[i * 2..i * 2 + 2], 16) {
-                                hash_bytes.push(byte);
-                            } else {
-                                break;
-                            }
-                        }
+            let line_number = line_index + 1;
+            let (prefix, rest) = line.split_once(':').ok_or_else(|| {
+                GitKvError::GitObjectError(format!("Malformed hash mapping on line {line_number}"))
+            })?;
 
-                        if hash_bytes.len() == N {
-                            if let Ok(object_id) = gix::ObjectId::from_hex(object_hex.as_bytes()) {
-                                let hash = ValueDigest::raw_hash(&hash_bytes);
-                                hash_mappings.insert(hash, object_id);
-                            }
-                        }
-                    }
+            if prefix == "key" {
+                // This is a simple key-value mapping from InMemory storage
+                is_simple_mapping = true;
+                let (key_hex, value_hex) = rest.split_once(':').ok_or_else(|| {
+                    GitKvError::GitObjectError(format!(
+                        "Malformed simple key mapping on line {line_number}"
+                    ))
+                })?;
+                let key = hex::decode(key_hex).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid simple key hex on line {line_number}: {e}"
+                    ))
+                })?;
+                let value = hex::decode(value_hex).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid simple value hex on line {line_number}: {e}"
+                    ))
+                })?;
+                key_values.insert(key, value);
+            } else {
+                // This is a hash mapping from Git storage
+                let hash_hex = prefix;
+                let object_hex = rest;
+
+                if hash_hex.len() != N * 2 {
+                    return Err(GitKvError::GitObjectError(format!(
+                        "Invalid prolly hash on line {line_number}: expected {} hex chars, got {}",
+                        N * 2,
+                        hash_hex.len()
+                    )));
                 }
+
+                let hash_bytes = hex::decode(hash_hex).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid prolly hash on line {line_number}: {e}"
+                    ))
+                })?;
+                let object_id = gix::ObjectId::from_hex(object_hex.as_bytes()).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid git object id on line {line_number}: {e}"
+                    ))
+                })?;
+                let hash = ValueDigest::raw_hash(&hash_bytes);
+                hash_mappings.insert(hash, object_id);
             }
         }
 
