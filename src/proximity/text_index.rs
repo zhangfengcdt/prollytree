@@ -90,6 +90,12 @@ pub(crate) fn doc_id_prefix(doc_id: &[u8]) -> Vec<u8> {
 /// with many chunks don't crowd out distinct top-k results.
 pub(crate) const OVERFETCH_MULTIPLIER: usize = 4;
 
+pub(crate) fn text_search_limits(k: usize) -> (usize, usize) {
+    let raw_k = k.saturating_mul(OVERFETCH_MULTIPLIER).max(k);
+    let ef = raw_k.saturating_mul(4).max(32);
+    (raw_k, ef)
+}
+
 /// Dedup a chunk-level hit list by doc-id, keeping each doc's best score, and
 /// truncate to `k`. Used by both standalone [`TextIndex::search`] and the
 /// namespaced sub-handle.
@@ -464,8 +470,7 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
         // Over-fetch chunks so the dedup-by-doc step still yields `k` docs
         // even when there are several chunks per doc. The 4× multiplier is
         // a reasonable middle ground.
-        let raw_k = (k * OVERFETCH_MULTIPLIER).max(k);
-        let ef = (raw_k * 4).max(32);
+        let (raw_k, ef) = text_search_limits(k);
         let chunk_hits = self.inner.knn(&q, raw_k, ef)?;
         Ok(dedup_chunk_hits_by_doc(chunk_hits, k))
     }
@@ -592,6 +597,17 @@ mod tests {
             "expected near-zero, got {}",
             hits[0].score
         );
+    }
+
+    #[test]
+    fn search_saturates_overfetch_for_huge_k() {
+        let storage = InMemoryNodeStorage::<32>::new();
+        let mut idx = TextIndex::new(storage, config(8));
+        idx.insert(b"doc:1", "the quick brown fox").unwrap();
+
+        let hits = idx.search("the quick brown fox", usize::MAX).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, b"doc:1".to_vec());
     }
 
     #[test]

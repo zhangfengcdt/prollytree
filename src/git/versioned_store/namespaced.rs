@@ -55,7 +55,7 @@ use crate::storage::RocksDBNodeStorage;
 #[cfg(feature = "proximity")]
 use crate::proximity::text_index::{
     dedup_chunk_hits_by_doc, doc_id_prefix, make_chunk_id, text_inner_proximity_name,
-    text_state_key, validate_or_write_text_identity, OVERFETCH_MULTIPLIER,
+    text_search_limits, text_state_key, validate_or_write_text_identity,
 };
 #[cfg(feature = "proximity")]
 use crate::proximity::{
@@ -2672,8 +2672,7 @@ where
             return Ok(Vec::new());
         }
         let q = self.embedder.embed(query)?;
-        let raw_k = (k * OVERFETCH_MULTIPLIER).max(k);
-        let ef = (raw_k * 4).max(32);
+        let (raw_k, ef) = text_search_limits(k);
         let idx = self
             .store
             .proximity_indexes
