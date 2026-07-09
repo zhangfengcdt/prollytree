@@ -324,6 +324,56 @@ mod tests {
     }
 
     #[test]
+    fn failed_commit_preserves_staging_and_committed_head() {
+        let temp_dir = TempDir::new().unwrap();
+
+        gix::init(temp_dir.path()).unwrap();
+
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config name failed");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config email failed");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        std::fs::remove_file(&config_path).unwrap();
+        std::fs::create_dir(&config_path).unwrap();
+
+        let err = store
+            .commit("commit should fail")
+            .expect_err("config write failure should abort commit");
+        assert!(
+            err.to_string().contains("Failed to write config file"),
+            "unexpected error: {err}"
+        );
+
+        let status = store.status();
+        assert_eq!(
+            status,
+            vec![(b"key1".to_vec(), "added".to_string())],
+            "failed commit must leave the staged change available to retry"
+        );
+
+        let head_keys = store.get_keys_at_ref("HEAD").unwrap();
+        assert!(
+            !head_keys.contains_key(&b"key1".to_vec()),
+            "failed commit must not advance committed history"
+        );
+    }
+
+    #[test]
     fn test_single_commit_behavior() {
         let temp_dir = TempDir::new().unwrap();
 
