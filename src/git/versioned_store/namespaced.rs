@@ -43,7 +43,7 @@ use crate::storage::{GitNodeStorage, InMemoryNodeStorage, NodeStorage};
 use crate::tree::{ProllyTree, Tree};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -95,6 +95,7 @@ pub struct MigrationReport {
 
 /// The default namespace name used for backward-compatible flat API calls.
 pub const DEFAULT_NAMESPACE: &str = "default";
+const NAMESPACED_REGISTRY_FILENAME: &str = "prolly_namespace_registry";
 
 /// Type alias for the per-target value transformer closure used by cascade.
 /// Takes the raw primary-tree value bytes and returns `Some(text)` to embed,
@@ -251,12 +252,11 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
         }
 
         // Check committed tree. Raw bytes from the leaf may be an externalised
-        // envelope; unwrap_value handles both cases (inline pass-through plus
-        // graceful fallback when an envelope-shaped value's hash doesn't
-        // resolve to a real blob).
+        // envelope; unwrap_value handles inline pass-through and returns None
+        // if an envelope's blob is missing instead of exposing envelope bytes.
         if let Some(tree) = self.store.namespaces.get(&self.ns_name) {
             return tree.find(key).and_then(|node| {
-                node.keys.iter().position(|k| k == key).map(|idx| {
+                node.keys.iter().position(|k| k == key).and_then(|idx| {
                     crate::storage::externalize::unwrap_value::<N, _>(
                         &node.values[idx],
                         &self.store.inner.tree.storage,
@@ -711,18 +711,17 @@ where
         &self.inner.tree.storage
     }
 
-    /// Walk every loaded namespace, collect all blob hashes referenced by
-    /// envelope-shaped leaf values, and delete every blob in storage that
-    /// isn't on that list.
+    /// Walk every loaded namespace and every reachable commit, collect all
+    /// blob hashes referenced by envelope-shaped leaf values, and delete every
+    /// blob in storage that isn't on that list.
     ///
     /// Loads every namespace listed in the registry first, so blobs
     /// referenced by namespaces the user hasn't explicitly opened are still
     /// preserved.
     ///
-    /// **Scope caveat:** GC walks only the current HEAD state. Blobs
-    /// referenced by older commits but not by HEAD are deleted, so checking
-    /// out an old commit after GC may fail to retrieve those values.
-    /// History-aware GC (walking all reachable commits) is a future PR.
+    /// The historical walk starts at HEAD and all branch heads exposed by the
+    /// metadata backend. If a historical namespace root cannot be loaded, GC
+    /// fails before deleting anything.
     pub fn gc_blobs(&mut self) -> Result<BlobGcReport, GitKvError> {
         // 1. Ensure every namespace from the registry is loaded in memory.
         let ns_names = self.list_namespaces();
@@ -733,24 +732,23 @@ where
         // 2. Walk every loaded namespace tree, collect referenced blob hashes.
         let mut referenced: HashSet<ValueDigest<N>> = HashSet::new();
         for tree in self.namespaces.values() {
-            for key in tree.collect_keys() {
-                let raw = tree.find(&key).and_then(|node| {
-                    node.keys
-                        .iter()
-                        .position(|k| k == &key)
-                        .map(|i| node.values[i].clone())
-                });
-                if let Some(bytes) = raw {
-                    if let Some((hash, _size)) =
-                        crate::storage::externalize::parse_envelope::<N>(&bytes)
-                    {
-                        referenced.insert(hash);
-                    }
-                }
+            Self::collect_referenced_blobs_from_tree(tree, &mut referenced);
+        }
+
+        // 3. Also preserve blobs referenced by any namespace root reachable
+        // from HEAD or a branch head. Otherwise GC can make old commits unreadable.
+        for commit_id in self.reachable_commit_ids()? {
+            let registry = self.load_registry_at_commit_for_gc(&commit_id)?;
+            for (ns_name, entry) in registry {
+                self.collect_referenced_blobs_from_registry_entry(
+                    &ns_name,
+                    &entry,
+                    &mut referenced,
+                )?;
             }
         }
 
-        // 3. List every blob currently in storage.
+        // 4. List every blob currently in storage.
         let all_blobs = self
             .inner
             .tree
@@ -758,7 +756,7 @@ where
             .list_blobs()
             .map_err(|e| GitKvError::GitObjectError(format!("list_blobs: {e}")))?;
 
-        // 4. Delete orphans.
+        // 5. Delete orphans.
         let mut report = BlobGcReport {
             total: all_blobs.len(),
             referenced: referenced.len(),
@@ -775,6 +773,116 @@ where
             }
         }
         Ok(report)
+    }
+
+    fn collect_referenced_blobs_from_tree(
+        tree: &ProllyTree<N, S>,
+        referenced: &mut HashSet<ValueDigest<N>>,
+    ) {
+        for key in tree.collect_keys() {
+            let raw = tree.find(&key).and_then(|node| {
+                node.keys
+                    .iter()
+                    .position(|k| k == &key)
+                    .map(|i| node.values[i].clone())
+            });
+            if let Some(bytes) = raw {
+                if let Some((hash, _size)) =
+                    crate::storage::externalize::parse_envelope::<N>(&bytes)
+                {
+                    referenced.insert(hash);
+                }
+            }
+        }
+    }
+
+    fn collect_referenced_blobs_from_registry_entry(
+        &self,
+        ns_name: &str,
+        entry: &NamespaceEntry<N>,
+        referenced: &mut HashSet<ValueDigest<N>>,
+    ) -> Result<(), GitKvError> {
+        let Some(root_hash) = &entry.root_hash else {
+            return Ok(());
+        };
+        let mut config = entry.config.clone();
+        config.root_hash = Some(root_hash.clone());
+        let tree = ProllyTree::load_from_storage(self.inner.tree.storage.clone(), config)
+            .ok_or_else(|| {
+                GitKvError::GitObjectError(format!(
+                    "Failed to load namespace {ns_name} root {root_hash:x} during blob GC"
+                ))
+            })?;
+        Self::collect_referenced_blobs_from_tree(&tree, referenced);
+        Ok(())
+    }
+
+    fn reachable_commit_ids(&self) -> Result<HashSet<gix::ObjectId>, GitKvError> {
+        let mut seen = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        if let Ok(head) = self.inner.metadata.head_commit_id() {
+            queue.push_back(head);
+        }
+
+        for branch in self.inner.metadata.list_branches()? {
+            queue.push_back(self.inner.metadata.branch_commit_id(&branch)?);
+        }
+
+        while let Some(commit_id) = queue.pop_front() {
+            if !seen.insert(commit_id) {
+                continue;
+            }
+            for parent in self.inner.metadata.commit_parents(&commit_id)? {
+                queue.push_back(parent);
+            }
+        }
+
+        Ok(seen)
+    }
+
+    fn load_registry_at_commit_for_gc(
+        &self,
+        commit_id: &gix::ObjectId,
+    ) -> Result<HashMap<String, NamespaceEntry<N>>, GitKvError> {
+        let registry_path = self.dataset_git_path(NAMESPACED_REGISTRY_FILENAME)?;
+        match self
+            .inner
+            .metadata
+            .read_file_at_commit(commit_id, &registry_path)
+        {
+            Ok(data) => serde_json::from_slice(&data).map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to parse registry at commit: {e}"))
+            }),
+            Err(_) => Ok(HashMap::new()),
+        }
+    }
+
+    fn dataset_git_path(&self, filename: &str) -> Result<String, GitKvError> {
+        let dataset_dir =
+            self.inner.dataset_dir.as_ref().ok_or_else(|| {
+                GitKvError::GitObjectError("Dataset directory not set".to_string())
+            })?;
+        let git_root = self
+            .inner
+            .metadata
+            .work_dir()
+            .or_else(|| VersionedKvStore::<N, S, M>::find_git_root(dataset_dir))
+            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".to_string()))?;
+        let relative = dataset_dir.strip_prefix(&git_root).map_err(|e| {
+            GitKvError::GitObjectError(format!("Dataset directory is not inside git root: {e}"))
+        })?;
+        let rel_str = relative
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        if rel_str.is_empty() {
+            Ok(filename.to_string())
+        } else {
+            Ok(format!("{rel_str}/{filename}"))
+        }
     }
 
     // -- Commit -------------------------------------------------------------
