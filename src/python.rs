@@ -2534,7 +2534,7 @@ impl Embedder for CallableEmbedderImpl {
             if vec.len() != self.dim as usize {
                 return Err(crate::proximity::EmbedError::DimensionMismatch {
                     expected: self.dim,
-                    got: vec.len() as u16,
+                    got: vec.len(),
                 });
             }
             Ok(vec)

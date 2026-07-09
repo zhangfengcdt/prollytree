@@ -40,7 +40,7 @@ pub enum EmbedError {
     /// The embedder produced a vector of the wrong dimension. This is a bug
     /// in the embedder; surface it so the index can refuse the value.
     #[error("embed produced wrong dim: expected {expected}, got {got}")]
-    DimensionMismatch { expected: u16, got: u16 },
+    DimensionMismatch { expected: u16, got: usize },
 }
 
 /// Text-to-vector embedder.
