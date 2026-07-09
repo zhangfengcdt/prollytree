@@ -234,13 +234,36 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
                     }
                 }
                 // Key deleted in source, still exists in dest
-                (Some(_base), None, Some(_dest)) => {
-                    // Source deleted it - apply deletion
-                    merge_results.push(crate::diff::MergeResult::Removed(key));
+                (Some(base), None, Some(dest)) => {
+                    if base == dest {
+                        // Destination unchanged from base - safe to apply source deletion
+                        merge_results.push(crate::diff::MergeResult::Removed(key));
+                    } else {
+                        // Destination modified while source deleted - conflict
+                        let conflict = crate::diff::MergeConflict {
+                            key: key.clone(),
+                            base_value: Some(base.clone()),
+                            source_value: None,
+                            destination_value: Some(dest.clone()),
+                        };
+                        merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                    }
                 }
                 // Key deleted in dest, still exists in source - keep deletion (no-op)
-                (Some(_base), Some(_source), None) => {
-                    continue;
+                (Some(base), Some(source), None) => {
+                    if base == source {
+                        // Source unchanged from base - keep destination deletion
+                        continue;
+                    } else {
+                        // Source modified while destination deleted - conflict
+                        let conflict = crate::diff::MergeConflict {
+                            key: key.clone(),
+                            base_value: Some(base.clone()),
+                            source_value: Some(source.clone()),
+                            destination_value: None,
+                        };
+                        merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                    }
                 }
                 // Key deleted in both - no-op
                 (Some(_base), None, None) => {

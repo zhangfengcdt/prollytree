@@ -18,8 +18,19 @@ limitations under the License.
 
 mod common;
 
-use prollytree::diff::{IgnoreConflictsResolver, TakeDestinationResolver, TakeSourceResolver};
-use prollytree::git::versioned_store::GitVersionedKvStore;
+use prollytree::diff::{
+    ConflictResolver, IgnoreConflictsResolver, MergeConflict, MergeResult, TakeDestinationResolver,
+    TakeSourceResolver,
+};
+use prollytree::git::versioned_store::{GitVersionedKvStore, InMemoryVersionedKvStore};
+
+struct LeaveUnresolved;
+
+impl ConflictResolver for LeaveUnresolved {
+    fn resolve_conflict(&self, _conflict: &MergeConflict) -> Option<MergeResult> {
+        None
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helper: set up divergent branches with a conflict on a shared key
@@ -229,6 +240,39 @@ fn test_mixed_adds_deletes_conflicts() {
     assert_eq!(store.get(b"D"), Some(b"main_d".to_vec()));
     // E: added by feature
     assert_eq!(store.get(b"E"), Some(b"feat_e".to_vec()));
+
+    std::mem::forget(_temp);
+}
+
+#[test]
+fn test_delete_modify_merge_surfaces_conflict_and_preserves_destination() {
+    let (_temp, dataset) = common::setup_repo_and_dataset();
+    let mut store = InMemoryVersionedKvStore::<32>::init(&dataset).expect("init");
+
+    store.insert(b"K".to_vec(), b"v0".to_vec()).unwrap();
+    store.commit("base").unwrap();
+    store.create_branch("feature").unwrap();
+    store.checkout_generic("main").unwrap();
+
+    store.insert(b"K".to_vec(), b"v1".to_vec()).unwrap();
+    store.commit("main modifies K").unwrap();
+
+    store.checkout_generic("feature").unwrap();
+    assert!(store.delete(b"K").unwrap());
+    store.commit("feature deletes K").unwrap();
+
+    store.checkout_generic("main").unwrap();
+    let result = store.merge_generic("feature", &LeaveUnresolved);
+
+    assert!(
+        result.is_err(),
+        "delete/modify merge must surface an unresolved conflict"
+    );
+    assert_eq!(
+        store.get(b"K"),
+        Some(b"v1".to_vec()),
+        "destination modification must not be silently deleted"
+    );
 
     std::mem::forget(_temp);
 }
