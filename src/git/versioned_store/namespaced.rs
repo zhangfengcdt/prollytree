@@ -2631,25 +2631,38 @@ where
     M: MetadataBackend,
 {
     /// Insert or update `(id, text)`. The text is split through the
-    /// configured chunker; each chunk is embedded and stored under its own
-    /// chunk-id. Previous chunks for this `id` are removed first so that a
-    /// re-insert with fewer chunks doesn't leak stale ones.
+    /// configured chunker; replacement chunks are embedded first, then previous
+    /// chunks for this `id` are removed so failed embeds leave the old document
+    /// searchable. A successful empty chunk set removes the document.
     pub fn insert(&mut self, id: &[u8], text: &str) -> Result<(), TextIndexError> {
-        // Drop any previous chunks for this doc_id.
-        self.delete_chunks_for_doc(id);
-
         let chunks = self.chunker.split(text);
         if chunks.is_empty() {
+            self.delete_chunks_for_doc(id);
             return Ok(());
         }
+        if self.embedder.dim() == 0 {
+            return Err(TextIndexError::Proximity(ProximityError::ZeroDim));
+        }
+        let mut replacements = Vec::with_capacity(chunks.len());
+        for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
+            let vec = self.embedder.embed(chunk_text)?;
+            if vec.len() as u16 != self.embedder.dim() {
+                return Err(TextIndexError::DimensionMismatch {
+                    stored: self.embedder.dim(),
+                    got: vec.len() as u16,
+                });
+            }
+            let chunk_id = make_chunk_id(id, chunk_idx as u32);
+            replacements.push((chunk_id, vec));
+        }
+
+        self.delete_chunks_for_doc(id);
         let idx = self
             .store
             .proximity_indexes
             .get_mut(&self.inner_idx_key)
             .expect("inner proximity index must be loaded");
-        for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
-            let vec = self.embedder.embed(chunk_text)?;
-            let chunk_id = make_chunk_id(id, chunk_idx as u32);
+        for (chunk_id, vec) in replacements {
             idx.insert(chunk_id, vec)?;
         }
         self.store
