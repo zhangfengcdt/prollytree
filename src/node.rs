@@ -1122,9 +1122,27 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
 // implement get hash function of the ProllyNode
 impl<const N: usize> ProllyNode<N> {
     pub fn get_hash(&self) -> ValueDigest<N> {
-        let mut keys_and_values = self.keys.concat();
-        keys_and_values.extend(&self.values.concat());
-        ValueDigest::new(&keys_and_values)
+        // PREFIX-FREE content hash. The previous `keys.concat() ++ values.concat()`
+        // had no length delimiters, so distinct (k,v) sets could collide (e.g. values
+        // "ab","c" and "a","bc" both concat to "abc") -> same root -> broken content
+        // addressing / false merge convergence. Length-frame every element (u32 BE,
+        // never usize, for native==wasm), separate the key region from the value
+        // region by count, and bind is_leaf/level so a leaf cannot collide with an
+        // internal node of identical bytes.
+        let mut buf: Vec<u8> = Vec::new();
+        buf.push(self.is_leaf as u8);
+        buf.push(self.level);
+        buf.extend_from_slice(&(self.keys.len() as u32).to_be_bytes());
+        for k in &self.keys {
+            buf.extend_from_slice(&(k.len() as u32).to_be_bytes());
+            buf.extend_from_slice(k);
+        }
+        buf.extend_from_slice(&(self.values.len() as u32).to_be_bytes());
+        for v in &self.values {
+            buf.extend_from_slice(&(v.len() as u32).to_be_bytes());
+            buf.extend_from_slice(v);
+        }
+        ValueDigest::new(&buf)
     }
 }
 
