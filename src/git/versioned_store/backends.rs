@@ -726,19 +726,32 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
 
         let config_result = self.metadata.read_file_at_commit(commit_id, &config_path);
         let mapping_result = self.metadata.read_file_at_commit(commit_id, &mapping_path);
+        let (config_data, mapping_data) = match (config_result, mapping_result) {
+            (Ok(config_data), Ok(mapping_data)) => (config_data, mapping_data),
+            (Err(_), Err(_)) => {
+                // Older repositories can have non-prolly commits before the
+                // dataset exists. With neither file present, the committed
+                // prolly state is genuinely empty.
+                return Ok(HashMap::new());
+            }
+            (Ok(_), Err(e)) => {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Historical commit {commit_id} has {config_path} but is missing {mapping_path}: {e}"
+                )));
+            }
+            (Err(e), Ok(_)) => {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Historical commit {commit_id} has {mapping_path} but is missing {config_path}: {e}"
+                )));
+            }
+        };
 
-        // If files are not found, this might be an initial empty commit, return empty
-        if config_result.is_err() || mapping_result.is_err() {
-            return Ok(HashMap::new());
-        }
-
-        let config_data = config_result?;
         let config: TreeConfig<N> = serde_json::from_slice(&config_data).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to deserialize config: {e}"))
         })?;
+        let root_hash = config.root_hash.clone();
 
         // Load the hash mappings from the tree as string format and parse
-        let mapping_data = mapping_result?;
         let mapping_str = String::from_utf8(mapping_data)
             .map_err(|e| GitKvError::GitObjectError(format!("Invalid UTF-8 in mappings: {e}")))?;
 
@@ -792,6 +805,11 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
 
         // For Git storage, reconstruct the tree from hash mappings
         if hash_mappings.is_empty() {
+            if let Some(root_hash) = root_hash {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Historical commit {commit_id} has root {root_hash:x} but {mapping_path} contains no hash mappings"
+                )));
+            }
             return Ok(HashMap::new());
         }
 
@@ -806,6 +824,14 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         let tree = ProllyTree::load_from_storage(temp_storage, config).ok_or_else(|| {
             GitKvError::GitObjectError("Failed to load tree from storage".to_string())
         })?;
+        if let Some(root_hash) = root_hash {
+            validate_persistent_tree_nodes(
+                &root_hash,
+                &tree.root,
+                &tree.storage,
+                "Git historical",
+            )?;
+        }
 
         // Collect all key-value pairs
         let mut result_key_values = HashMap::new();
