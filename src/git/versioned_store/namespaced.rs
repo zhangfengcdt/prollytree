@@ -274,14 +274,15 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     /// `NamespacedKvStore::set_cascade`, this also embeds `value` (as UTF-8)
     /// and upserts the resulting vector into every cascading text sub-index
     /// that is currently loaded. Targets not loaded yet, and values that
-    /// aren't valid UTF-8, are silently skipped.
+    /// aren't valid UTF-8, are silently skipped. Embedder or proximity-index
+    /// errors abort the primary insert before any staged value is changed.
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
         crate::validation::validate_kv(&key, &value)?;
         // Auto-cascade into text indexes, if configured. Done BEFORE staging
         // the primary insert so an embed error surfaces before any state has
         // been touched.
         #[cfg(feature = "proximity")]
-        self.cascade_insert(&key, &value);
+        self.cascade_insert(&key, &value)?;
 
         self.store
             .namespace_staging
@@ -323,13 +324,15 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     ///    non-UTF-8).
     ///
     /// Silent no-op cases otherwise: no cascade list configured, target
-    /// whose embedder/proximity-index isn't currently loaded, or the
-    /// embedder itself returns an error.
+    /// whose embedder/proximity-index isn't currently loaded, or a value that
+    /// isn't valid text for the configured target. Embedder/proximity errors
+    /// are returned before the primary value is staged.
     #[cfg(feature = "proximity")]
-    fn cascade_insert(&mut self, key: &[u8], value: &[u8]) {
+    fn cascade_insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), GitKvError> {
         let Some(cascade_list) = self.store.cascade_lists.get(&self.ns_name).cloned() else {
-            return;
+            return Ok(());
         };
+        let mut planned = Vec::new();
         for idx_name in cascade_list {
             let target_key = (self.ns_name.clone(), idx_name.clone());
             let prox_key = (self.ns_name.clone(), text_inner_proximity_name(&idx_name));
@@ -350,6 +353,14 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
             let Some(embedder) = self.store.text_embedders.get(&target_key).cloned() else {
                 continue;
             };
+            let Some(idx_dim) = self
+                .store
+                .proximity_indexes
+                .get(&prox_key)
+                .map(|idx| idx.config().dim)
+            else {
+                continue;
+            };
             let chunker: Arc<dyn Chunker> = self
                 .store
                 .text_chunkers
@@ -357,27 +368,53 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
                 .cloned()
                 .unwrap_or_else(|| Arc::new(IdentityChunker));
 
-            // 3. Chunk → embed → insert. Drop any previous chunks for this
-            //    doc-id first so re-inserts with a different chunk count
-            //    don't leak stale entries.
-            //
-            //    Borrow gymnastics: each chunk's embed happens outside the
-            //    proximity-index borrow, then a fresh `get_mut` reborrows
-            //    for the insert. Slight overhead, but keeps the embedder
-            //    free to call into anything (incl. error-returning paths).
-            Self::cascade_delete_chunks_for_doc(self.store, &prox_key, key);
+            // 3. Chunk and embed during a full preflight pass. No target index
+            //    is mutated until every configured target has successfully
+            //    produced dimension-valid replacement vectors.
             let chunks = chunker.split(&text);
+            let mut replacements = Vec::with_capacity(chunks.len());
             for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
-                let Ok(vec) = embedder.embed(chunk_text) else {
-                    continue;
-                };
-                let chunk_id = make_chunk_id(key, chunk_idx as u32);
-                if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
-                    let _ = idx.insert(chunk_id, vec);
-                    self.store.dirty_proximity_indexes.insert(prox_key.clone());
+                let vec = embedder.embed(chunk_text).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Text cascade into {}/{} failed for key {:?}: {e}",
+                        self.ns_name,
+                        idx_name,
+                        String::from_utf8_lossy(key)
+                    ))
+                })?;
+                if idx_dim == 0 || vec.len() != usize::from(idx_dim) {
+                    return Err(GitKvError::GitObjectError(format!(
+                        "Text cascade into {}/{} produced vector dimension {}, expected {}",
+                        self.ns_name,
+                        idx_name,
+                        vec.len(),
+                        idx_dim
+                    )));
                 }
+                let chunk_id = make_chunk_id(key, chunk_idx as u32);
+                replacements.push((chunk_id, vec));
             }
+            planned.push((idx_name, prox_key, replacements));
         }
+
+        for (idx_name, prox_key, replacements) in planned {
+            Self::cascade_delete_chunks_for_doc(self.store, &prox_key, key);
+            let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) else {
+                continue;
+            };
+            for (chunk_id, vec) in replacements {
+                idx.insert(chunk_id, vec).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Text cascade into {}/{} failed for key {:?}: {e}",
+                        self.ns_name,
+                        idx_name,
+                        String::from_utf8_lossy(key)
+                    ))
+                })?;
+            }
+            self.store.dirty_proximity_indexes.insert(prox_key.clone());
+        }
+        Ok(())
     }
 
     /// Cascade a delete to every configured text sub-index for this
