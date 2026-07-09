@@ -141,6 +141,65 @@ fn reopen_with_different_embedder_version_returns_mismatch() {
 }
 
 #[test]
+fn reopen_with_different_tuning_returns_mismatch() {
+    use prollytree::proximity::Metric;
+
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    {
+        let mut personal = store.namespace("personal");
+        let mut metric_cfg = cfg(16, 0);
+        metric_cfg.metric = Metric::L2;
+        let _ = personal.text_index("metric", metric_cfg).unwrap();
+
+        let mut level_cfg = cfg(16, 0);
+        level_cfg.level_bits = 5;
+        let _ = personal.text_index("level", level_cfg).unwrap();
+
+        let mut bucket_cfg = cfg(16, 0);
+        bucket_cfg.max_bucket_size = 32;
+        let _ = personal.text_index("bucket", bucket_cfg).unwrap();
+    }
+
+    let mut personal = store.namespace("personal");
+    let err = personal.text_index("metric", cfg(16, 0)).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            TextIndexError::ConfigMismatch {
+                field: "metric",
+                ..
+            }
+        ),
+        "expected metric ConfigMismatch, got {err:?}"
+    );
+
+    let err = personal.text_index("level", cfg(16, 0)).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            TextIndexError::ConfigMismatch {
+                field: "level_bits",
+                ..
+            }
+        ),
+        "expected level_bits ConfigMismatch, got {err:?}"
+    );
+
+    let err = personal.text_index("bucket", cfg(16, 0)).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            TextIndexError::ConfigMismatch {
+                field: "max_bucket_size",
+                ..
+            }
+        ),
+        "expected max_bucket_size ConfigMismatch, got {err:?}"
+    );
+}
+
+#[test]
 fn multiple_text_indexes_per_namespace_are_independent() {
     let (_temp, dataset) = setup_repo_and_dataset();
     let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
