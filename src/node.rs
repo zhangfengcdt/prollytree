@@ -543,7 +543,21 @@ impl<const N: usize> ProllyNode<N> {
                 .map(|n| n.get_hash().as_bytes().to_vec())
                 .collect();
 
-            current = build_level(&next_keys, &next_values, false, level, config);
+            let prev_len = current.len();
+            let next = build_level(&next_keys, &next_values, false, level, config);
+
+            // Convergence guarantee. Every sane `TreeConfig` fans in (each internal
+            // level has strictly fewer nodes than the level below), so this branch
+            // is never taken. A pathological config (e.g. one whose chunker always
+            // emits size-1 chunks - `pattern == 0` with `max_chunk_size == 0`) would
+            // otherwise produce a level no smaller than the previous one and loop
+            // forever. Collapsing the whole level into a single wide root terminates
+            // the build with a valid (if uncompressed) tree instead of hanging.
+            current = if next.len() >= prev_len {
+                vec![make_node(next_keys, next_values, false, level, config)]
+            } else {
+                next
+            };
         }
 
         current
@@ -627,12 +641,20 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
         if self.keys.len() < self.min_chunk_size {
             return Vec::new();
         }
+        // Guarantee forward progress. A degenerate `min_chunk_size == 0` makes the
+        // window `start..start` empty, so `end` never advances past `last_start` and
+        // the outer loop spins forever emitting empty chunks (hang / OOM). Flooring
+        // the effective window at 1 preserves behaviour for every sane config
+        // (`min_chunk_size >= 1`, where `min == self.min_chunk_size`) while ensuring
+        // each emitted chunk covers at least one entry so `last_start` strictly
+        // increases and the loop terminates.
+        let min = self.min_chunk_size.max(1);
         let mut chunks = Vec::new();
         let mut start = 0;
         let mut last_start = 0;
 
         while start < self.keys.len() {
-            let mut end = start + self.min_chunk_size;
+            let mut end = start + min;
 
             // Ensure that 'end' does not exceed the length of the keys vector
             if end > self.keys.len() {
