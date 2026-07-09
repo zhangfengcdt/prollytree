@@ -18,7 +18,7 @@ use crate::git::types::*;
 use crate::git::versioned_store::GitVersionedKvStore;
 use crate::node::ProllyNode;
 use gix::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Git operations for versioned KV store
 pub struct GitOperations<const N: usize> {
@@ -607,7 +607,16 @@ impl<const N: usize> GitOperations<N> {
 
         // Traverse the tree and collect all key-value pairs
         let mut result = HashMap::new();
-        self.collect_keys_from_node(&root_node, hash_mappings, &mut result)?;
+        let mut active = HashSet::new();
+        let mut validated = HashSet::new();
+        self.collect_keys_from_node(
+            root_hash,
+            &root_node,
+            hash_mappings,
+            &mut result,
+            &mut active,
+            &mut validated,
+        )?;
 
         Ok(result)
     }
@@ -615,10 +624,22 @@ impl<const N: usize> GitOperations<N> {
     /// Recursively collect key-value pairs from a prolly tree node
     fn collect_keys_from_node(
         &self,
+        node_hash: &ValueDigest<N>,
         node: &ProllyNode<N>,
         hash_mappings: &HashMap<ValueDigest<N>, gix::ObjectId>,
         result: &mut HashMap<Vec<u8>, Vec<u8>>,
+        active: &mut HashSet<ValueDigest<N>>,
+        validated: &mut HashSet<ValueDigest<N>>,
     ) -> Result<(), GitKvError> {
+        if validated.contains(node_hash) {
+            return Ok(());
+        }
+        if !active.insert(node_hash.clone()) {
+            return Err(GitKvError::GitObjectError(format!(
+                "Historical tree contains a cyclic child reference at node {node_hash:x}"
+            )));
+        }
+
         if node.is_leaf {
             // Leaf node: add all key-value pairs
             for (i, key) in node.keys.iter().enumerate() {
@@ -629,42 +650,59 @@ impl<const N: usize> GitOperations<N> {
         } else {
             // Internal node: recursively process child nodes
             for value in &node.values {
-                let child_hash = ValueDigest::raw_hash(value);
-                if let Some(child_git_id) = hash_mappings.get(&child_hash) {
-                    // Read child node from git
-                    let mut buffer = Vec::new();
-                    let child_blob = self
-                        .store
-                        .git_repo()
-                        .objects
-                        .find(child_git_id, &mut buffer)
-                        .map_err(|e| {
-                            GitKvError::GitObjectError(format!("Failed to find child node: {e}"))
-                        })?;
-
-                    let blob_ref = child_blob
-                        .decode()
-                        .map_err(|e| {
-                            GitKvError::GitObjectError(format!("Failed to decode child node: {e}"))
-                        })?
-                        .into_blob()
-                        .ok_or_else(|| {
-                            GitKvError::GitObjectError("Child object is not a blob".to_string())
-                        })?;
-
-                    let child_node: ProllyNode<N> =
-                        crate::serde_bincode::deserialize(blob_ref.data).map_err(|e| {
-                            GitKvError::GitObjectError(format!(
-                                "Failed to deserialize child node: {e}"
-                            ))
-                        })?;
-
-                    // Recursively collect from child
-                    self.collect_keys_from_node(&child_node, hash_mappings, result)?;
+                if value.len() != N {
+                    return Err(GitKvError::GitObjectError(format!(
+                        "Historical tree contains an invalid child hash length {}; expected {N}",
+                        value.len()
+                    )));
                 }
+                let child_hash = ValueDigest::raw_hash(value);
+                let child_git_id = hash_mappings.get(&child_hash).ok_or_else(|| {
+                    GitKvError::GitObjectError(format!(
+                        "Historical tree is missing child mapping for {child_hash:x}"
+                    ))
+                })?;
+
+                // Read child node from git
+                let mut buffer = Vec::new();
+                let child_blob = self
+                    .store
+                    .git_repo()
+                    .objects
+                    .find(child_git_id, &mut buffer)
+                    .map_err(|e| {
+                        GitKvError::GitObjectError(format!("Failed to find child node: {e}"))
+                    })?;
+
+                let blob_ref = child_blob
+                    .decode()
+                    .map_err(|e| {
+                        GitKvError::GitObjectError(format!("Failed to decode child node: {e}"))
+                    })?
+                    .into_blob()
+                    .ok_or_else(|| {
+                        GitKvError::GitObjectError("Child object is not a blob".to_string())
+                    })?;
+
+                let child_node: ProllyNode<N> = crate::serde_bincode::deserialize(blob_ref.data)
+                    .map_err(|e| {
+                        GitKvError::GitObjectError(format!("Failed to deserialize child node: {e}"))
+                    })?;
+
+                // Recursively collect from child
+                self.collect_keys_from_node(
+                    &child_hash,
+                    &child_node,
+                    hash_mappings,
+                    result,
+                    active,
+                    validated,
+                )?;
             }
         }
 
+        active.remove(node_hash);
+        validated.insert(node_hash.clone());
         Ok(())
     }
 
@@ -728,7 +766,63 @@ impl<const N: usize> GitOperations<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+    use std::process::Command;
     use tempfile::TempDir;
+
+    struct CwdGuard {
+        original: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn set(path: &Path) -> Self {
+            let lock = crate::git::versioned_store::cwd_lock()
+                .lock()
+                .expect("CWD mutex poisoned");
+            let original = std::env::current_dir().expect("Failed to get current dir");
+            std::env::set_current_dir(path).expect("Failed to change directory");
+            Self {
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    fn run_git(repo_path: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .output()
+            .expect("failed to run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: stdout={} stderr={}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("git output should be UTF-8")
+    }
+
+    fn setup_git_repo() -> (TempDir, std::path::PathBuf) {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+        run_git(temp_dir.path(), &["config", "user.name", "Test User"]);
+        run_git(
+            temp_dir.path(),
+            &["config", "user.email", "test@example.com"],
+        );
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        (temp_dir, dataset_dir)
+    }
 
     #[test]
     fn test_git_operations_creation() {
@@ -756,5 +850,72 @@ mod tests {
         // Test HEAD parsing
         let head_id = ops.parse_commit_id("HEAD");
         assert!(head_id.is_ok());
+    }
+
+    #[test]
+    fn show_reports_missing_historical_child_mapping() {
+        let (temp_dir, dataset_dir) = setup_git_repo();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        store.tree.config.min_chunk_size = 2;
+        store.tree.config.max_chunk_size = 2;
+        store.tree.config.pattern = 0;
+        for i in 0..8 {
+            store
+                .insert(
+                    format!("key{i:02}").into_bytes(),
+                    format!("value{i:02}").into_bytes(),
+                )
+                .unwrap();
+        }
+        store.commit("Add multi-level data").unwrap();
+
+        assert!(
+            !store.tree.root.is_leaf,
+            "test setup must create an internal root"
+        );
+        let child_hash = ValueDigest::<32>::raw_hash(&store.tree.root.values[0]);
+
+        let mapping_path = dataset_dir.join("prolly_hash_mappings");
+        let original_mappings = std::fs::read_to_string(&mapping_path).unwrap();
+        let child_prefix = format!("{child_hash:x}:");
+        assert!(
+            original_mappings
+                .lines()
+                .any(|line| line.starts_with(&child_prefix)),
+            "test setup must include the child mapping"
+        );
+
+        let corrupt_mappings = original_mappings
+            .lines()
+            .filter(|line| !line.starts_with(&child_prefix))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&mapping_path, format!("{corrupt_mappings}\n")).unwrap();
+        run_git(temp_dir.path(), &["add", "dataset/prolly_hash_mappings"]);
+        run_git(
+            temp_dir.path(),
+            &["commit", "-m", "Remove one child mapping"],
+        );
+        let corrupt_commit = run_git(temp_dir.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
+
+        std::fs::write(&mapping_path, original_mappings).unwrap();
+        run_git(temp_dir.path(), &["add", "dataset/prolly_hash_mappings"]);
+        run_git(temp_dir.path(), &["commit", "-m", "Restore mappings"]);
+
+        let ops = GitOperations::new(store);
+        let err = match ops.show(&corrupt_commit) {
+            Ok(details) => {
+                panic!("showing a commit with a missing child mapping must fail, got {details:?}")
+            }
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("child") || err.to_string().contains("mapping"),
+            "unexpected error: {err}"
+        );
     }
 }
