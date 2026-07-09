@@ -142,6 +142,45 @@ fn test_history_tracks_key_across_commits() {
 }
 
 // ---------------------------------------------------------------------------
+// Commits stage only the dataset
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_commit_does_not_stage_unrelated_repo_root_file() {
+    let (temp, dataset) = common::setup_repo_and_dataset();
+    let mut store = GitVersionedKvStore::<32>::init(&dataset).unwrap();
+
+    std::fs::write(temp.path().join("unrelated.txt"), "keep me out").unwrap();
+    store
+        .insert(b"dataset_k".to_vec(), b"dataset_v".to_vec())
+        .unwrap();
+    let commit_id = store.commit("dataset-only commit").unwrap();
+
+    let output = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", &commit_id.to_string()])
+        .current_dir(temp.path())
+        .output()
+        .expect("git ls-tree");
+    assert!(
+        output.status.success(),
+        "git ls-tree failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let tree_entries = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        tree_entries
+            .lines()
+            .any(|line| line.starts_with("dataset/")),
+        "commit should still include dataset entries, got:\n{tree_entries}"
+    );
+    assert!(
+        !tree_entries.lines().any(|line| line == "unrelated.txt"),
+        "commit tree should not include unrelated repo-root file, got:\n{tree_entries}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Get keys at historical ref
 // ---------------------------------------------------------------------------
 

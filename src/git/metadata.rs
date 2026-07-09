@@ -36,8 +36,12 @@ pub trait MetadataBackend: Send {
 
     // ── Commit creation ──────────────────────────────────────────────
 
-    /// Stage all files under `git_root` and create a tree object.
-    fn stage_and_write_tree(&self, git_root: &Path) -> Result<gix::ObjectId, GitKvError>;
+    /// Stage all files under `dataset_dir` and create a tree object.
+    fn stage_and_write_tree(
+        &self,
+        git_root: &Path,
+        dataset_dir: &Path,
+    ) -> Result<gix::ObjectId, GitKvError>;
 
     /// Create a commit on top of the current HEAD (or as a root commit).
     fn write_commit(
@@ -221,10 +225,34 @@ impl MetadataBackend for GitMetadataBackend {
 
     // ── Commit creation ──────────────────────────────────────────────
 
-    fn stage_and_write_tree(&self, git_root: &Path) -> Result<gix::ObjectId, GitKvError> {
+    fn stage_and_write_tree(
+        &self,
+        git_root: &Path,
+        dataset_dir: &Path,
+    ) -> Result<gix::ObjectId, GitKvError> {
+        let git_root = git_root
+            .canonicalize()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve git root: {e}")))?;
+        let dataset_dir = dataset_dir.canonicalize().map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to resolve dataset dir: {e}"))
+        })?;
+        let dataset_rel = dataset_dir.strip_prefix(&git_root).map_err(|_| {
+            GitKvError::GitObjectError(format!(
+                "Dataset dir '{}' is not under git root '{}'",
+                dataset_dir.display(),
+                git_root.display()
+            ))
+        })?;
+        if dataset_rel.as_os_str().is_empty() {
+            return Err(GitKvError::GitObjectError(
+                "Refusing to stage the repository root as a dataset".to_string(),
+            ));
+        }
+
         let add_cmd = std::process::Command::new("git")
-            .args(["add", "-A", "."])
-            .current_dir(git_root)
+            .args(["add", "-A", "--"])
+            .arg(dataset_rel)
+            .current_dir(&git_root)
             .output()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
 
@@ -237,7 +265,7 @@ impl MetadataBackend for GitMetadataBackend {
 
         let write_tree_cmd = std::process::Command::new("git")
             .args(["write-tree"])
-            .current_dir(git_root)
+            .current_dir(&git_root)
             .output()
             .map_err(|e| {
                 GitKvError::GitObjectError(format!("Failed to run git write-tree: {e}"))
