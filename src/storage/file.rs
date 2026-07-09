@@ -16,7 +16,7 @@ use crate::digest::ValueDigest;
 use crate::node::ProllyNode;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -65,6 +65,39 @@ impl<const N: usize> FileNodeStorage<N> {
     fn blob_path(&self, hash: &ValueDigest<N>) -> PathBuf {
         self.blobs_dir().join(format!("{hash:x}"))
     }
+
+    fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
+        let Some(parent) = path.parent() else {
+            return Err(StorageError::Other(format!(
+                "cannot write path without parent: {}",
+                path.display()
+            )));
+        };
+        fs::create_dir_all(parent)?;
+
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| StorageError::Other(format!("invalid path: {}", path.display())))?;
+        let tmp_path = parent.join(format!("{name}.partial.{}", unique_suffix()));
+        let mut file = File::create(&tmp_path)?;
+        let result = (|| -> Result<(), StorageError> {
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&tmp_path, path)?;
+            // Best-effort directory sync: required for crash durability on
+            // filesystems that support it, harmlessly skipped elsewhere.
+            if let Ok(dir) = File::open(parent) {
+                let _ = dir.sync_all();
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp_path);
+        }
+        result
+    }
 }
 
 impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
@@ -89,9 +122,7 @@ impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
     ) -> Result<(), StorageError> {
         let path = self.node_path(&hash);
         let data = crate::serde_bincode::serialize(&node)?;
-        let mut file = File::create(path)?;
-        file.write_all(&data)?;
-        Ok(())
+        Self::atomic_write(&path, &data)
     }
 
     fn delete_node(&mut self, hash: &ValueDigest<N>) -> Result<(), StorageError> {
@@ -104,9 +135,7 @@ impl<const N: usize> NodeStorage<N> for FileNodeStorage<N> {
 
     fn save_config(&self, key: &str, config: &[u8]) {
         let path = self.config_path(key);
-        if let Ok(mut file) = File::create(path) {
-            let _ = file.write_all(config);
-        }
+        let _ = Self::atomic_write(&path, config);
     }
 
     fn get_config(&self, key: &str) -> Option<Vec<u8>> {
