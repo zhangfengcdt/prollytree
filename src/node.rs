@@ -696,11 +696,12 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
         base: u64,
         modulus: u64,
     ) -> u64 {
-        let mut hash = 0;
+        let mut hash: u64 = 0;
         for (key, value) in keys.iter().zip(values) {
-            hash = (hash * base
-                + Self::hash_item(key, base, modulus)
-                + Self::hash_item(value, base, modulus))
+            hash = hash
+                .wrapping_mul(base)
+                .wrapping_add(Self::hash_item(key, base, modulus))
+                .wrapping_add(Self::hash_item(value, base, modulus))
                 % modulus;
         }
         hash
@@ -723,23 +724,28 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
 
         let base_exp_window_size = Self::mod_exp(base, window_size, modulus);
 
-        let hash = (old_hash * base + new_key_hash + new_value_hash) % modulus;
-        let hash = (hash + modulus - (old_key_hash * base_exp_window_size) % modulus) % modulus;
+        let hash = old_hash
+            .wrapping_mul(base)
+            .wrapping_add(new_key_hash)
+            .wrapping_add(new_value_hash)
+            % modulus;
+        let hash = (hash + modulus - (old_key_hash.wrapping_mul(base_exp_window_size)) % modulus)
+            % modulus;
 
-        (hash + modulus - (old_value_hash * base_exp_window_size) % modulus) % modulus
+        (hash + modulus - (old_value_hash.wrapping_mul(base_exp_window_size)) % modulus) % modulus
     }
 
     fn mod_exp(base: u64, exp: u64, modulus: u64) -> u64 {
-        let mut result = 1;
+        let mut result: u64 = 1;
         let mut base = base % modulus;
         let mut exp = exp;
 
         while exp > 0 {
             if exp % 2 == 1 {
-                result = (result * base) % modulus;
+                result = (result.wrapping_mul(base)) % modulus;
             }
             exp >>= 1;
-            base = (base * base) % modulus;
+            base = (base.wrapping_mul(base)) % modulus;
         }
 
         result
