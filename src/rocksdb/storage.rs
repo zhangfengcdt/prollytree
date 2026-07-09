@@ -325,6 +325,7 @@ mod tests {
             level: 0,
             base: config.base,
             modulus: config.modulus,
+            content_hash: config.content_hash,
             min_chunk_size: config.min_chunk_size,
             max_chunk_size: config.max_chunk_size,
             pattern: config.pattern,
@@ -418,7 +419,7 @@ mod tests {
         let hash1 = node1.get_hash();
 
         // Insert and verify it's cached
-        storage.insert_node(hash1.clone(), node1.clone());
+        assert!(storage.insert_node(hash1.clone(), node1.clone()).is_ok());
 
         // Accessing should be from cache (we can't directly test this, but it should be fast)
         assert!(storage.get_node_by_hash(&hash1).is_some());
