@@ -243,6 +243,7 @@ fn bench_node_storage_direct(c: &mut Criterion) {
             min_chunk_size: config.min_chunk_size,
             max_chunk_size: config.max_chunk_size,
             pattern: config.pattern,
+            content_hash: config.content_hash,
             split: false,
             merged: false,
             encode_types: Vec::new(),
