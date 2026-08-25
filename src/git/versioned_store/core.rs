@@ -278,40 +278,67 @@ where
 
     /// Commit staged changes
     pub fn commit(&mut self, message: &str) -> Result<gix::ObjectId, GitKvError> {
+        let original_tree = self.tree.clone();
+        let original_staging_area = self.staging_area.clone();
+
         // Apply staged changes in a single batch so we run the streaming
         // canonical chunker once per commit instead of once per staged item.
-        let changes: Vec<(Vec<u8>, Option<Vec<u8>>)> = self.staging_area.drain().collect();
+        let changes: Vec<(Vec<u8>, Option<Vec<u8>>)> =
+            original_staging_area.clone().into_iter().collect();
         self.tree.apply_changes(changes);
 
-        // Persist the tree state (including updating root hash and saving config)
-        self.tree.persist_root();
+        let commit_result = (|| {
+            // Persist the tree state (including updating root hash and saving config)
+            self.tree.persist_root();
 
-        // For all storage types, also save the tree config to git for historical access
-        self.save_tree_config_to_git_internal()?;
+            // For all storage types, also save the tree config to git for historical access
+            self.save_tree_config_to_git_internal()?;
 
-        // Get the git root directory using work_dir() for worktree/submodule compatibility
-        let dataset_dir = self
-            .dataset_dir
-            .as_ref()
-            .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
-        let git_root = self
-            .metadata
-            .work_dir()
-            .or_else(|| Self::find_git_root(dataset_dir))
-            .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
+            // Get the git root directory using work_dir() for worktree/submodule compatibility
+            let dataset_dir = self
+                .dataset_dir
+                .as_ref()
+                .ok_or_else(|| GitKvError::GitObjectError("Dataset directory not set".into()))?;
+            let git_root = self
+                .metadata
+                .work_dir()
+                .or_else(|| Self::find_git_root(dataset_dir))
+                .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
-        // Stage and write tree via metadata backend
-        let tree_id = self.metadata.stage_and_write_tree(&git_root)?;
+            // Stage and write tree via metadata backend
+            let tree_id = self.metadata.stage_and_write_tree(&git_root)?;
 
-        // Create commit via metadata backend
-        let commit_id = self.metadata.write_commit(tree_id, message)?;
+            // Create commit via metadata backend
+            let commit_id = self.metadata.write_commit(tree_id, message)?;
 
-        // Update branch ref and HEAD
-        self.metadata
-            .update_branch(&self.current_branch, commit_id)?;
-        self.metadata.update_head(&self.current_branch)?;
+            // Update branch ref and HEAD
+            self.metadata
+                .update_branch(&self.current_branch, commit_id)?;
+            self.metadata.update_head(&self.current_branch)?;
+
+            Ok(commit_id)
+        })();
+
+        let commit_id = match commit_result {
+            Ok(commit_id) => commit_id,
+            Err(err) => {
+                self.tree = original_tree;
+                self.staging_area = original_staging_area;
+                let staging_restore = self.save_staging_area();
+                let _ = self.save_tree_config_to_git_internal();
+
+                if let Err(restore_err) = staging_restore {
+                    return Err(GitKvError::GitObjectError(format!(
+                        "{err}; additionally failed to restore staging area after aborted commit: {restore_err}"
+                    )));
+                }
+
+                return Err(err);
+            }
+        };
 
         // Clear staging area file since we've committed
+        self.staging_area.clear();
         self.save_staging_area()?;
 
         Ok(commit_id)

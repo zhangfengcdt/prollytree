@@ -208,11 +208,18 @@ impl<const N: usize> NodeStorage<N> for RocksDBNodeStorage<N> {
 
     fn insert_blob(&mut self, hash: ValueDigest<N>, bytes: &[u8]) -> Result<(), StorageError> {
         let db_key = Self::blob_key(&hash);
-        // Content-addressed: if the key is already present, skip writing.
-        // Avoids needlessly bumping RocksDB write counters on repeated
-        // inserts of the same blob.
-        if self.db.get(&db_key).ok().flatten().is_some() {
-            return Ok(());
+        match self
+            .db
+            .get(&db_key)
+            .map_err(|e| StorageError::Other(e.to_string()))?
+        {
+            Some(existing) if existing == bytes => return Ok(()),
+            Some(_) => {
+                return Err(StorageError::Other(format!(
+                    "blob {hash:x} already exists with different bytes"
+                )));
+            }
+            None => {}
         }
         self.db
             .put(&db_key, bytes)
@@ -325,6 +332,7 @@ mod tests {
             level: 0,
             base: config.base,
             modulus: config.modulus,
+            content_hash: config.content_hash,
             min_chunk_size: config.min_chunk_size,
             max_chunk_size: config.max_chunk_size,
             pattern: config.pattern,
@@ -418,7 +426,7 @@ mod tests {
         let hash1 = node1.get_hash();
 
         // Insert and verify it's cached
-        storage.insert_node(hash1.clone(), node1.clone());
+        assert!(storage.insert_node(hash1.clone(), node1.clone()).is_ok());
 
         // Accessing should be from cache (we can't directly test this, but it should be fast)
         assert!(storage.get_node_by_hash(&hash1).is_some());

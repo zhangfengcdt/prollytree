@@ -271,6 +271,6 @@ fn print_results(title: &str, payloads: &Vec<Payload>) {
 
 #[cfg(not(feature = "sql"))]
 fn main() {
-    println!("❌ This example requires the 'sql' feature to be enabled.");
-    println!("   Run with: cargo run --example sql_example --features sql");
+    println!("❌ This example requires the 'git' and 'sql' features to be enabled.");
+    println!("   Run with: cargo run --example sql --features \"git sql\"");
 }

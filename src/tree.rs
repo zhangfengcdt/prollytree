@@ -312,7 +312,7 @@ impl Default for TreeStats {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
     pub root: ProllyNode<N>,
     pub storage: S,
@@ -357,6 +357,11 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
     }
 
     fn insert_batch(&mut self, keys: &[Vec<u8>], values: &[Vec<u8>]) {
+        assert_eq!(
+            keys.len(),
+            values.len(),
+            "insert_batch requires the same number of keys and values"
+        );
         let batch = keys.iter().cloned().zip(values.iter().cloned().map(Some));
         self.apply_changes(batch);
     }
@@ -540,7 +545,15 @@ impl<const N: usize, S: NodeStorage<N>> Tree<N, S> for ProllyTree<N, S> {
                     None
                 }
             } else {
+                // Mirror `ProllyNode::find`: after certain delete patterns an internal
+                // node can transiently have no children (or fewer values than keys), so
+                // guard the empty case and clamp the index instead of indexing out of
+                // bounds and panicking.
+                if node.values.is_empty() {
+                    return None;
+                }
                 let i = node.keys.iter().rposition(|k| key >= &k[..]).unwrap_or(0);
+                let i = i.min(node.values.len() - 1);
                 let child_hash = node.values[i].clone();
 
                 if let Some(child_node) =
@@ -1474,6 +1487,18 @@ mod tests {
         assert!(tree.find(b"key2").is_some());
         assert!(tree.find(b"key3").is_some());
         assert!(tree.find(b"key4").is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "insert_batch requires the same number of keys and values")]
+    fn test_insert_batch_rejects_length_mismatch() {
+        let storage = InMemoryNodeStorage::<32>::default();
+        let mut tree = ProllyTree::new(storage, TreeConfig::default());
+
+        let keys = vec![b"key1".to_vec(), b"key2".to_vec()];
+        let values = vec![b"value1".to_vec()];
+
+        tree.insert_batch(&keys, &values);
     }
 
     #[test]
@@ -2783,6 +2808,34 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod prefix_free_collision_probe {
+    use super::*;
+    use crate::storage::InMemoryNodeStorage;
+
+    /// Red-team attack #1: distinct (k,v) sets must NOT share a root hash. get_hash =
+    /// SHA256(keys.concat() ++ values.concat()) has no length delimiters, so values
+    /// "ab"+"c" and "a"+"bc" both concat to "abc" -> same hash input -> same root.
+    #[test]
+    fn distinct_contents_must_not_share_root() {
+        let cfg = TreeConfig::<32>::default();
+        let mut a = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+        a.insert(b"k1".to_vec(), b"ab".to_vec());
+        a.insert(b"k2".to_vec(), b"c".to_vec());
+        let mut b = ProllyTree::new(InMemoryNodeStorage::<32>::default(), cfg.clone());
+        b.insert(b"k1".to_vec(), b"a".to_vec());
+        b.insert(b"k2".to_vec(), b"bc".to_vec());
+        let ra = a.get_root_hash().unwrap();
+        let rb = b.get_root_hash().unwrap();
+        // also a key-vs-value boundary collision: key "k1k2" value ... vs keys "k1","k2"
+        assert_ne!(
+            ra.as_bytes(),
+            rb.as_bytes(),
+            "PREFIX-FREE COLLISION CONFIRMED: distinct (k,v) sets share a root hash"
+        );
+    }
+}
+
 /// O(diff) structural-diff differential tests: the structural `diff_nodes_recursive`
 /// must emit a BYTE-IDENTICAL `Vec<DiffResult>` to the proven full-leaf flatten oracle
 /// (`diff_nodes_flatten`) on every shape — and load strictly fewer nodes when a large
@@ -3080,8 +3133,6 @@ mod odiff_differential {
         assert_identical(&range_pairs(0, 4, 0), &[], "small_to_empty");
     }
 }
-
-
 #[cfg(test)]
 mod chunker_invariants {
     //! Red-team RT-B F1: does the production streaming path (insert) ever emit a
