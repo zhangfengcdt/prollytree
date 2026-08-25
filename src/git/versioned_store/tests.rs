@@ -215,16 +215,89 @@ mod proof_tests {
             Some(&b"value3".to_vec())
         );
     }
+
+    #[test]
+    fn get_keys_at_ref_errors_when_committed_hash_mappings_are_missing() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = temp_dir.path().to_str().unwrap();
+
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to initialize git repo");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to set git user name");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to set git user email");
+
+        let dataset_path = temp_dir.path().join("dataset");
+        std::fs::create_dir(&dataset_path).expect("Failed to create dataset directory");
+
+        let _cwd_guard = CwdGuard::set(&dataset_path);
+        let mut store =
+            GitVersionedKvStore::<32>::init(&dataset_path).expect("Failed to initialize store");
+
+        store
+            .insert(b"key1".to_vec(), b"value1".to_vec())
+            .expect("Failed to insert key1");
+        let good_commit = store.commit("Add key1").expect("Failed to commit");
+        let good_keys = store
+            .get_keys_at_ref(&good_commit.to_hex().to_string())
+            .expect("good commit should be readable");
+        assert_eq!(good_keys.get(&b"key1".to_vec()), Some(&b"value1".to_vec()));
+
+        drop(store);
+
+        let rm_output = std::process::Command::new("git")
+            .args(["rm", "dataset/prolly_hash_mappings"])
+            .current_dir(repo_path)
+            .output()
+            .expect("git rm failed to run");
+        assert!(
+            rm_output.status.success(),
+            "git rm failed: {}",
+            String::from_utf8_lossy(&rm_output.stderr)
+        );
+        let commit_output = std::process::Command::new("git")
+            .args(["commit", "-m", "Remove hash mappings"])
+            .current_dir(repo_path)
+            .output()
+            .expect("git commit failed to run");
+        assert!(
+            commit_output.status.success(),
+            "git commit failed: {}",
+            String::from_utf8_lossy(&commit_output.stderr)
+        );
+
+        let store =
+            GitVersionedKvStore::<32>::open(&dataset_path).expect("corrupt store still opens");
+        let err = store
+            .get_keys_at_ref("HEAD")
+            .expect_err("missing committed mappings must not look like an empty store");
+
+        assert!(
+            err.to_string().contains("prolly_hash_mappings"),
+            "unexpected error: {err}"
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::diff::IgnoreConflictsResolver;
     use crate::git::types::DiffOperation;
     #[cfg(feature = "rocksdb_storage")]
     use crate::git::versioned_store::RocksDBVersionedKvStore;
     use crate::git::versioned_store::{
-        FileVersionedKvStore, GitVersionedKvStore, HistoricalAccess, HistoricalCommitAccess,
-        InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
+        FileVersionedKvStore, GitNamespacedKvStore, GitVersionedKvStore, HistoricalAccess,
+        HistoricalCommitAccess, InMemoryVersionedKvStore, ThreadSafeGitVersionedKvStore,
     };
     use crate::tree::Tree;
     use tempfile::TempDir;
@@ -267,6 +340,67 @@ mod tests {
         let _cwd = CwdGuard::set(&dataset_dir);
         let store = GitVersionedKvStore::<32>::init(&dataset_dir);
         assert!(store.is_ok());
+    }
+
+    #[test]
+    fn namespaced_merge_rejects_invalid_committed_hash_mapping_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        std::process::Command::new("git")
+            .args(["config", "user.name", "ProllyTree Test"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config user.name");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "prollytree@example.test"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config user.email");
+
+        let mut store = GitNamespacedKvStore::<32>::init(&dataset_dir).unwrap();
+        store
+            .namespace("personal")
+            .insert(b"base".to_vec(), b"base-value".to_vec())
+            .unwrap();
+        store.commit("base").unwrap();
+
+        store.create_branch("feature").unwrap();
+        store
+            .namespace("personal")
+            .insert(b"feature".to_vec(), b"feature-value".to_vec())
+            .unwrap();
+        store.commit("feature data").unwrap();
+
+        let mapping_path = dataset_dir.join("prolly_hash_mappings");
+        let mut mappings = std::fs::read_to_string(&mapping_path).unwrap();
+        mappings.push_str("not-hex:also-not-a-git-object\n");
+        std::fs::write(&mapping_path, mappings).unwrap();
+
+        let add = std::process::Command::new("git")
+            .args(["add", "dataset/prolly_hash_mappings"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git add");
+        assert!(add.status.success(), "git add failed: {add:?}");
+        let commit = std::process::Command::new("git")
+            .args(["commit", "-m", "corrupt feature mappings"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success(), "git commit failed: {commit:?}");
+
+        store.checkout("main").unwrap();
+        let err = store
+            .merge("feature", &IgnoreConflictsResolver)
+            .expect_err("invalid committed mapping entries must fail merge");
+        assert!(
+            err.to_string().contains("Invalid prolly hash"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -322,6 +456,56 @@ mod tests {
         // Check that staging area is clear
         let status = store.status();
         assert_eq!(status.len(), 0);
+    }
+
+    #[test]
+    fn failed_commit_preserves_staging_and_committed_head() {
+        let temp_dir = TempDir::new().unwrap();
+
+        gix::init(temp_dir.path()).unwrap();
+
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config name failed");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git config email failed");
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+
+        let config_path = dataset_dir.join("prolly_config_tree_config");
+        std::fs::remove_file(&config_path).unwrap();
+        std::fs::create_dir(&config_path).unwrap();
+
+        let err = store
+            .commit("commit should fail")
+            .expect_err("config write failure should abort commit");
+        assert!(
+            err.to_string().contains("Failed to write config file"),
+            "unexpected error: {err}"
+        );
+
+        let status = store.status();
+        assert_eq!(
+            status,
+            vec![(b"key1".to_vec(), "added".to_string())],
+            "failed commit must leave the staged change available to retry"
+        );
+
+        let head_keys = store.get_keys_at_ref("HEAD").unwrap();
+        assert!(
+            !head_keys.contains_key(&b"key1".to_vec()),
+            "failed commit must not advance committed history"
+        );
     }
 
     #[test]
@@ -844,6 +1028,37 @@ mod tests {
             err.to_string().contains("Root node not found"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn file_open_reports_missing_root_node() {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        {
+            let _cwd = CwdGuard::set(&dataset_dir);
+            let mut store = FileVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+            store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+            store.commit("Add data").unwrap();
+
+            let root_hash = store.tree.get_root_hash().expect("root hash after commit");
+            let root_path = temp_dir
+                .path()
+                .join(".git")
+                .join("prolly")
+                .join("nodes")
+                .join("files")
+                .join(format!("{root_hash:x}"));
+            std::fs::remove_file(root_path).unwrap();
+        }
+
+        let err = match FileVersionedKvStore::<32>::open(&dataset_dir) {
+            Ok(_) => panic!("opening a store with a missing root node must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("root"), "unexpected error: {err}");
     }
 
     #[test]
