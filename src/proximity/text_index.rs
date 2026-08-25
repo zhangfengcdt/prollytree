@@ -139,6 +139,14 @@ pub enum TextIndexError {
     #[error("dimension mismatch: stored index uses dim {stored}, embedder produces dim {got}")]
     DimensionMismatch { stored: u16, got: u16 },
 
+    /// The stored text-index tuning does not match the requested config.
+    #[error("config mismatch for {field}: stored {stored}, supplied {supplied}")]
+    ConfigMismatch {
+        field: &'static str,
+        stored: String,
+        supplied: String,
+    },
+
     /// The underlying [`ProximityIndex`] returned an error.
     #[error("proximity error: {0}")]
     Proximity(#[from] ProximityError),
@@ -276,6 +284,27 @@ where
             return Err(TextIndexError::DimensionMismatch {
                 stored: state.dim,
                 got: embedder.dim(),
+            });
+        }
+        if state.metric != metric {
+            return Err(TextIndexError::ConfigMismatch {
+                field: "metric",
+                stored: format!("{:?}", state.metric),
+                supplied: format!("{metric:?}"),
+            });
+        }
+        if state.level_bits != level_bits {
+            return Err(TextIndexError::ConfigMismatch {
+                field: "level_bits",
+                stored: state.level_bits.to_string(),
+                supplied: level_bits.to_string(),
+            });
+        }
+        if state.max_bucket_size != max_bucket_size {
+            return Err(TextIndexError::ConfigMismatch {
+                field: "max_bucket_size",
+                stored: state.max_bucket_size.to_string(),
+                supplied: max_bucket_size.to_string(),
             });
         }
         Ok(())
@@ -417,31 +446,37 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
     /// `Chunker` into one or more chunks; each chunk is embedded and stored
     /// under its own chunk-id.
     ///
-    /// **Re-insert semantics:** existing chunks for this `id` are removed
-    /// first, so that switching to a chunker that produces fewer chunks
-    /// doesn't leak stale ones.
+    /// **Re-insert semantics:** replacement chunks are embedded first, then
+    /// existing chunks for this `id` are removed, so a failed embed leaves the
+    /// previous document searchable. A successful empty chunk set removes the
+    /// document from the index.
     pub fn insert(&mut self, id: &[u8], text: &str) -> Result<(), TextIndexError> {
-        // Drop any previous chunks for this doc_id so the new chunk count
-        // overwrites cleanly (handles "re-chunk after switching chunkers"
-        // as well as plain upserts).
-        self.delete_chunks_for_doc(id);
-
         let chunks = self.chunker.split(text);
         if chunks.is_empty() {
             // The chunker explicitly opted out (e.g. an empty document under
             // LineChunker). Treat as "don't index" rather than as an error —
             // matches the cascade transformer's `None` semantics.
+            self.delete_chunks_for_doc(id);
             return Ok(());
         }
+        if self.embedder.dim() == 0 {
+            return Err(TextIndexError::Proximity(ProximityError::ZeroDim));
+        }
+        let mut replacements = Vec::with_capacity(chunks.len());
         for (idx, chunk_text) in chunks.iter().enumerate() {
             let vec = self.embedder.embed(chunk_text)?;
-            if vec.len() as u16 != self.embedder.dim() {
+            if vec.len() != usize::from(self.embedder.dim()) {
                 return Err(TextIndexError::Embed(EmbedError::DimensionMismatch {
                     expected: self.embedder.dim(),
-                    got: vec.len() as u16,
+                    got: vec.len(),
                 }));
             }
             let chunk_id = make_chunk_id(id, idx as u32);
+            replacements.push((chunk_id, vec));
+        }
+
+        self.delete_chunks_for_doc(id);
+        for (chunk_id, vec) in replacements {
             self.inner.insert(chunk_id, vec)?;
         }
         Ok(())
@@ -575,6 +610,42 @@ mod tests {
         TextIndexConfig::new(HashEmbedder::new(dim, 0))
     }
 
+    #[derive(Debug, Clone)]
+    struct FailsOnNeedleEmbedder {
+        inner: HashEmbedder,
+        needle: &'static str,
+    }
+
+    impl FailsOnNeedleEmbedder {
+        fn new(dim: u16, needle: &'static str) -> Self {
+            Self {
+                inner: HashEmbedder::new(dim, 0),
+                needle,
+            }
+        }
+    }
+
+    impl Embedder for FailsOnNeedleEmbedder {
+        fn id(&self) -> &str {
+            self.inner.id()
+        }
+
+        fn version(&self) -> &str {
+            self.inner.version()
+        }
+
+        fn dim(&self) -> u16 {
+            self.inner.dim()
+        }
+
+        fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+            if text.contains(self.needle) {
+                return Err(EmbedError::Failure("forced insert failure".to_string()));
+            }
+            self.inner.embed(text)
+        }
+    }
+
     #[test]
     fn insert_and_search_finds_exact_match() {
         let storage = InMemoryNodeStorage::<32>::new();
@@ -592,6 +663,23 @@ mod tests {
             "expected near-zero, got {}",
             hits[0].score
         );
+    }
+
+    #[test]
+    fn failed_reinsert_preserves_existing_document() {
+        let storage = InMemoryNodeStorage::<32>::new();
+        let mut idx = TextIndex::new(
+            storage,
+            TextIndexConfig::new(FailsOnNeedleEmbedder::new(8, "fail-insert")),
+        );
+        idx.insert(b"doc:1", "stable text").unwrap();
+
+        let err = idx.insert(b"doc:1", "please fail-insert").unwrap_err();
+        assert!(err.to_string().contains("forced insert failure"));
+
+        let hits = idx.search("stable text", 1).unwrap();
+        assert_eq!(hits[0].id, b"doc:1".to_vec());
+        assert!(hits[0].score < 1e-4);
     }
 
     #[test]

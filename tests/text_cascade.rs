@@ -26,12 +26,52 @@ mod common;
 
 use common::setup_repo_and_dataset;
 use prollytree::git::versioned_store::FileNamespacedKvStore;
-use prollytree::proximity::{HashEmbedder, TextIndexConfig};
+use prollytree::proximity::{EmbedError, Embedder, HashEmbedder, TextIndexConfig};
 
 const N: usize = 32;
 
 fn cfg(dim: u16, seed: u64) -> TextIndexConfig<HashEmbedder> {
     TextIndexConfig::new(HashEmbedder::new(dim, seed))
+}
+
+#[derive(Debug, Clone)]
+struct FailsOnNeedleEmbedder {
+    inner: HashEmbedder,
+    needle: &'static str,
+}
+
+impl FailsOnNeedleEmbedder {
+    fn new(dim: u16, seed: u64, needle: &'static str) -> Self {
+        Self {
+            inner: HashEmbedder::new(dim, seed),
+            needle,
+        }
+    }
+}
+
+impl Embedder for FailsOnNeedleEmbedder {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    fn version(&self) -> &str {
+        self.inner.version()
+    }
+
+    fn dim(&self) -> u16 {
+        self.inner.dim()
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        if text.contains(self.needle) {
+            return Err(EmbedError::Failure("forced cascade failure".to_string()));
+        }
+        self.inner.embed(text)
+    }
+}
+
+fn failing_cfg(dim: u16, seed: u64) -> TextIndexConfig<FailsOnNeedleEmbedder> {
+    TextIndexConfig::new(FailsOnNeedleEmbedder::new(dim, seed, "fail-cascade"))
 }
 
 #[test]
@@ -209,6 +249,87 @@ fn cascade_silently_skips_non_utf8_value() {
     assert_eq!(personal.get(b"k"), Some(bad_utf8));
     let docs = personal.text_index("docs", cfg(8, 0)).unwrap();
     assert_eq!(docs.len(), 0);
+}
+
+#[test]
+fn cascade_embed_error_preserves_primary_and_existing_chunks() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+
+    {
+        let _ = store
+            .namespace("personal")
+            .text_index("docs", failing_cfg(8, 0))
+            .unwrap();
+    }
+    store.set_cascade("personal", vec!["docs".to_string()]);
+
+    {
+        let mut personal = store.namespace("personal");
+        personal
+            .insert(b"doc:1".to_vec(), b"stable text".to_vec())
+            .unwrap();
+    }
+    store.commit("initial cascade").unwrap();
+
+    {
+        let mut personal = store.namespace("personal");
+        let err = personal
+            .insert(b"doc:1".to_vec(), b"please fail-cascade".to_vec())
+            .unwrap_err();
+        assert!(err.to_string().contains("forced cascade failure"));
+        assert_eq!(personal.get(b"doc:1"), Some(b"stable text".to_vec()));
+    }
+
+    let mut personal = store.namespace("personal");
+    let mut docs = personal.text_index("docs", failing_cfg(8, 0)).unwrap();
+    assert_eq!(docs.len(), 1);
+    let hits = docs.search("stable text", 1).unwrap();
+    assert_eq!(hits[0].id, b"doc:1".to_vec());
+}
+
+#[test]
+fn cascade_embed_error_does_not_rewrite_earlier_targets() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+
+    {
+        let mut personal = store.namespace("personal");
+        let _ = personal.text_index("first", cfg(8, 1)).unwrap();
+        let _ = personal.text_index("second", failing_cfg(8, 2)).unwrap();
+    }
+    store.set_cascade("personal", vec!["first".to_string(), "second".to_string()]);
+
+    {
+        let mut personal = store.namespace("personal");
+        personal
+            .insert(b"doc:1".to_vec(), b"stable text".to_vec())
+            .unwrap();
+    }
+    store.commit("initial cascade").unwrap();
+
+    {
+        let mut personal = store.namespace("personal");
+        let err = personal
+            .insert(b"doc:1".to_vec(), b"please fail-cascade".to_vec())
+            .unwrap_err();
+        assert!(err.to_string().contains("forced cascade failure"));
+        assert_eq!(personal.get(b"doc:1"), Some(b"stable text".to_vec()));
+    }
+
+    let mut personal = store.namespace("personal");
+    {
+        let mut first = personal.text_index("first", cfg(8, 1)).unwrap();
+        let hits = first.search("stable text", 1).unwrap();
+        assert_eq!(hits[0].id, b"doc:1".to_vec());
+        assert!(hits[0].score < 1e-4);
+    }
+    {
+        let mut second = personal.text_index("second", failing_cfg(8, 2)).unwrap();
+        let hits = second.search("stable text", 1).unwrap();
+        assert_eq!(hits[0].id, b"doc:1".to_vec());
+        assert!(hits[0].score < 1e-4);
+    }
 }
 
 #[test]
