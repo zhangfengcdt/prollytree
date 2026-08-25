@@ -271,6 +271,9 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
         let mut beam: Vec<(f32, ValueDigest<N>)> = vec![(0.0, root_hash)];
 
         loop {
+            if beam.is_empty() {
+                return Ok(Vec::new());
+            }
             let head_is_leaf = self.load_node(&beam[0].1)?.is_leaf();
             if head_is_leaf {
                 break;
@@ -287,6 +290,9 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
             dedup_keep_min(&mut next);
             next.sort_by(|a, b| f32_total_cmp(a.0, b.0));
             next.truncate(ef);
+            if next.is_empty() {
+                return Ok(Vec::new());
+            }
             beam = next;
         }
 
@@ -422,6 +428,9 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
         if level == 0 {
             return self.build_leaf(entries);
         }
+        if entries.is_empty() {
+            return self.build_leaf(entries);
+        }
 
         let boundary_indices: Vec<usize> = entries
             .iter()
@@ -429,10 +438,9 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
             .filter(|(_, e)| e.level >= level)
             .map(|(i, _)| i)
             .collect();
-        debug_assert!(
-            !boundary_indices.is_empty(),
-            "build_subtree at level {level} found no boundaries"
-        );
+        if boundary_indices.is_empty() {
+            return self.build_subtree(entries, level - 1);
+        }
 
         let boundaries: Vec<(Vec<u8>, Vec<f32>)> = boundary_indices
             .iter()
@@ -447,13 +455,18 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
         }
 
         let mut child_hashes = Vec::with_capacity(boundaries.len());
-        for bucket in &buckets {
+        let mut ids = Vec::with_capacity(boundaries.len());
+        let mut vecs = Vec::with_capacity(boundaries.len());
+        for (bucket, (id, vector)) in buckets.iter().zip(boundaries.iter()) {
+            if bucket.is_empty() {
+                continue;
+            }
             let h = self.build_subtree(bucket, level - 1)?;
             child_hashes.push(h);
+            ids.push(id.clone());
+            vecs.push(vector.clone());
         }
 
-        let ids: Vec<Vec<u8>> = boundaries.iter().map(|(id, _)| id.clone()).collect();
-        let vecs: Vec<Vec<f32>> = boundaries.iter().map(|(_, v)| v.clone()).collect();
         let node = ProximityNode::new(level, ids, vecs, child_hashes, dim, metric_tag);
         self.persist_node(node)
     }
