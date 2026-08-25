@@ -1077,7 +1077,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
             ));
         }
 
-        let storage = FileNodeStorage::<N>::new(file_storage_path.clone()).map_err(|e| {
+        let storage = FileNodeStorage::<N>::new(file_storage_path).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to create file storage: {e}"))
         })?;
 
@@ -1096,17 +1096,19 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
         let config: TreeConfig<N> = serde_json::from_str(&config_data)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
-        // Try to load existing tree from storage using the config's root hash
-        let tree =
-            if let Some(existing_tree) = ProllyTree::load_from_storage(storage, config.clone()) {
-                existing_tree
-            } else {
-                // Create new storage instance since the original was consumed
-                let new_storage = FileNodeStorage::<N>::new(file_storage_path).map_err(|e| {
-                    GitKvError::GitObjectError(format!("Failed to create file storage: {e}"))
-                })?;
-                ProllyTree::new(new_storage, config)
-            };
+        // Existing persistent stores must have their saved root available.
+        // Falling back to an empty tree would hide data loss and let a later
+        // commit overwrite the dataset with an empty root.
+        let root_hash = config
+            .root_hash
+            .as_ref()
+            .map(|hash| format!("{hash:x}"))
+            .unwrap_or_else(|| "<missing>".to_string());
+        let tree = ProllyTree::load_from_storage(storage, config).ok_or_else(|| {
+            GitKvError::GitObjectError(format!(
+                "Failed to load file store root node {root_hash} from storage"
+            ))
+        })?;
 
         // Get current branch
         let current_branch = git_repo
@@ -1292,9 +1294,19 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBacke
         let config: TreeConfig<N> = serde_json::from_str(&config_data)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
-        // Try to load existing tree from storage using the config's root hash
-        let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
-            .unwrap_or_else(|| ProllyTree::new(storage, config));
+        // Existing persistent stores must have their saved root available.
+        // Falling back to an empty tree would hide data loss and let a later
+        // commit overwrite the dataset with an empty root.
+        let root_hash = config
+            .root_hash
+            .as_ref()
+            .map(|hash| format!("{hash:x}"))
+            .unwrap_or_else(|| "<missing>".to_string());
+        let tree = ProllyTree::load_from_storage(storage, config).ok_or_else(|| {
+            GitKvError::GitObjectError(format!(
+                "Failed to load RocksDB store root node {root_hash} from storage"
+            ))
+        })?;
 
         // Get current branch
         let current_branch = git_repo
