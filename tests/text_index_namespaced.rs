@@ -25,12 +25,52 @@ mod common;
 
 use common::setup_repo_and_dataset;
 use prollytree::git::versioned_store::FileNamespacedKvStore;
-use prollytree::proximity::{HashEmbedder, TextIndexConfig, TextIndexError};
+use prollytree::proximity::{EmbedError, Embedder, HashEmbedder, TextIndexConfig, TextIndexError};
 
 const N: usize = 32;
 
 fn cfg(dim: u16, seed: u64) -> TextIndexConfig<HashEmbedder> {
     TextIndexConfig::new(HashEmbedder::new(dim, seed))
+}
+
+#[derive(Debug, Clone)]
+struct FailsOnNeedleEmbedder {
+    inner: HashEmbedder,
+    needle: &'static str,
+}
+
+impl FailsOnNeedleEmbedder {
+    fn new(dim: u16, seed: u64, needle: &'static str) -> Self {
+        Self {
+            inner: HashEmbedder::new(dim, seed),
+            needle,
+        }
+    }
+}
+
+impl Embedder for FailsOnNeedleEmbedder {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    fn version(&self) -> &str {
+        self.inner.version()
+    }
+
+    fn dim(&self) -> u16 {
+        self.inner.dim()
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        if text.contains(self.needle) {
+            return Err(EmbedError::Failure("forced insert failure".to_string()));
+        }
+        self.inner.embed(text)
+    }
+}
+
+fn failing_cfg(dim: u16, seed: u64) -> TextIndexConfig<FailsOnNeedleEmbedder> {
+    TextIndexConfig::new(FailsOnNeedleEmbedder::new(dim, seed, "fail-insert"))
 }
 
 #[test]
@@ -46,6 +86,22 @@ fn text_index_insert_search_basic() {
 
     // Exact match for an existing text → that document tops the result list.
     let hits = docs.search("the quick brown fox", 1).unwrap();
+    assert_eq!(hits[0].id, b"doc:1".to_vec());
+    assert!(hits[0].score < 1e-4);
+}
+
+#[test]
+fn text_index_failed_reinsert_preserves_existing_document() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    let mut personal = store.namespace("personal");
+    let mut docs = personal.text_index("docs", failing_cfg(8, 0)).unwrap();
+
+    docs.insert(b"doc:1", "stable text").unwrap();
+    let err = docs.insert(b"doc:1", "please fail-insert").unwrap_err();
+    assert!(err.to_string().contains("forced insert failure"));
+
+    let hits = docs.search("stable text", 1).unwrap();
     assert_eq!(hits[0].id, b"doc:1".to_vec());
     assert!(hits[0].score < 1e-4);
 }
@@ -79,8 +135,6 @@ fn text_index_survives_commit_and_reopen() {
 #[test]
 fn reopen_with_different_embedder_id_returns_mismatch() {
     // Different embedder family at re-open time → EmbedderMismatch.
-    use prollytree::proximity::{EmbedError, Embedder};
-
     struct DifferentFamily(HashEmbedder);
     impl Embedder for DifferentFamily {
         fn id(&self) -> &str {
