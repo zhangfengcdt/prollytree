@@ -38,9 +38,15 @@ fn splitty_config() -> TreeConfig<32> {
 fn bug_proof_on_empty_internal_node_does_not_panic() {
     let mut tree = ProllyTree::new(InMemoryNodeStorage::<32>::default(), splitty_config());
     for i in 0..500u32 {
-        tree.insert(format!("key-{i:08}").into_bytes(), format!("v{i}").into_bytes());
+        tree.insert(
+            format!("key-{i:08}").into_bytes(),
+            format!("v{i}").into_bytes(),
+        );
     }
-    assert!(!tree.root.is_leaf, "test needs a multi-level tree (internal root)");
+    assert!(
+        !tree.root.is_leaf,
+        "test needs a multi-level tree (internal root)"
+    );
 
     // Simulate the transient state a delete can leave.
     tree.root.values.clear();
@@ -55,9 +61,15 @@ fn bug_proof_on_empty_internal_node_does_not_panic() {
 fn bug_proof_on_underfull_internal_node_does_not_panic() {
     let mut tree = ProllyTree::new(InMemoryNodeStorage::<32>::default(), splitty_config());
     for i in 0..500u32 {
-        tree.insert(format!("key-{i:08}").into_bytes(), format!("v{i}").into_bytes());
+        tree.insert(
+            format!("key-{i:08}").into_bytes(),
+            format!("v{i}").into_bytes(),
+        );
     }
-    assert!(!tree.root.is_leaf, "test needs a multi-level tree (internal root)");
+    assert!(
+        !tree.root.is_leaf,
+        "test needs a multi-level tree (internal root)"
+    );
 
     tree.root.values.pop();
 
@@ -70,13 +82,22 @@ fn bug_proof_on_underfull_internal_node_does_not_panic() {
 fn proof_roundtrip_multilevel() {
     let mut tree = ProllyTree::new(InMemoryNodeStorage::<32>::default(), splitty_config());
     for i in 0..500u32 {
-        tree.insert(format!("key-{i:08}").into_bytes(), format!("v{i}").into_bytes());
+        tree.insert(
+            format!("key-{i:08}").into_bytes(),
+            format!("v{i}").into_bytes(),
+        );
     }
     let key = b"key-00000042";
     let proof = tree.generate_proof(key);
-    assert!(tree.verify(proof, key, None), "valid proof for a present key must verify");
+    assert!(
+        tree.verify(proof, key, None),
+        "valid proof for a present key must verify"
+    );
 
     let absent = b"key-does-not-exist";
     let proof = tree.generate_proof(absent);
-    assert!(!tree.verify(proof, absent, None), "absent key must not verify");
+    assert!(
+        !tree.verify(proof, absent, None),
+        "absent key must not verify"
+    );
 }

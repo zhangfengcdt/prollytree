@@ -55,7 +55,9 @@ fn bug_degenerate_min_chunk_size_terminates_not_hang() {
             let _ = worker.join();
         }
         Err(_) => {
-            panic!("chunk_content did not terminate with min_chunk_size=0 (infinite-loop regression)")
+            panic!(
+                "chunk_content did not terminate with min_chunk_size=0 (infinite-loop regression)"
+            )
         }
     }
 }
@@ -72,7 +74,12 @@ fn bug_degenerate_config_preserves_all_keys() {
         ..TreeConfig::default()
     };
     let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..200u32)
-        .map(|i| (format!("k{i:04}").into_bytes(), format!("v{i}").into_bytes()))
+        .map(|i| {
+            (
+                format!("k{i:04}").into_bytes(),
+                format!("v{i}").into_bytes(),
+            )
+        })
         .collect();
     let root = ProllyNode::build_canonical_from_pairs(pairs.clone(), &config, &mut storage);
 

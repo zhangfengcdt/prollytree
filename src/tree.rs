@@ -3105,4 +3105,3 @@ mod odiff_differential {
         assert_identical(&range_pairs(0, 4, 0), &[], "small_to_empty");
     }
 }
-
