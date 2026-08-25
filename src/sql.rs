@@ -64,6 +64,10 @@ use crate::git::versioned_store::ThreadSafeGitVersionedKvStore;
 const LEGACY_SCHEMA_ID: &str = "__schema__";
 #[cfg(feature = "sql")]
 const ROW_KEY_PREFIX: &[u8] = b":row:";
+#[cfg(feature = "sql")]
+const SCHEMA_KEY_SUFFIX: &[u8] = b":\0schema";
+#[cfg(feature = "sql")]
+const LEGACY_SCHEMA_KEY_SUFFIX: &[u8] = b":__schema__";
 
 /// GlueSQL storage backend using ProllyTree.
 ///
@@ -132,6 +136,12 @@ impl<const D: usize> ProllyStorage<D> {
 
     /// Get schema key for a table
     fn schema_key(table_name: &str) -> Vec<u8> {
+        let mut key = table_name.as_bytes().to_vec();
+        key.extend_from_slice(SCHEMA_KEY_SUFFIX);
+        key
+    }
+
+    fn legacy_schema_key(table_name: &str) -> Vec<u8> {
         format!("{table_name}:{LEGACY_SCHEMA_ID}").into_bytes()
     }
 
@@ -166,9 +176,8 @@ impl<const D: usize> ProllyStorage<D> {
     /// Parse a key from the legacy untyped storage key string.
     fn parse_legacy_key_from_storage_key(storage_key: &[u8], table_prefix: &str) -> Key {
         let key_str = String::from_utf8_lossy(storage_key);
-        let key_part = key_str
-            .strip_prefix(&format!("{table_prefix}:"))
-            .unwrap_or("");
+        let prefix = format!("{table_prefix}:");
+        let key_part = key_str.strip_prefix(&prefix).unwrap_or("");
 
         if let Ok(id) = key_part.parse::<i64>() {
             Key::I64(id)
@@ -180,6 +189,7 @@ impl<const D: usize> ProllyStorage<D> {
     /// Check whether a key is the legacy schema sentinel for this table.
     fn is_schema_storage_key(table_name: &str, storage_key: &[u8]) -> bool {
         storage_key == Self::schema_key(table_name).as_slice()
+            || storage_key == Self::legacy_schema_key(table_name).as_slice()
     }
 
     /// Commit with a custom message.
@@ -225,19 +235,31 @@ impl<const D: usize> Store for ProllyStorage<D> {
             let all_keys = store
                 .list_keys()
                 .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
-            let mut schemas = Vec::new();
+            let mut schemas = HashMap::new();
 
             for storage_key in all_keys {
-                if storage_key.ends_with(b":__schema__") {
+                let table_name_bytes = if let Some(table_name) =
+                    storage_key.strip_suffix(SCHEMA_KEY_SUFFIX)
+                {
+                    table_name
+                } else if let Some(table_name) = storage_key.strip_suffix(LEGACY_SCHEMA_KEY_SUFFIX)
+                {
+                    table_name
+                } else {
+                    continue;
+                };
+                let table_name = String::from_utf8_lossy(table_name_bytes);
+                if Self::is_schema_storage_key(&table_name, &storage_key) {
                     if let Some(schema_data) = store.get(&storage_key) {
                         let schema: Schema = serde_json::from_slice(&schema_data).map_err(|e| {
                             Error::StorageMsg(format!("Failed to deserialize schema: {e}"))
                         })?;
-                        schemas.push(schema);
+                        schemas.insert(schema.table_name.clone(), schema);
                     }
                 }
             }
 
+            let mut schemas: Vec<_> = schemas.into_values().collect();
             schemas.sort_by(|a, b| a.table_name.cmp(&b.table_name));
             Ok(schemas)
         })
@@ -248,8 +270,9 @@ impl<const D: usize> Store for ProllyStorage<D> {
     async fn fetch_schema(&self, table_name: &str) -> Result<Option<Schema>> {
         let store = self.store.clone();
         let key = Self::schema_key(table_name);
+        let legacy_key = Self::legacy_schema_key(table_name);
         tokio::task::spawn_blocking(move || {
-            if let Some(schema_data) = store.get(&key) {
+            if let Some(schema_data) = store.get(&key).or_else(|| store.get(&legacy_key)) {
                 let schema: Schema = serde_json::from_slice(&schema_data)
                     .map_err(|e| Error::StorageMsg(format!("Failed to deserialize schema: {e}")))?;
                 Ok(Some(schema))
@@ -265,21 +288,19 @@ impl<const D: usize> Store for ProllyStorage<D> {
         let store = self.store.clone();
         let storage_key = Self::make_storage_key(table_name, key);
         let legacy_storage_key = Self::legacy_storage_key(table_name, key);
-        let schema_key = Self::schema_key(table_name);
+        let legacy_schema_key = Self::legacy_schema_key(table_name);
         tokio::task::spawn_blocking(move || {
-            if let Some(row_data) = store.get(&storage_key) {
+            let row_data = store.get(&storage_key).or_else(|| {
+                if legacy_storage_key == legacy_schema_key {
+                    None
+                } else {
+                    store.get(&legacy_storage_key)
+                }
+            });
+            if let Some(row_data) = row_data {
                 let row: DataRow = serde_json::from_slice(&row_data)
                     .map_err(|e| Error::StorageMsg(format!("Failed to deserialize row: {e}")))?;
                 Ok(Some(row))
-            } else if legacy_storage_key != schema_key {
-                if let Some(row_data) = store.get(&legacy_storage_key) {
-                    let row: DataRow = serde_json::from_slice(&row_data).map_err(|e| {
-                        Error::StorageMsg(format!("Failed to deserialize row: {e}"))
-                    })?;
-                    Ok(Some(row))
-                } else {
-                    Ok(None)
-                }
             } else {
                 Ok(None)
             }
@@ -358,13 +379,18 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
     async fn insert_schema(&mut self, schema: &Schema) -> Result<()> {
         let store = self.store.clone();
         let key = Self::schema_key(&schema.table_name);
+        let legacy_key = Self::legacy_schema_key(&schema.table_name);
         let schema_data = serde_json::to_vec(schema)
             .map_err(|e| Error::StorageMsg(format!("Failed to serialize schema: {e}")))?;
 
         tokio::task::spawn_blocking(move || {
             store
                 .insert(key, schema_data)
-                .map_err(|e| Error::StorageMsg(format!("Failed to insert schema: {e}")))
+                .map_err(|e| Error::StorageMsg(format!("Failed to insert schema: {e}")))?;
+            store.delete(&legacy_key).map_err(|e| {
+                Error::StorageMsg(format!("Failed to delete legacy schema key: {e}"))
+            })?;
+            Ok::<(), Error>(())
         })
         .await
         .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))??;
@@ -379,11 +405,16 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
     async fn delete_schema(&mut self, table_name: &str) -> Result<()> {
         let store = self.store.clone();
         let key = Self::schema_key(table_name);
+        let legacy_key = Self::legacy_schema_key(table_name);
 
         tokio::task::spawn_blocking(move || {
             store
                 .delete(&key)
-                .map_err(|e| Error::StorageMsg(format!("Failed to delete schema: {e}")))
+                .map_err(|e| Error::StorageMsg(format!("Failed to delete schema: {e}")))?;
+            store.delete(&legacy_key).map_err(|e| {
+                Error::StorageMsg(format!("Failed to delete legacy schema key: {e}"))
+            })?;
+            Ok::<(), Error>(())
         })
         .await
         .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))??;
@@ -449,12 +480,12 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
             for key in keys {
                 let storage_key = ProllyStorage::<D>::make_storage_key(&table_name, &key);
                 let legacy_storage_key = ProllyStorage::<D>::legacy_storage_key(&table_name, &key);
-                let schema_key = ProllyStorage::<D>::schema_key(&table_name);
+                let legacy_schema_key = ProllyStorage::<D>::legacy_schema_key(&table_name);
 
                 store
                     .delete(&storage_key)
                     .map_err(|e| Error::StorageMsg(format!("Failed to delete row: {e}")))?;
-                if legacy_storage_key != schema_key {
+                if legacy_storage_key != legacy_schema_key {
                     store.delete(&legacy_storage_key).map_err(|e| {
                         Error::StorageMsg(format!("Failed to delete legacy row: {e}"))
                     })?;
