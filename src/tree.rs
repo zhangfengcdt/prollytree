@@ -312,7 +312,7 @@ impl Default for TreeStats {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProllyTree<const N: usize, S: NodeStorage<N>> {
     pub root: ProllyNode<N>,
     pub storage: S,
