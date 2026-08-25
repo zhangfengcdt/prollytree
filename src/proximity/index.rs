@@ -87,7 +87,7 @@ impl Default for ProximityConfig {
 pub enum ProximityError {
     /// Inserted or queried vector has the wrong dimensionality.
     #[error("dimension mismatch: index expects {expected}, got {got}")]
-    DimensionMismatch { expected: u16, got: u16 },
+    DimensionMismatch { expected: u16, got: usize },
     /// `dim` was zero in [`ProximityConfig`] — must be set before insert.
     #[error("ProximityConfig.dim must be > 0")]
     ZeroDim,
@@ -366,10 +366,10 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
         entries: BTreeMap<Vec<u8>, Vec<f32>>,
     ) -> Result<(), ProximityError> {
         for v in entries.values() {
-            if v.len() as u16 != self.config.dim {
+            if v.len() != usize::from(self.config.dim) {
                 return Err(ProximityError::DimensionMismatch {
                     expected: self.config.dim,
-                    got: v.len() as u16,
+                    got: v.len(),
                 });
             }
         }
@@ -491,10 +491,10 @@ impl<const N: usize, S: NodeStorage<N>> ProximityIndex<N, S> {
         if self.config.dim == 0 {
             return Err(ProximityError::ZeroDim);
         }
-        if vector.len() as u16 != self.config.dim {
+        if vector.len() != usize::from(self.config.dim) {
             return Err(ProximityError::DimensionMismatch {
                 expected: self.config.dim,
-                got: vector.len() as u16,
+                got: vector.len(),
             });
         }
         Ok(())
@@ -836,6 +836,26 @@ mod tests {
         idx.insert(b"x".to_vec(), vec![1.0; 4]).unwrap();
         let err = idx.knn(&[0.0, 0.0], 5, 32).unwrap_err();
         assert!(matches!(err, ProximityError::DimensionMismatch { .. }));
+    }
+
+    #[test]
+    fn dimension_validation_rejects_lengths_that_wrap_u16() {
+        let mut idx = ProximityIndex::<32, _>::new_in_memory(config(1, Metric::L2));
+        idx.insert(b"x".to_vec(), vec![1.0]).unwrap();
+
+        let too_long = vec![0.0; usize::from(u16::MAX) + 2];
+        let err = idx.insert(b"too-long".to_vec(), too_long).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "dimension mismatch: index expects 1, got 65537"
+        );
+
+        let too_long_query = vec![0.0; usize::from(u16::MAX) + 2];
+        let err = idx.knn(&too_long_query, 1, 1).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "dimension mismatch: index expects 1, got 65537"
+        );
     }
 
     #[test]
