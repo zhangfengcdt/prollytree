@@ -36,8 +36,12 @@ pub trait MetadataBackend: Send {
 
     // ── Commit creation ──────────────────────────────────────────────
 
-    /// Stage all files under `git_root` and create a tree object.
-    fn stage_and_write_tree(&self, git_root: &Path) -> Result<gix::ObjectId, GitKvError>;
+    /// Stage all files under `dataset_dir` and create a tree object.
+    fn stage_and_write_tree(
+        &self,
+        git_root: &Path,
+        dataset_dir: &Path,
+    ) -> Result<gix::ObjectId, GitKvError>;
 
     /// Create a commit on top of the current HEAD (or as a root commit).
     fn write_commit(
@@ -193,6 +197,96 @@ impl GitMetadataBackend {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    use tempfile::TempDir;
+
+    fn run_git(repo_path: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .output()
+            .expect("failed to run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: stdout={} stderr={}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("git output should be UTF-8")
+    }
+
+    fn write_commit_object(repo_path: &Path, commit_content: &str) -> String {
+        let mut child = Command::new("git")
+            .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+            .current_dir(repo_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to run git hash-object");
+        child
+            .stdin
+            .as_mut()
+            .expect("hash-object stdin")
+            .write_all(commit_content.as_bytes())
+            .expect("failed to write commit content");
+        let output = child.wait_with_output().expect("failed to hash commit");
+        assert!(
+            output.status.success(),
+            "git hash-object failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("object id should be UTF-8")
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn walk_history_reports_missing_parent_commit() {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+        run_git(temp_dir.path(), &["config", "user.name", "Test User"]);
+        run_git(
+            temp_dir.path(),
+            &["config", "user.email", "test@example.com"],
+        );
+
+        std::fs::write(temp_dir.path().join("data.txt"), "base\n").unwrap();
+        run_git(temp_dir.path(), &["add", "data.txt"]);
+        run_git(temp_dir.path(), &["commit", "-m", "base"]);
+
+        let tree_id = run_git(temp_dir.path(), &["rev-parse", "HEAD^{tree}"])
+            .trim()
+            .to_string();
+        let missing_parent = "1111111111111111111111111111111111111111";
+        let bad_commit = write_commit_object(
+            temp_dir.path(),
+            &format!(
+                "tree {tree_id}\nparent {missing_parent}\nauthor Test User <test@example.com> 0 +0000\ncommitter Test User <test@example.com> 0 +0000\n\nbad parent\n"
+            ),
+        );
+        run_git(temp_dir.path(), &["update-ref", "HEAD", &bad_commit]);
+
+        let repo = gix::open(temp_dir.path()).unwrap();
+        let backend = GitMetadataBackend::new(repo);
+        let err = match backend.walk_history(100) {
+            Ok(history) => panic!("history with a missing parent must fail, got {history:?}"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("parent") || err.to_string().contains("commit"),
+            "unexpected error: {err}"
+        );
+    }
+}
+
 impl MetadataBackend for GitMetadataBackend {
     // ── Path access ──────────────────────────────────────────────────
 
@@ -221,10 +315,34 @@ impl MetadataBackend for GitMetadataBackend {
 
     // ── Commit creation ──────────────────────────────────────────────
 
-    fn stage_and_write_tree(&self, git_root: &Path) -> Result<gix::ObjectId, GitKvError> {
+    fn stage_and_write_tree(
+        &self,
+        git_root: &Path,
+        dataset_dir: &Path,
+    ) -> Result<gix::ObjectId, GitKvError> {
+        let git_root = git_root
+            .canonicalize()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to resolve git root: {e}")))?;
+        let dataset_dir = dataset_dir.canonicalize().map_err(|e| {
+            GitKvError::GitObjectError(format!("Failed to resolve dataset dir: {e}"))
+        })?;
+        let dataset_rel = dataset_dir.strip_prefix(&git_root).map_err(|_| {
+            GitKvError::GitObjectError(format!(
+                "Dataset dir '{}' is not under git root '{}'",
+                dataset_dir.display(),
+                git_root.display()
+            ))
+        })?;
+        if dataset_rel.as_os_str().is_empty() {
+            return Err(GitKvError::GitObjectError(
+                "Refusing to stage the repository root as a dataset".to_string(),
+            ));
+        }
+
         let add_cmd = std::process::Command::new("git")
-            .args(["add", "-A", "."])
-            .current_dir(git_root)
+            .args(["add", "-A", "--"])
+            .arg(dataset_rel)
+            .current_dir(&git_root)
             .output()
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to run git add: {e}")))?;
 
@@ -237,7 +355,7 @@ impl MetadataBackend for GitMetadataBackend {
 
         let write_tree_cmd = std::process::Command::new("git")
             .args(["write-tree"])
-            .current_dir(git_root)
+            .current_dir(&git_root)
             .output()
             .map_err(|e| {
                 GitKvError::GitObjectError(format!("Failed to run git write-tree: {e}"))
@@ -417,48 +535,42 @@ impl MetadataBackend for GitMetadataBackend {
 
         let rev_walk = self.repo.rev_walk([head_commit.id()]);
 
-        match rev_walk.all() {
-            Ok(walk) => {
-                for info in walk.take(limit).flatten() {
-                    if let Ok(commit_obj) = info.object() {
-                        if let Ok(commit_ref) = commit_obj.decode() {
-                            let author = match commit_ref.author() {
-                                Ok(sig) => sig,
-                                Err(_) => continue,
-                            };
-                            let committer = match commit_ref.committer() {
-                                Ok(sig) => sig,
-                                Err(_) => continue,
-                            };
-                            let timestamp = author.time().map(|t| t.seconds).unwrap_or(0);
-                            history.push(CommitInfo {
-                                id: commit_obj.id().into(),
-                                author: format!(
-                                    "{} <{}>",
-                                    String::from_utf8_lossy(author.name),
-                                    String::from_utf8_lossy(author.email)
-                                ),
-                                committer: format!(
-                                    "{} <{}>",
-                                    String::from_utf8_lossy(committer.name),
-                                    String::from_utf8_lossy(committer.email)
-                                ),
-                                message: String::from_utf8_lossy(commit_ref.message).to_string(),
-                                timestamp,
-                            });
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                history.push(CommitInfo {
-                    id: head_commit.id().into(),
-                    author: "Unknown".to_string(),
-                    committer: "Unknown".to_string(),
-                    message: "Commit".to_string(),
-                    timestamp: 0,
-                });
-            }
+        let walk = rev_walk
+            .all()
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to walk history: {e}")))?;
+
+        for info in walk.take(limit) {
+            let info = info.map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to read commit history: {e}"))
+            })?;
+            let commit_obj = info.object().map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to load history commit: {e}"))
+            })?;
+            let commit_ref = commit_obj.decode().map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to decode history commit: {e}"))
+            })?;
+            let author = commit_ref.author().map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to decode history author: {e}"))
+            })?;
+            let committer = commit_ref.committer().map_err(|e| {
+                GitKvError::GitObjectError(format!("Failed to decode history committer: {e}"))
+            })?;
+            let timestamp = author.time().map(|t| t.seconds).unwrap_or(0);
+            history.push(CommitInfo {
+                id: commit_obj.id().into(),
+                author: format!(
+                    "{} <{}>",
+                    String::from_utf8_lossy(author.name),
+                    String::from_utf8_lossy(author.email)
+                ),
+                committer: format!(
+                    "{} <{}>",
+                    String::from_utf8_lossy(committer.name),
+                    String::from_utf8_lossy(committer.email)
+                ),
+                message: String::from_utf8_lossy(commit_ref.message).to_string(),
+                timestamp,
+            });
         }
 
         Ok(history)
