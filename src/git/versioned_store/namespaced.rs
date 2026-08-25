@@ -274,14 +274,15 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     /// `NamespacedKvStore::set_cascade`, this also embeds `value` (as UTF-8)
     /// and upserts the resulting vector into every cascading text sub-index
     /// that is currently loaded. Targets not loaded yet, and values that
-    /// aren't valid UTF-8, are silently skipped.
+    /// aren't valid UTF-8, are silently skipped. Embedder or proximity-index
+    /// errors abort the primary insert before any staged value is changed.
     pub fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), GitKvError> {
         crate::validation::validate_kv(&key, &value)?;
         // Auto-cascade into text indexes, if configured. Done BEFORE staging
         // the primary insert so an embed error surfaces before any state has
         // been touched.
         #[cfg(feature = "proximity")]
-        self.cascade_insert(&key, &value);
+        self.cascade_insert(&key, &value)?;
 
         self.store
             .namespace_staging
@@ -323,13 +324,15 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
     ///    non-UTF-8).
     ///
     /// Silent no-op cases otherwise: no cascade list configured, target
-    /// whose embedder/proximity-index isn't currently loaded, or the
-    /// embedder itself returns an error.
+    /// whose embedder/proximity-index isn't currently loaded, or a value that
+    /// isn't valid text for the configured target. Embedder/proximity errors
+    /// are returned before the primary value is staged.
     #[cfg(feature = "proximity")]
-    fn cascade_insert(&mut self, key: &[u8], value: &[u8]) {
+    fn cascade_insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), GitKvError> {
         let Some(cascade_list) = self.store.cascade_lists.get(&self.ns_name).cloned() else {
-            return;
+            return Ok(());
         };
+        let mut planned = Vec::new();
         for idx_name in cascade_list {
             let target_key = (self.ns_name.clone(), idx_name.clone());
             let prox_key = (self.ns_name.clone(), text_inner_proximity_name(&idx_name));
@@ -350,6 +353,14 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
             let Some(embedder) = self.store.text_embedders.get(&target_key).cloned() else {
                 continue;
             };
+            let Some(idx_dim) = self
+                .store
+                .proximity_indexes
+                .get(&prox_key)
+                .map(|idx| idx.config().dim)
+            else {
+                continue;
+            };
             let chunker: Arc<dyn Chunker> = self
                 .store
                 .text_chunkers
@@ -357,27 +368,53 @@ impl<'a, const N: usize, S: NodeStorage<N>, M: MetadataBackend> NamespaceHandle<
                 .cloned()
                 .unwrap_or_else(|| Arc::new(IdentityChunker));
 
-            // 3. Chunk → embed → insert. Drop any previous chunks for this
-            //    doc-id first so re-inserts with a different chunk count
-            //    don't leak stale entries.
-            //
-            //    Borrow gymnastics: each chunk's embed happens outside the
-            //    proximity-index borrow, then a fresh `get_mut` reborrows
-            //    for the insert. Slight overhead, but keeps the embedder
-            //    free to call into anything (incl. error-returning paths).
-            Self::cascade_delete_chunks_for_doc(self.store, &prox_key, key);
+            // 3. Chunk and embed during a full preflight pass. No target index
+            //    is mutated until every configured target has successfully
+            //    produced dimension-valid replacement vectors.
             let chunks = chunker.split(&text);
+            let mut replacements = Vec::with_capacity(chunks.len());
             for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
-                let Ok(vec) = embedder.embed(chunk_text) else {
-                    continue;
-                };
-                let chunk_id = make_chunk_id(key, chunk_idx as u32);
-                if let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) {
-                    let _ = idx.insert(chunk_id, vec);
-                    self.store.dirty_proximity_indexes.insert(prox_key.clone());
+                let vec = embedder.embed(chunk_text).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Text cascade into {}/{} failed for key {:?}: {e}",
+                        self.ns_name,
+                        idx_name,
+                        String::from_utf8_lossy(key)
+                    ))
+                })?;
+                if idx_dim == 0 || vec.len() != usize::from(idx_dim) {
+                    return Err(GitKvError::GitObjectError(format!(
+                        "Text cascade into {}/{} produced vector dimension {}, expected {}",
+                        self.ns_name,
+                        idx_name,
+                        vec.len(),
+                        idx_dim
+                    )));
                 }
+                let chunk_id = make_chunk_id(key, chunk_idx as u32);
+                replacements.push((chunk_id, vec));
             }
+            planned.push((idx_name, prox_key, replacements));
         }
+
+        for (idx_name, prox_key, replacements) in planned {
+            Self::cascade_delete_chunks_for_doc(self.store, &prox_key, key);
+            let Some(idx) = self.store.proximity_indexes.get_mut(&prox_key) else {
+                continue;
+            };
+            for (chunk_id, vec) in replacements {
+                idx.insert(chunk_id, vec).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Text cascade into {}/{} failed for key {:?}: {e}",
+                        self.ns_name,
+                        idx_name,
+                        String::from_utf8_lossy(key)
+                    ))
+                })?;
+            }
+            self.store.dirty_proximity_indexes.insert(prox_key.clone());
+        }
+        Ok(())
     }
 
     /// Cascade a delete to every configured text sub-index for this
@@ -1890,33 +1927,41 @@ impl<const N: usize> NamespacedKvStore<N, GitNodeStorage<N>, GitMetadataBackend>
             if let Ok(data) = self.inner.metadata.read_file_at_commit(commit_id, path) {
                 loaded_mapping_file = true;
                 let mapping_str = String::from_utf8(data).map_err(|e| {
-                    GitKvError::GitObjectError(format!(
-                        "Invalid UTF-8 in namespace hash mappings {path}: {e}"
-                    ))
+                    GitKvError::GitObjectError(format!("Invalid UTF-8 in {path}: {e}"))
                 })?;
-                for line in mapping_str.lines() {
-                    if let Some((hash_hex, object_hex)) = line.split_once(':') {
-                        if hash_hex.len() == N * 2 {
-                            let mut hash_bytes = Vec::new();
-                            for i in 0..N {
-                                if let Ok(byte) =
-                                    u8::from_str_radix(&hash_hex[i * 2..i * 2 + 2], 16)
-                                {
-                                    hash_bytes.push(byte);
-                                } else {
-                                    break;
-                                }
-                            }
-                            if hash_bytes.len() == N {
-                                if let Ok(object_id) =
-                                    gix::ObjectId::from_hex(object_hex.as_bytes())
-                                {
-                                    let hash = ValueDigest::raw_hash(&hash_bytes);
-                                    hash_mappings.insert(hash, object_id);
-                                }
-                            }
-                        }
+                for (line_index, line) in mapping_str.lines().enumerate() {
+                    if line.trim().is_empty() {
+                        continue;
                     }
+
+                    let line_number = line_index + 1;
+                    let (hash_hex, object_hex) = line.split_once(':').ok_or_else(|| {
+                        GitKvError::GitObjectError(format!(
+                            "Malformed hash mapping in {path} on line {line_number}"
+                        ))
+                    })?;
+
+                    if hash_hex.len() != N * 2 {
+                        return Err(GitKvError::GitObjectError(format!(
+                            "Invalid prolly hash in {path} on line {line_number}: expected {} hex chars, got {}",
+                            N * 2,
+                            hash_hex.len()
+                        )));
+                    }
+
+                    let hash_bytes = hex::decode(hash_hex).map_err(|e| {
+                        GitKvError::GitObjectError(format!(
+                            "Invalid prolly hash in {path} on line {line_number}: {e}"
+                        ))
+                    })?;
+                    let object_id =
+                        gix::ObjectId::from_hex(object_hex.as_bytes()).map_err(|e| {
+                            GitKvError::GitObjectError(format!(
+                                "Invalid git object id in {path} on line {line_number}: {e}"
+                            ))
+                        })?;
+                    let hash = ValueDigest::raw_hash(&hash_bytes);
+                    hash_mappings.insert(hash, object_id);
                 }
             }
         }
@@ -2553,7 +2598,7 @@ where
                     if loaded.config().dim != config.dim {
                         return Err(ProximityError::DimensionMismatch {
                             expected: loaded.config().dim,
-                            got: config.dim,
+                            got: usize::from(config.dim),
                         });
                     }
                     loaded
@@ -2703,25 +2748,38 @@ where
     M: MetadataBackend,
 {
     /// Insert or update `(id, text)`. The text is split through the
-    /// configured chunker; each chunk is embedded and stored under its own
-    /// chunk-id. Previous chunks for this `id` are removed first so that a
-    /// re-insert with fewer chunks doesn't leak stale ones.
+    /// configured chunker; replacement chunks are embedded first, then previous
+    /// chunks for this `id` are removed so failed embeds leave the old document
+    /// searchable. A successful empty chunk set removes the document.
     pub fn insert(&mut self, id: &[u8], text: &str) -> Result<(), TextIndexError> {
-        // Drop any previous chunks for this doc_id.
-        self.delete_chunks_for_doc(id);
-
         let chunks = self.chunker.split(text);
         if chunks.is_empty() {
+            self.delete_chunks_for_doc(id);
             return Ok(());
         }
+        if self.embedder.dim() == 0 {
+            return Err(TextIndexError::Proximity(ProximityError::ZeroDim));
+        }
+        let mut replacements = Vec::with_capacity(chunks.len());
+        for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
+            let vec = self.embedder.embed(chunk_text)?;
+            if vec.len() as u16 != self.embedder.dim() {
+                return Err(TextIndexError::DimensionMismatch {
+                    stored: self.embedder.dim(),
+                    got: vec.len() as u16,
+                });
+            }
+            let chunk_id = make_chunk_id(id, chunk_idx as u32);
+            replacements.push((chunk_id, vec));
+        }
+
+        self.delete_chunks_for_doc(id);
         let idx = self
             .store
             .proximity_indexes
             .get_mut(&self.inner_idx_key)
             .expect("inner proximity index must be loaded");
-        for (chunk_idx, chunk_text) in chunks.iter().enumerate() {
-            let vec = self.embedder.embed(chunk_text)?;
-            let chunk_id = make_chunk_id(id, chunk_idx as u32);
+        for (chunk_id, vec) in replacements {
             idx.insert(chunk_id, vec)?;
         }
         self.store

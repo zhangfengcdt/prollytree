@@ -19,12 +19,25 @@ use gix::prelude::*;
 use lru::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const DEFAULT_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
+static SYNC_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 use parking_lot::Mutex;
 use std::sync::Arc;
 
 use super::{NodeStorage, StorageError};
+
+fn sync_temp_path(dataset_dir: &Path, nanos: u64) -> std::path::PathBuf {
+    let counter = SYNC_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    dataset_dir.join(format!(
+        ".prolly_hash_mappings.{}.{}.{}",
+        std::process::id(),
+        nanos,
+        counter
+    ))
+}
 
 /// Git-backed storage for ProllyTree nodes
 ///
@@ -47,7 +60,7 @@ impl<const N: usize> Clone for GitNodeStorage<N> {
         let cloned = Self {
             _repository: self._repository.clone(),
             cache: Mutex::new(LruCache::new(DEFAULT_CACHE_SIZE)),
-            configs: Mutex::new(HashMap::new()),
+            configs: Mutex::new(self.configs.lock().clone()),
             hash_to_object_id: Mutex::new(HashMap::new()),
             dataset_dir: self.dataset_dir.clone(),
         };
@@ -199,9 +212,6 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         hash: ValueDigest<N>,
         node: ProllyNode<N>,
     ) -> Result<(), StorageError> {
-        // Store in cache
-        self.cache.lock().put(hash.clone(), Arc::new(node.clone()));
-
         // Store as Git blob (this is durable — the blob lives in the git object db)
         let blob_id = self
             .store_node_as_blob(&node)
@@ -218,6 +228,10 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         // `save_tree_config_to_git` at commit time, in sorted order, from the
         // full in-memory map — so the per-insert write is redundant.
         self.hash_to_object_id.lock().insert(hash.clone(), blob_id);
+
+        // Only cache after the durable write and mapping succeed; otherwise a
+        // failed insert can be served in-process but disappear on reopen.
+        self.cache.lock().put(hash, Arc::new(node));
 
         Ok(())
     }
@@ -308,11 +322,7 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        let tmp = self.dataset_dir.join(format!(
-            ".prolly_hash_mappings.{}.{}",
-            std::process::id(),
-            nanos
-        ));
+        let tmp = sync_temp_path(&self.dataset_dir, nanos);
         {
             use std::io::Write as _;
             let mut f = std::fs::File::create(&tmp).map_err(StorageError::Io)?;
@@ -437,5 +447,69 @@ mod tests {
         // Get from cache
         let cached = storage.get_node_by_hash(&hash1);
         assert!(cached.is_some());
+    }
+
+    #[test]
+    fn sync_temp_path_uses_counter_for_same_timestamp() {
+        let temp_dir = TempDir::new().unwrap();
+        let first = sync_temp_path(temp_dir.path(), 123);
+        let second = sync_temp_path(temp_dir.path(), 123);
+
+        assert_ne!(
+            first, second,
+            "same-process sync temp paths must not collide for the same timestamp"
+        );
+    }
+
+    #[test]
+    fn clone_preserves_memory_only_tree_config() {
+        let (temp_dir, repo) = create_test_repo();
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let storage = GitNodeStorage::<32>::new(repo, dataset_dir.clone()).unwrap();
+        let config = br#"{"root_hash":null}"#;
+
+        storage.save_config("tree_config", config);
+        assert_eq!(
+            storage.get_config("tree_config").as_deref(),
+            Some(&config[..])
+        );
+        assert!(
+            !dataset_dir.join("prolly_config_tree_config").exists(),
+            "tree_config is intentionally memory-only for GitNodeStorage"
+        );
+
+        let cloned = storage.clone();
+
+        assert_eq!(
+            cloned.get_config("tree_config").as_deref(),
+            Some(&config[..]),
+            "cloning GitNodeStorage must preserve memory-only tree_config"
+        );
+    }
+
+    #[test]
+    fn failed_insert_does_not_populate_cache() {
+        let (temp_dir, repo) = create_test_repo();
+        let mut storage = GitNodeStorage::<32>::new(repo, temp_dir.path().to_path_buf()).unwrap();
+        let objects_path = temp_dir.path().join("objects");
+        std::fs::remove_dir_all(&objects_path).unwrap();
+        std::fs::write(&objects_path, b"not a directory").unwrap();
+
+        let node = create_test_node();
+        let hash = node.get_hash();
+
+        assert!(
+            storage.insert_node(hash.clone(), node).is_err(),
+            "sabotaged object database should reject blob writes"
+        );
+        assert!(
+            storage.get_node_by_hash(&hash).is_none(),
+            "failed blob writes must not leave phantom nodes in cache"
+        );
+        assert!(
+            !storage.get_hash_mappings().contains_key(&hash),
+            "failed blob writes must not create hash mappings"
+        );
     }
 }
