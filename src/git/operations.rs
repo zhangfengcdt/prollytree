@@ -421,35 +421,41 @@ impl<const N: usize> GitOperations<N> {
         file_path: &str,
     ) -> Result<HashMap<ValueDigest<N>, gix::ObjectId>, GitKvError> {
         let file_content = self.read_file_from_git_commit(commit_id, file_path)?;
-        let content = String::from_utf8_lossy(&file_content);
+        let content = String::from_utf8(file_content).map_err(|e| {
+            GitKvError::GitObjectError(format!("Invalid UTF-8 in hash mappings: {e}"))
+        })?;
 
         let mut mappings = HashMap::new();
-        for line in content.lines() {
-            if let Some((hash_str, object_id_str)) = line.split_once(':') {
-                // Parse prolly hash (decode hex string manually)
-                match self.decode_hex(hash_str) {
-                    Ok(hash_bytes) => {
-                        if hash_bytes.len() == N {
-                            let prolly_hash = ValueDigest::raw_hash(&hash_bytes);
-
-                            // Parse git object ID
-                            match gix::ObjectId::from_hex(object_id_str.as_bytes()) {
-                                Ok(git_object_id) => {
-                                    mappings.insert(prolly_hash, git_object_id);
-                                }
-                                Err(_e) => {
-                                    // Silently skip invalid git object IDs
-                                }
-                            }
-                        } else {
-                            // Silently skip hashes with wrong length
-                        }
-                    }
-                    Err(_e) => {
-                        // Silently skip invalid hex strings
-                    }
-                }
+        for (line_index, line) in content.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
             }
+            let line_number = line_index + 1;
+            let (hash_str, object_id_str) = line.split_once(':').ok_or_else(|| {
+                GitKvError::GitObjectError(format!(
+                    "Invalid hash mapping on line {line_number}: expected '<prolly_hash>:<git_object_id>'"
+                ))
+            })?;
+
+            let hash_bytes = self.decode_hex(hash_str).map_err(|e| {
+                GitKvError::GitObjectError(format!(
+                    "Invalid prolly hash on line {line_number}: {e}"
+                ))
+            })?;
+            if hash_bytes.len() != N {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Invalid prolly hash on line {line_number}: expected {N} bytes, got {}",
+                    hash_bytes.len()
+                )));
+            }
+            let prolly_hash = ValueDigest::raw_hash(&hash_bytes);
+
+            let git_object_id = gix::ObjectId::from_hex(object_id_str.as_bytes()).map_err(|e| {
+                GitKvError::GitObjectError(format!(
+                    "Invalid git object id on line {line_number}: {e}"
+                ))
+            })?;
+            mappings.insert(prolly_hash, git_object_id);
         }
 
         Ok(mappings)
@@ -756,5 +762,55 @@ mod tests {
         // Test HEAD parsing
         let head_id = ops.parse_commit_id("HEAD");
         assert!(head_id.is_ok());
+    }
+
+    #[test]
+    fn test_read_hash_mappings_rejects_invalid_mapping_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+
+        let run_git = |args: &[&str]| -> String {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(temp_dir.path())
+                .args(args)
+                .output()
+                .expect("git command should run");
+            assert!(
+                output.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).expect("git output should be UTF-8")
+        };
+
+        run_git(&["config", "user.name", "ProllyTree Test"]);
+        run_git(&["config", "user.email", "prollytree@example.test"]);
+
+        let mut store = GitVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        store.insert(b"key".to_vec(), b"value".to_vec()).unwrap();
+        store.commit("valid mappings").unwrap();
+
+        let mapping_path = dataset_dir.join("prolly_hash_mappings");
+        let mut mappings = std::fs::read_to_string(&mapping_path).unwrap();
+        mappings.push_str("not-hex:also-not-a-git-object\n");
+        std::fs::write(&mapping_path, mappings).unwrap();
+
+        run_git(&["add", "dataset/prolly_hash_mappings"]);
+        run_git(&["commit", "-m", "corrupt mappings"]);
+        let bad_commit = run_git(&["rev-parse", "HEAD"]);
+        let bad_commit = gix::ObjectId::from_hex(bad_commit.trim().as_bytes()).unwrap();
+
+        let ops = GitOperations::new(store);
+        let err = ops
+            .read_hash_mappings_from_commit(&bad_commit, "dataset/prolly_hash_mappings")
+            .expect_err("invalid mapping entries must fail");
+        assert!(
+            err.to_string().contains("Invalid prolly hash"),
+            "unexpected error: {err}"
+        );
     }
 }

@@ -25,6 +25,7 @@ limitations under the License.
 //! - Shared object database with the main repository
 
 use crate::git::types::*;
+use gix::prelude::FindExt;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fs;
@@ -618,7 +619,6 @@ impl WorktreeManager {
             return Ok("No changes to merge - branches are identical".to_string());
         }
 
-        // For fast-forward merge
         if self.can_fast_forward(&main_commit, &source_commit)? {
             fs::write(&main_ref, &source_commit).map_err(GitKvError::IoError)?;
 
@@ -636,80 +636,45 @@ impl WorktreeManager {
                 &source_commit[0..8]
             ))
         } else {
-            // Create merge commit using VersionedKvStore if possible
-            self.create_merge_commit(&main_commit, &source_commit, commit_message)
+            Err(non_fast_forward_error(source_branch, "main"))
         }
     }
 
     /// Check if we can do a fast-forward merge
     fn can_fast_forward(&self, main_commit: &str, source_commit: &str) -> Result<bool, GitKvError> {
-        // This is a simplified check - in a full implementation you'd traverse the commit graph
-        // For now, we'll assume fast-forward is possible if main and source are different
-        // In reality, you'd check if source_commit is a descendant of main_commit
-
-        // Simple heuristic: if they're different, assume fast-forward is possible
-        // This would need proper Git graph traversal in production
-        Ok(main_commit != source_commit)
+        let main_id = gix::ObjectId::from_hex(main_commit.as_bytes()).map_err(|e| {
+            GitKvError::GitObjectError(format!("Invalid main commit {main_commit}: {e}"))
+        })?;
+        let source_id = gix::ObjectId::from_hex(source_commit.as_bytes()).map_err(|e| {
+            GitKvError::GitObjectError(format!("Invalid source commit {source_commit}: {e}"))
+        })?;
+        self.is_ancestor(&main_id, &source_id)
     }
 
-    /// Create a merge commit using VersionedKvStore merge capabilities
-    ///
-    /// Note: This is a simplified implementation for the legacy API.
-    /// For full merge capabilities, use the `merge_*_with_store` methods instead.
-    fn create_merge_commit(
+    fn is_ancestor(
         &self,
-        main_commit: &str,
-        source_commit: &str,
-        commit_message: &str,
-    ) -> Result<String, GitKvError> {
-        // This method attempts to use VersionedKvStore merge if possible
-        // If not available, falls back to simple Git reference updates
+        ancestor: &gix::ObjectId,
+        descendant: &gix::ObjectId,
+    ) -> Result<bool, GitKvError> {
+        let repo = gix::open(&self.main_repo_path)
+            .map_err(|e| GitKvError::GitObjectError(format!("Failed to open repository: {e}")))?;
+        let mut seen = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(*descendant);
 
-        // Try to find the source branch name from the commit
-        let source_branch = self.find_branch_for_commit(source_commit)?;
-
-        // Attempt to create VersionedKvStore instances for proper merging
-        match self.attempt_versioned_merge(&source_branch, "main", commit_message) {
-            Ok(result) => Ok(result),
-            Err(_versioned_error) => {
-                // Fallback to simple Git reference update if VersionedKvStore merge fails
-                let main_ref = self.git_dir.join("refs").join("heads").join("main");
-                fs::write(&main_ref, source_commit).map_err(GitKvError::IoError)?;
-
-                Ok(format!(
-                    "Merge completed (fallback mode). Main branch updated to {} (was {})",
-                    &source_commit[0..8],
-                    &main_commit[0..8]
-                ))
+        while let Some(commit_id) = queue.pop_front() {
+            if !seen.insert(commit_id) {
+                continue;
             }
-        }
-    }
-
-    /// Find the branch name for a given commit hash
-    fn find_branch_for_commit(&self, commit_hash: &str) -> Result<String, GitKvError> {
-        let refs_dir = self.git_dir.join("refs").join("heads");
-        if !refs_dir.exists() {
-            return Err(GitKvError::BranchNotFound("No branches found".to_string()));
-        }
-
-        for entry in fs::read_dir(&refs_dir).map_err(GitKvError::IoError)? {
-            let entry = entry.map_err(GitKvError::IoError)?;
-            if entry.file_type().map_err(GitKvError::IoError)?.is_file() {
-                let branch_name = entry.file_name().to_string_lossy().to_string();
-                let branch_commit = fs::read_to_string(entry.path())
-                    .map_err(GitKvError::IoError)?
-                    .trim()
-                    .to_string();
-
-                if branch_commit == commit_hash {
-                    return Ok(branch_name);
-                }
+            if &commit_id == ancestor {
+                return Ok(true);
+            }
+            for parent in get_commit_parents(&repo, &commit_id)? {
+                queue.push_back(parent);
             }
         }
 
-        Err(GitKvError::BranchNotFound(format!(
-            "No branch found for commit {commit_hash}"
-        )))
+        Ok(false)
     }
 
     /// Attempt to perform a VersionedKvStore merge
@@ -840,15 +805,18 @@ impl WorktreeManager {
             ));
         }
 
-        // Update target branch to source commit (Git-level fallback)
-        fs::write(&target_ref, &source_commit).map_err(GitKvError::IoError)?;
+        if self.can_fast_forward(&target_commit, &source_commit)? {
+            fs::write(&target_ref, &source_commit).map_err(GitKvError::IoError)?;
 
-        Ok(format!(
-            "Merged {} into {} (Git-level fallback). Target branch updated to {}",
-            source_branch,
-            target_branch,
-            &source_commit[0..8]
-        ))
+            Ok(format!(
+                "Fast-forward merged {} into {} (Git-level fallback). Target branch updated to {}",
+                source_branch,
+                target_branch,
+                &source_commit[0..8]
+            ))
+        } else {
+            Err(non_fast_forward_error(source_branch, target_branch))
+        }
     }
 
     /// Get the current commit hash of a branch
@@ -882,6 +850,30 @@ impl WorktreeManager {
 
         Ok(branches)
     }
+}
+
+fn non_fast_forward_error(source_branch: &str, target_branch: &str) -> GitKvError {
+    GitKvError::GitObjectError(format!(
+        "Refusing to merge divergent branch {source_branch} into {target_branch} without VersionedKvStore merge data"
+    ))
+}
+
+fn get_commit_parents(
+    repo: &gix::Repository,
+    commit_id: &gix::ObjectId,
+) -> Result<Vec<gix::ObjectId>, GitKvError> {
+    let mut buffer = Vec::new();
+    let commit_obj = repo
+        .objects
+        .find(commit_id, &mut buffer)
+        .map_err(|e| GitKvError::GitObjectError(format!("Failed to find commit: {e}")))?;
+    let commit = commit_obj
+        .decode()
+        .map_err(|e| GitKvError::GitObjectError(format!("Failed to decode commit: {e}")))?
+        .into_commit()
+        .ok_or_else(|| GitKvError::GitObjectError("Object is not a commit".to_string()))?;
+
+    Ok(commit.parents().collect())
 }
 
 /// A VersionedKvStore that works within a worktree
@@ -1177,6 +1169,41 @@ mod tests {
         std::fs::write(head_file, "ref: refs/heads/main\n").expect("Failed to write HEAD");
     }
 
+    fn write_child_commit(repo_path: &std::path::Path, parent: &str, message: &str) -> String {
+        let treeish = format!("{parent}^{{tree}}");
+        let tree = std::process::Command::new("git")
+            .args(["rev-parse", &treeish])
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to read parent tree");
+        assert!(tree.status.success(), "git rev-parse failed: {tree:?}");
+        let tree_id = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+
+        let commit = std::process::Command::new("git")
+            .args(["commit-tree", &tree_id, "-p", parent, "-m", message])
+            .env("GIT_AUTHOR_NAME", "Test User")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test User")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .current_dir(repo_path)
+            .output()
+            .expect("Failed to create child commit");
+        assert!(
+            commit.status.success(),
+            "git commit-tree failed: {commit:?}"
+        );
+        String::from_utf8_lossy(&commit.stdout).trim().to_string()
+    }
+
+    fn write_branch_ref(repo_path: &std::path::Path, branch: &str, commit: &str) {
+        let branch_ref = repo_path
+            .join(".git")
+            .join("refs")
+            .join("heads")
+            .join(branch);
+        std::fs::write(branch_ref, commit).unwrap();
+    }
+
     #[test]
     fn test_worktree_manager_creation() {
         let temp_dir = TempDir::new().unwrap();
@@ -1192,6 +1219,27 @@ mod tests {
 
         let manager = manager.unwrap();
         assert_eq!(manager.list_worktrees().len(), 1); // Only main worktree
+    }
+
+    #[test]
+    fn test_fast_forward_requires_source_descendant() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+        let _cwd = CwdGuard::set(repo_path);
+
+        init_test_git_repo(repo_path);
+        let manager = WorktreeManager::new(repo_path).unwrap();
+        let base = manager.get_branch_commit("main").unwrap();
+        let main_child = write_child_commit(repo_path, &base, "main child");
+        let feature_child = write_child_commit(repo_path, &base, "feature child");
+
+        assert!(manager.can_fast_forward(&base, &main_child).unwrap());
+        assert!(
+            !manager
+                .can_fast_forward(&main_child, &feature_child)
+                .unwrap(),
+            "sibling commits are divergent and must not be fast-forwardable"
+        );
     }
 
     #[test]
@@ -1325,15 +1373,9 @@ mod tests {
         assert_eq!(feature_info.branch, "feature-branch");
         assert!(feature_info.is_linked);
 
-        // Simulate feature work by creating a fake commit (represents VersionedKvStore operations)
-        // In real usage, this would be done through WorktreeVersionedKvStore operations
-        // (See python/tests/test_worktree_with_versioned_store.py for complete integration example)
-        let feature_ref = repo_path
-            .join(".git")
-            .join("refs")
-            .join("heads")
-            .join("feature-branch");
-        std::fs::write(&feature_ref, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        let feature_work_commit =
+            write_child_commit(repo_path, &initial_main_commit, "feature work");
+        write_branch_ref(repo_path, "feature-branch", &feature_work_commit);
 
         let feature_commit = manager.get_branch_commit("feature-branch").unwrap();
         println!(

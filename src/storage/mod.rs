@@ -144,9 +144,9 @@ pub trait NodeStorage<const N: usize>: Send + Sync + Clone {
     // Default impls return `BlobNotSupported` so a backend that doesn't yet
     // implement them fails loudly rather than silently dropping data.
 
-    /// Persist raw bytes under `hash`. Idempotent — if `hash` is already
-    /// present, the call must be a no-op (content-addressed: same hash
-    /// implies same content).
+    /// Persist raw bytes under `hash`. Idempotent when the existing bytes
+    /// match. If `hash` already exists with different bytes, implementations
+    /// must report an error instead of accepting the mismatch.
     fn insert_blob(&mut self, hash: ValueDigest<N>, bytes: &[u8]) -> Result<(), StorageError> {
         let _ = (hash, bytes);
         Err(StorageError::Other(

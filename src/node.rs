@@ -66,6 +66,11 @@ pub trait Node<const N: usize> {
         storage: &mut S,
         path_hashes: Vec<ValueDigest<N>>,
     ) {
+        assert_eq!(
+            keys.len(),
+            values.len(),
+            "insert_batch requires the same number of keys and values"
+        );
         for (key, value) in keys.iter().zip(values) {
             self.insert(key.clone(), value.clone(), storage, path_hashes.clone());
         }
@@ -543,7 +548,21 @@ impl<const N: usize> ProllyNode<N> {
                 .map(|n| n.get_hash().as_bytes().to_vec())
                 .collect();
 
-            current = build_level(&next_keys, &next_values, false, level, config);
+            let prev_len = current.len();
+            let next = build_level(&next_keys, &next_values, false, level, config);
+
+            // Convergence guarantee. Every sane `TreeConfig` fans in (each internal
+            // level has strictly fewer nodes than the level below), so this branch
+            // is never taken. A pathological config (e.g. one whose chunker always
+            // emits size-1 chunks - `pattern == 0` with `max_chunk_size == 0`) would
+            // otherwise produce a level no smaller than the previous one and loop
+            // forever. Collapsing the whole level into a single wide root terminates
+            // the build with a valid (if uncompressed) tree instead of hanging.
+            current = if next.len() >= prev_len {
+                vec![make_node(next_keys, next_values, false, level, config)]
+            } else {
+                next
+            };
         }
 
         current
@@ -627,12 +646,20 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
         if self.keys.len() < self.min_chunk_size {
             return Vec::new();
         }
+        // Guarantee forward progress. A degenerate `min_chunk_size == 0` makes the
+        // window `start..start` empty, so `end` never advances past `last_start` and
+        // the outer loop spins forever emitting empty chunks (hang / OOM). Flooring
+        // the effective window at 1 preserves behaviour for every sane config
+        // (`min_chunk_size >= 1`, where `min == self.min_chunk_size`) while ensuring
+        // each emitted chunk covers at least one entry so `last_start` strictly
+        // increases and the loop terminates.
+        let min = self.min_chunk_size.max(1);
         let mut chunks = Vec::new();
         let mut start = 0;
         let mut last_start = 0;
 
         while start < self.keys.len() {
-            let mut end = start + self.min_chunk_size;
+            let mut end = start + min;
 
             // Ensure that 'end' does not exceed the length of the keys vector
             if end > self.keys.len() {
@@ -696,11 +723,12 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
         base: u64,
         modulus: u64,
     ) -> u64 {
-        let mut hash = 0;
+        let mut hash: u64 = 0;
         for (key, value) in keys.iter().zip(values) {
-            hash = (hash * base
-                + Self::hash_item(key, base, modulus)
-                + Self::hash_item(value, base, modulus))
+            hash = hash
+                .wrapping_mul(base)
+                .wrapping_add(Self::hash_item(key, base, modulus))
+                .wrapping_add(Self::hash_item(value, base, modulus))
                 % modulus;
         }
         hash
@@ -723,23 +751,28 @@ impl<const N: usize> NodeChunk for ProllyNode<N> {
 
         let base_exp_window_size = Self::mod_exp(base, window_size, modulus);
 
-        let hash = (old_hash * base + new_key_hash + new_value_hash) % modulus;
-        let hash = (hash + modulus - (old_key_hash * base_exp_window_size) % modulus) % modulus;
+        let hash = old_hash
+            .wrapping_mul(base)
+            .wrapping_add(new_key_hash)
+            .wrapping_add(new_value_hash)
+            % modulus;
+        let hash = (hash + modulus - (old_key_hash.wrapping_mul(base_exp_window_size)) % modulus)
+            % modulus;
 
-        (hash + modulus - (old_value_hash * base_exp_window_size) % modulus) % modulus
+        (hash + modulus - (old_value_hash.wrapping_mul(base_exp_window_size)) % modulus) % modulus
     }
 
     fn mod_exp(base: u64, exp: u64, modulus: u64) -> u64 {
-        let mut result = 1;
+        let mut result: u64 = 1;
         let mut base = base % modulus;
         let mut exp = exp;
 
         while exp > 0 {
             if exp % 2 == 1 {
-                result = (result * base) % modulus;
+                result = (result.wrapping_mul(base)) % modulus;
             }
             exp >>= 1;
-            base = (base * base) % modulus;
+            base = (base.wrapping_mul(base)) % modulus;
         }
 
         result
@@ -887,6 +920,11 @@ impl<const N: usize> Node<N> for ProllyNode<N> {
         storage: &mut S,
         path_hashes: Vec<ValueDigest<N>>,
     ) {
+        assert_eq!(
+            keys.len(),
+            values.len(),
+            "insert_batch requires the same number of keys and values"
+        );
         // Sort the keys and corresponding values
         let mut key_value_pairs: Vec<(Vec<u8>, Vec<u8>)> =
             keys.iter().cloned().zip(values.iter().cloned()).collect();
@@ -1448,6 +1486,17 @@ mod tests {
 
         // Verify that both trees have the same structure
         assert_eq!(node_ref.traverse(&storage), node.traverse(&storage));
+    }
+
+    #[test]
+    #[should_panic(expected = "insert_batch requires the same number of keys and values")]
+    fn test_insert_batch_rejects_length_mismatch() {
+        let mut storage = InMemoryNodeStorage::<32>::default();
+        let mut node: ProllyNode<32> = ProllyNode::default();
+        let keys = vec![vec![1], vec![2]];
+        let values = vec![vec![10]];
+
+        node.insert_batch(&keys, &values, &mut storage, Vec::new());
     }
 
     #[test]
