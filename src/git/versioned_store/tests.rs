@@ -999,6 +999,38 @@ mod tests {
     }
 
     #[test]
+    fn file_history_reports_missing_root_node() {
+        let temp_dir = TempDir::new().unwrap();
+        gix::init(temp_dir.path()).unwrap();
+
+        let dataset_dir = temp_dir.path().join("dataset");
+        std::fs::create_dir_all(&dataset_dir).unwrap();
+        let _cwd = CwdGuard::set(&dataset_dir);
+
+        let mut store = FileVersionedKvStore::<32>::init(&dataset_dir).unwrap();
+        store.insert(b"key1".to_vec(), b"value1".to_vec()).unwrap();
+        store.commit("Add data").unwrap();
+
+        let root_hash = store.tree.get_root_hash().expect("root hash after commit");
+        let root_path = temp_dir
+            .path()
+            .join(".git")
+            .join("prolly")
+            .join("nodes")
+            .join("files")
+            .join(format!("{root_hash:x}"));
+        std::fs::remove_file(root_path).unwrap();
+
+        let err = store
+            .get_keys_at_ref("HEAD")
+            .expect_err("missing historical root node must be reported as corruption");
+        assert!(
+            err.to_string().contains("Root node not found"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn file_open_reports_missing_root_node() {
         let temp_dir = TempDir::new().unwrap();
         gix::init(temp_dir.path()).unwrap();
