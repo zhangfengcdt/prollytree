@@ -139,6 +139,14 @@ pub enum TextIndexError {
     #[error("dimension mismatch: stored index uses dim {stored}, embedder produces dim {got}")]
     DimensionMismatch { stored: u16, got: u16 },
 
+    /// The stored text-index tuning does not match the requested config.
+    #[error("config mismatch for {field}: stored {stored}, supplied {supplied}")]
+    ConfigMismatch {
+        field: &'static str,
+        stored: String,
+        supplied: String,
+    },
+
     /// The underlying [`ProximityIndex`] returned an error.
     #[error("proximity error: {0}")]
     Proximity(#[from] ProximityError),
@@ -276,6 +284,27 @@ where
             return Err(TextIndexError::DimensionMismatch {
                 stored: state.dim,
                 got: embedder.dim(),
+            });
+        }
+        if state.metric != metric {
+            return Err(TextIndexError::ConfigMismatch {
+                field: "metric",
+                stored: format!("{:?}", state.metric),
+                supplied: format!("{metric:?}"),
+            });
+        }
+        if state.level_bits != level_bits {
+            return Err(TextIndexError::ConfigMismatch {
+                field: "level_bits",
+                stored: state.level_bits.to_string(),
+                supplied: level_bits.to_string(),
+            });
+        }
+        if state.max_bucket_size != max_bucket_size {
+            return Err(TextIndexError::ConfigMismatch {
+                field: "max_bucket_size",
+                stored: state.max_bucket_size.to_string(),
+                supplied: max_bucket_size.to_string(),
             });
         }
         Ok(())
