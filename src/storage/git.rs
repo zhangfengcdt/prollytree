@@ -199,9 +199,6 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         hash: ValueDigest<N>,
         node: ProllyNode<N>,
     ) -> Result<(), StorageError> {
-        // Store in cache
-        self.cache.lock().put(hash.clone(), Arc::new(node.clone()));
-
         // Store as Git blob (this is durable — the blob lives in the git object db)
         let blob_id = self
             .store_node_as_blob(&node)
@@ -218,6 +215,10 @@ impl<const N: usize> NodeStorage<N> for GitNodeStorage<N> {
         // `save_tree_config_to_git` at commit time, in sorted order, from the
         // full in-memory map — so the per-insert write is redundant.
         self.hash_to_object_id.lock().insert(hash.clone(), blob_id);
+
+        // Only cache after the durable write and mapping succeed; otherwise a
+        // failed insert can be served in-process but disappear on reopen.
+        self.cache.lock().put(hash, Arc::new(node));
 
         Ok(())
     }
@@ -437,5 +438,30 @@ mod tests {
         // Get from cache
         let cached = storage.get_node_by_hash(&hash1);
         assert!(cached.is_some());
+    }
+
+    #[test]
+    fn failed_insert_does_not_populate_cache() {
+        let (temp_dir, repo) = create_test_repo();
+        let mut storage = GitNodeStorage::<32>::new(repo, temp_dir.path().to_path_buf()).unwrap();
+        let objects_path = temp_dir.path().join("objects");
+        std::fs::remove_dir_all(&objects_path).unwrap();
+        std::fs::write(&objects_path, b"not a directory").unwrap();
+
+        let node = create_test_node();
+        let hash = node.get_hash();
+
+        assert!(
+            storage.insert_node(hash.clone(), node).is_err(),
+            "sabotaged object database should reject blob writes"
+        );
+        assert!(
+            storage.get_node_by_hash(&hash).is_none(),
+            "failed blob writes must not leave phantom nodes in cache"
+        );
+        assert!(
+            !storage.get_hash_mappings().contains_key(&hash),
+            "failed blob writes must not create hash mappings"
+        );
     }
 }
