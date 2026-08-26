@@ -539,16 +539,25 @@ impl<const N: usize, E: Embedder, S: NodeStorage<N>> TextIndex<N, E, S> {
     where
         I: IntoIterator<Item = (Vec<u8>, String)>,
     {
-        // Drop every chunk in the index. Cheaper than per-doc deletion since
-        // we're rebuilding from scratch anyway.
-        let ids: Vec<Vec<u8>> = self.inner.entries_snapshot().keys().cloned().collect();
-        for id in ids {
-            self.inner.remove(&id);
-        }
-        // Re-insert each doc through the chunker.
+        let mut rebuilt =
+            ProximityIndex::new(self.inner.storage().clone(), self.inner.config().clone());
         for (id, text) in texts {
-            self.insert(&id, &text)?;
+            let chunks = self.chunker.split(&text);
+            if chunks.is_empty() {
+                continue;
+            }
+            for (idx, chunk_text) in chunks.iter().enumerate() {
+                let vec = self.embedder.embed(chunk_text)?;
+                if vec.len() != usize::from(self.embedder.dim()) {
+                    return Err(TextIndexError::Embed(EmbedError::DimensionMismatch {
+                        expected: self.embedder.dim(),
+                        got: vec.len(),
+                    }));
+                }
+                rebuilt.insert(make_chunk_id(&id, idx as u32), vec)?;
+            }
         }
+        self.inner = rebuilt;
         Ok(())
     }
 
@@ -640,7 +649,7 @@ mod tests {
 
         fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
             if text.contains(self.needle) {
-                return Err(EmbedError::Failure("forced insert failure".to_string()));
+                return Err(EmbedError::Failure("forced embedding failure".to_string()));
             }
             self.inner.embed(text)
         }
@@ -675,7 +684,7 @@ mod tests {
         idx.insert(b"doc:1", "stable text").unwrap();
 
         let err = idx.insert(b"doc:1", "please fail-insert").unwrap_err();
-        assert!(err.to_string().contains("forced insert failure"));
+        assert!(err.to_string().contains("forced embedding failure"));
 
         let hits = idx.search("stable text", 1).unwrap();
         assert_eq!(hits[0].id, b"doc:1".to_vec());
@@ -799,6 +808,25 @@ mod tests {
         // "a" was kept but re-embedded; "b" was dropped; "c" was added.
         let hits = idx.search("fresh c", 1).unwrap();
         assert_eq!(hits[0].id, b"c".to_vec());
+    }
+
+    #[test]
+    fn failed_reindex_preserves_existing_documents() {
+        let storage = InMemoryNodeStorage::<32>::new();
+        let mut idx = TextIndex::new(
+            storage,
+            TextIndexConfig::new(FailsOnNeedleEmbedder::new(8, "fail-reindex")),
+        );
+        idx.insert(b"doc:1", "stable text").unwrap();
+
+        let err = idx
+            .reindex_from_texts(vec![(b"doc:1".to_vec(), "please fail-reindex".to_string())])
+            .unwrap_err();
+        assert!(err.to_string().contains("forced embedding failure"));
+
+        let hits = idx.search("stable text", 1).unwrap();
+        assert_eq!(hits[0].id, b"doc:1".to_vec());
+        assert!(hits[0].score < 1e-4);
     }
 
     #[test]
