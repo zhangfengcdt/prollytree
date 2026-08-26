@@ -582,6 +582,50 @@ mod namespaced_tests {
         );
     }
 
+    #[test]
+    fn namespace_merge_reports_missing_source_hash_mappings() {
+        let (temp_dir, dataset_path) = setup_git_repo();
+        let _cwd = CwdGuard::set(&dataset_path);
+
+        let mut store = GitNamespacedKvStore::<32>::init(&dataset_path).expect("Failed to init");
+
+        store
+            .namespace("shared")
+            .insert(b"base_key".to_vec(), b"base_val".to_vec())
+            .unwrap();
+        store.commit("main: base data").unwrap();
+
+        store.create_branch("feature").unwrap();
+        store
+            .namespace("shared")
+            .insert(b"feature_key".to_vec(), b"feature_val".to_vec())
+            .unwrap();
+        store.commit("feature: add feature_key").unwrap();
+
+        let rm = std::process::Command::new("git")
+            .args(["rm", "dataset/prolly_hash_mappings"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git rm failed");
+        assert!(rm.status.success(), "git rm failed: {rm:?}");
+        let commit = std::process::Command::new("git")
+            .args(["commit", "-m", "Remove namespace mappings"])
+            .current_dir(temp_dir.path())
+            .output()
+            .expect("git commit failed");
+        assert!(commit.status.success(), "git commit failed: {commit:?}");
+
+        store.checkout("main").unwrap();
+        let err = match store.merge_ignore_conflicts("feature") {
+            Ok(_) => panic!("merge with missing source namespace mappings must fail"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("mapping") || err.to_string().contains("Mapping"),
+            "unexpected error: {err}"
+        );
+    }
+
     // =====================================================================
     // Change detection
     // =====================================================================

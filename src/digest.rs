@@ -55,18 +55,28 @@ impl<const N: usize> ValueDigest<N> {
     ///
     /// A `ValueDigest` instance containing the computed hash.
     pub fn new(data: &[u8]) -> Self {
-        // Ensure N is not larger than 32 to prevent out-of-bounds errors
-        assert!(
-            N <= 32,
-            "N must be less than or equal to 32 due to SHA-256 output size"
-        );
-
         let mut hasher = Sha256::new();
         hasher.update(data);
         let result = hasher.finalize();
 
         let mut hash = [0u8; N];
-        hash.copy_from_slice(&result[..N]);
+        let first_len = N.min(32);
+        hash[..first_len].copy_from_slice(&result[..first_len]);
+
+        let mut filled = first_len;
+        let mut counter = 0u64;
+        while filled < N {
+            let mut extender = Sha256::new();
+            extender.update(b"prollytree-value-digest-extension-v1");
+            extender.update(data);
+            extender.update(counter.to_le_bytes());
+            let block = extender.finalize();
+            let take = (N - filled).min(block.len());
+            hash[filled..filled + take].copy_from_slice(&block[..take]);
+            filled += take;
+            counter += 1;
+        }
+
         ValueDigest(hash)
     }
 
