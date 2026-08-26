@@ -25,12 +25,52 @@ mod common;
 
 use common::setup_repo_and_dataset;
 use prollytree::git::versioned_store::FileNamespacedKvStore;
-use prollytree::proximity::{HashEmbedder, TextIndexConfig, TextIndexError};
+use prollytree::proximity::{EmbedError, Embedder, HashEmbedder, TextIndexConfig, TextIndexError};
 
 const N: usize = 32;
 
 fn cfg(dim: u16, seed: u64) -> TextIndexConfig<HashEmbedder> {
     TextIndexConfig::new(HashEmbedder::new(dim, seed))
+}
+
+#[derive(Debug, Clone)]
+struct FailsOnNeedleEmbedder {
+    inner: HashEmbedder,
+    needle: &'static str,
+}
+
+impl FailsOnNeedleEmbedder {
+    fn new(dim: u16, seed: u64, needle: &'static str) -> Self {
+        Self {
+            inner: HashEmbedder::new(dim, seed),
+            needle,
+        }
+    }
+}
+
+impl Embedder for FailsOnNeedleEmbedder {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    fn version(&self) -> &str {
+        self.inner.version()
+    }
+
+    fn dim(&self) -> u16 {
+        self.inner.dim()
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        if text.contains(self.needle) {
+            return Err(EmbedError::Failure("forced insert failure".to_string()));
+        }
+        self.inner.embed(text)
+    }
+}
+
+fn failing_cfg(dim: u16, seed: u64) -> TextIndexConfig<FailsOnNeedleEmbedder> {
+    TextIndexConfig::new(FailsOnNeedleEmbedder::new(dim, seed, "fail-insert"))
 }
 
 #[test]
@@ -64,6 +104,22 @@ fn text_index_search_saturates_overfetch_for_huge_k() {
 }
 
 #[test]
+fn text_index_failed_reinsert_preserves_existing_document() {
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    let mut personal = store.namespace("personal");
+    let mut docs = personal.text_index("docs", failing_cfg(8, 0)).unwrap();
+
+    docs.insert(b"doc:1", "stable text").unwrap();
+    let err = docs.insert(b"doc:1", "please fail-insert").unwrap_err();
+    assert!(err.to_string().contains("forced insert failure"));
+
+    let hits = docs.search("stable text", 1).unwrap();
+    assert_eq!(hits[0].id, b"doc:1".to_vec());
+    assert!(hits[0].score < 1e-4);
+}
+
+#[test]
 fn text_index_survives_commit_and_reopen() {
     let (_temp, dataset) = setup_repo_and_dataset();
     let query = "lazy dog naps in sun";
@@ -92,8 +148,6 @@ fn text_index_survives_commit_and_reopen() {
 #[test]
 fn reopen_with_different_embedder_id_returns_mismatch() {
     // Different embedder family at re-open time → EmbedderMismatch.
-    use prollytree::proximity::{EmbedError, Embedder};
-
     struct DifferentFamily(HashEmbedder);
     impl Embedder for DifferentFamily {
         fn id(&self) -> &str {
@@ -151,6 +205,65 @@ fn reopen_with_different_embedder_version_returns_mismatch() {
     // Different seed → different `version()` string.
     let err = personal.text_index("docs", cfg(16, 1)).unwrap_err();
     assert!(matches!(err, TextIndexError::EmbedderMismatch { .. }));
+}
+
+#[test]
+fn reopen_with_different_tuning_returns_mismatch() {
+    use prollytree::proximity::Metric;
+
+    let (_temp, dataset) = setup_repo_and_dataset();
+    let mut store = FileNamespacedKvStore::<N>::init(&dataset).unwrap();
+    {
+        let mut personal = store.namespace("personal");
+        let mut metric_cfg = cfg(16, 0);
+        metric_cfg.metric = Metric::L2;
+        let _ = personal.text_index("metric", metric_cfg).unwrap();
+
+        let mut level_cfg = cfg(16, 0);
+        level_cfg.level_bits = 5;
+        let _ = personal.text_index("level", level_cfg).unwrap();
+
+        let mut bucket_cfg = cfg(16, 0);
+        bucket_cfg.max_bucket_size = 32;
+        let _ = personal.text_index("bucket", bucket_cfg).unwrap();
+    }
+
+    let mut personal = store.namespace("personal");
+    let err = personal.text_index("metric", cfg(16, 0)).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            TextIndexError::ConfigMismatch {
+                field: "metric",
+                ..
+            }
+        ),
+        "expected metric ConfigMismatch, got {err:?}"
+    );
+
+    let err = personal.text_index("level", cfg(16, 0)).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            TextIndexError::ConfigMismatch {
+                field: "level_bits",
+                ..
+            }
+        ),
+        "expected level_bits ConfigMismatch, got {err:?}"
+    );
+
+    let err = personal.text_index("bucket", cfg(16, 0)).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            TextIndexError::ConfigMismatch {
+                field: "max_bucket_size",
+                ..
+            }
+        ),
+        "expected max_bucket_size ConfigMismatch, got {err:?}"
+    );
 }
 
 #[test]
