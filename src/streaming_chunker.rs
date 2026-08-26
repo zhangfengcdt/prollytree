@@ -56,7 +56,7 @@ use crate::config::TreeConfig;
 use crate::node::ProllyNode;
 use crate::storage::NodeStorage;
 use std::collections::VecDeque;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use twox_hash::XxHash64;
 
 const HASH_SEED: u64 = 0;
@@ -138,13 +138,23 @@ impl Splitter for RollingHashSplitter {
         if self.window.len() < self.min_chunk_size {
             // Building the initial window. This mirrors
             // `initialize_rolling_hash`: hash = hash * base + kh + vh.
-            self.hash = (self.hash.wrapping_mul(self.base) + kh + vh) % self.modulus;
+            self.hash = self
+                .hash
+                .wrapping_mul(self.base)
+                .wrapping_add(kh)
+                .wrapping_add(vh)
+                % self.modulus;
             self.window.push_back((kh, vh));
         } else {
             // Slide: drop the front of the window, add the new item.
             // Matches `update_rolling_hash`.
             let (old_kh, old_vh) = self.window.pop_front().unwrap();
-            let mut h = (self.hash.wrapping_mul(self.base) + kh + vh) % self.modulus;
+            let mut h = self
+                .hash
+                .wrapping_mul(self.base)
+                .wrapping_add(kh)
+                .wrapping_add(vh)
+                % self.modulus;
             h = (h + self.modulus - (old_kh.wrapping_mul(self.base_exp_min)) % self.modulus)
                 % self.modulus;
             h = (h + self.modulus - (old_vh.wrapping_mul(self.base_exp_min)) % self.modulus)
@@ -174,7 +184,7 @@ impl Splitter for RollingHashSplitter {
 
 fn hash_item(item: &[u8], modulus: u64) -> u64 {
     let mut hasher = XxHash64::with_seed(HASH_SEED);
-    item.hash(&mut hasher);
+    hasher.write(item);
     hasher.finish() % modulus
 }
 
@@ -458,7 +468,22 @@ impl<'s, const N: usize, S: NodeStorage<N>> Chunker<'s, N, S> {
         let root = self.builder.build();
         let root_hash = root.get_hash();
         let _ = storage.insert_node(root_hash, root.clone());
-        root
+        // RT-B F1: a content-defined boundary on the FINAL item emits the chunk and pops
+        // to a fresh parent level, which can leave this top-level node with exactly one
+        // child — a degenerate, non-minimal spine that diverges from a fresh batch build
+        // / a collapsing peer. Collapse single-child internal roots to their child so the
+        // canonical form is minimal. done() is the single chokepoint for every root-
+        // producing path (build + apply_mutations + try_pure_append all reach it), so
+        // build and merge collapse identically and P-CANON is preserved.
+        let mut node = root;
+        while !node.is_leaf && node.values.len() == 1 {
+            let child_digest = crate::digest::ValueDigest::raw_hash(&node.values[0]);
+            match storage.get_node_by_hash(&child_digest) {
+                Some(child) => node = (*child).clone(),
+                None => break,
+            }
+        }
+        node
     }
 }
 

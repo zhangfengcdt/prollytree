@@ -60,6 +60,15 @@ use gluesql_core::{
 #[cfg(feature = "sql")]
 use crate::git::versioned_store::ThreadSafeGitVersionedKvStore;
 
+#[cfg(feature = "sql")]
+const LEGACY_SCHEMA_ID: &str = "__schema__";
+#[cfg(feature = "sql")]
+const ROW_KEY_PREFIX: &[u8] = b":row:";
+#[cfg(feature = "sql")]
+const SCHEMA_KEY_SUFFIX: &[u8] = b":\0schema";
+#[cfg(feature = "sql")]
+const LEGACY_SCHEMA_KEY_SUFFIX: &[u8] = b":__schema__";
+
 /// GlueSQL storage backend using ProllyTree.
 ///
 /// Wraps a [`ThreadSafeGitVersionedKvStore`] and implements GlueSQL's async
@@ -109,31 +118,78 @@ impl<const D: usize> ProllyStorage<D> {
 
     /// Convert table name and row key to storage key
     fn make_storage_key(table_name: &str, key: &Key) -> Vec<u8> {
+        let mut storage_key = Self::row_prefix(table_name);
+        let encoded_key = serde_json::to_vec(key).expect("GlueSQL key serialization cannot fail");
+        storage_key.extend_from_slice(&encoded_key);
+        storage_key
+    }
+
+    /// Convert table name and row key to the legacy untyped storage key.
+    fn legacy_storage_key(table_name: &str, key: &Key) -> Vec<u8> {
         match key {
             Key::I64(id) => format!("{table_name}:{id}").into_bytes(),
             Key::Str(id) => format!("{table_name}:{id}").into_bytes(),
-            Key::None => format!("{table_name}:__schema__").into_bytes(),
+            Key::None => format!("{table_name}:{LEGACY_SCHEMA_ID}").into_bytes(),
             _ => format!("{table_name}:{key:?}").into_bytes(),
         }
     }
 
     /// Get schema key for a table
     fn schema_key(table_name: &str) -> Vec<u8> {
-        Self::make_storage_key(table_name, &Key::None)
+        let mut key = table_name.as_bytes().to_vec();
+        key.extend_from_slice(SCHEMA_KEY_SUFFIX);
+        key
+    }
+
+    fn legacy_schema_key(table_name: &str) -> Vec<u8> {
+        format!("{table_name}:{LEGACY_SCHEMA_ID}").into_bytes()
+    }
+
+    /// Get the typed row key prefix for a table.
+    fn row_prefix(table_name: &str) -> Vec<u8> {
+        let mut prefix = table_name.as_bytes().to_vec();
+        prefix.extend_from_slice(ROW_KEY_PREFIX);
+        prefix
+    }
+
+    /// Get the legacy table prefix for untyped row keys.
+    fn legacy_table_prefix(table_name: &str) -> Vec<u8> {
+        format!("{table_name}:").into_bytes()
     }
 
     /// Parse key from storage key string
-    fn parse_key_from_storage_key(storage_key: &[u8], table_prefix: &str) -> Key {
+    fn parse_key_from_storage_key(storage_key: &[u8], table_prefix: &str) -> Result<Key> {
+        let row_prefix = Self::row_prefix(table_prefix);
+        if let Some(encoded_key) = storage_key.strip_prefix(row_prefix.as_slice()) {
+            let key = serde_json::from_slice(encoded_key).map_err(|e| {
+                Error::StorageMsg(format!("Failed to deserialize typed row key: {e}"))
+            })?;
+            return Ok(key);
+        }
+
+        Ok(Self::parse_legacy_key_from_storage_key(
+            storage_key,
+            table_prefix,
+        ))
+    }
+
+    /// Parse a key from the legacy untyped storage key string.
+    fn parse_legacy_key_from_storage_key(storage_key: &[u8], table_prefix: &str) -> Key {
         let key_str = String::from_utf8_lossy(storage_key);
-        let key_part = key_str
-            .strip_prefix(&format!("{table_prefix}:"))
-            .unwrap_or("");
+        let prefix = format!("{table_prefix}:");
+        let key_part = key_str.strip_prefix(&prefix).unwrap_or("");
 
         if let Ok(id) = key_part.parse::<i64>() {
             Key::I64(id)
         } else {
             Key::Str(key_part.to_string())
         }
+    }
+
+    /// Check whether a key is the legacy schema sentinel for this table.
+    fn is_schema_storage_key(table_name: &str, storage_key: &[u8]) -> bool {
+        storage_key == Self::schema_key(table_name).as_slice()
+            || storage_key == Self::legacy_schema_key(table_name).as_slice()
     }
 
     /// Commit with a custom message.
@@ -179,19 +235,31 @@ impl<const D: usize> Store for ProllyStorage<D> {
             let all_keys = store
                 .list_keys()
                 .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
-            let mut schemas = Vec::new();
+            let mut schemas = HashMap::new();
 
             for storage_key in all_keys {
-                if storage_key.ends_with(b":__schema__") {
+                let table_name_bytes = if let Some(table_name) =
+                    storage_key.strip_suffix(SCHEMA_KEY_SUFFIX)
+                {
+                    table_name
+                } else if let Some(table_name) = storage_key.strip_suffix(LEGACY_SCHEMA_KEY_SUFFIX)
+                {
+                    table_name
+                } else {
+                    continue;
+                };
+                let table_name = String::from_utf8_lossy(table_name_bytes);
+                if Self::is_schema_storage_key(&table_name, &storage_key) {
                     if let Some(schema_data) = store.get(&storage_key) {
                         let schema: Schema = serde_json::from_slice(&schema_data).map_err(|e| {
                             Error::StorageMsg(format!("Failed to deserialize schema: {e}"))
                         })?;
-                        schemas.push(schema);
+                        schemas.insert(schema.table_name.clone(), schema);
                     }
                 }
             }
 
+            let mut schemas: Vec<_> = schemas.into_values().collect();
             schemas.sort_by(|a, b| a.table_name.cmp(&b.table_name));
             Ok(schemas)
         })
@@ -202,8 +270,9 @@ impl<const D: usize> Store for ProllyStorage<D> {
     async fn fetch_schema(&self, table_name: &str) -> Result<Option<Schema>> {
         let store = self.store.clone();
         let key = Self::schema_key(table_name);
+        let legacy_key = Self::legacy_schema_key(table_name);
         tokio::task::spawn_blocking(move || {
-            if let Some(schema_data) = store.get(&key) {
+            if let Some(schema_data) = store.get(&key).or_else(|| store.get(&legacy_key)) {
                 let schema: Schema = serde_json::from_slice(&schema_data)
                     .map_err(|e| Error::StorageMsg(format!("Failed to deserialize schema: {e}")))?;
                 Ok(Some(schema))
@@ -218,8 +287,17 @@ impl<const D: usize> Store for ProllyStorage<D> {
     async fn fetch_data(&self, table_name: &str, key: &Key) -> Result<Option<DataRow>> {
         let store = self.store.clone();
         let storage_key = Self::make_storage_key(table_name, key);
+        let legacy_storage_key = Self::legacy_storage_key(table_name, key);
+        let legacy_schema_key = Self::legacy_schema_key(table_name);
         tokio::task::spawn_blocking(move || {
-            if let Some(row_data) = store.get(&storage_key) {
+            let row_data = store.get(&storage_key).or_else(|| {
+                if legacy_storage_key == legacy_schema_key {
+                    None
+                } else {
+                    store.get(&legacy_storage_key)
+                }
+            });
+            if let Some(row_data) = row_data {
                 let row: DataRow = serde_json::from_slice(&row_data)
                     .map_err(|e| Error::StorageMsg(format!("Failed to deserialize row: {e}")))?;
                 Ok(Some(row))
@@ -235,20 +313,35 @@ impl<const D: usize> Store for ProllyStorage<D> {
         let store = self.store.clone();
         let table_name = table_name.to_string();
         tokio::task::spawn_blocking(move || {
-            let prefix = format!("{table_name}:");
-            let prefix_bytes = prefix.as_bytes();
+            let row_prefix = Self::row_prefix(&table_name);
+            let legacy_prefix = Self::legacy_table_prefix(&table_name);
 
             let all_keys = store
                 .list_keys()
                 .map_err(|e| Error::StorageMsg(format!("Failed to list keys: {e}")))?;
-            let mut rows = Vec::new();
+            let mut rows_by_key = HashMap::new();
+
+            for storage_key in all_keys.iter() {
+                if storage_key.starts_with(&legacy_prefix)
+                    && !storage_key.starts_with(&row_prefix)
+                    && !Self::is_schema_storage_key(&table_name, storage_key)
+                {
+                    if let Some(row_data) = store.get(storage_key) {
+                        let row: DataRow = serde_json::from_slice(&row_data).map_err(|e| {
+                            Error::StorageMsg(format!("Failed to deserialize row: {e}"))
+                        })?;
+
+                        let key = ProllyStorage::<D>::parse_key_from_storage_key(
+                            storage_key,
+                            &table_name,
+                        )?;
+                        rows_by_key.entry(key).or_insert(row);
+                    }
+                }
+            }
 
             for storage_key in all_keys {
-                if storage_key.starts_with(prefix_bytes) {
-                    if storage_key.ends_with(b":__schema__") {
-                        continue;
-                    }
-
+                if storage_key.starts_with(&row_prefix) {
                     if let Some(row_data) = store.get(&storage_key) {
                         let row: DataRow = serde_json::from_slice(&row_data).map_err(|e| {
                             Error::StorageMsg(format!("Failed to deserialize row: {e}"))
@@ -257,11 +350,16 @@ impl<const D: usize> Store for ProllyStorage<D> {
                         let key = ProllyStorage::<D>::parse_key_from_storage_key(
                             &storage_key,
                             &table_name,
-                        );
-                        rows.push(Ok((key, row)));
+                        )?;
+                        rows_by_key.insert(key, row);
                     }
                 }
             }
+
+            let mut rows: Vec<_> = rows_by_key
+                .into_iter()
+                .map(|(key, row)| Ok((key, row)))
+                .collect();
 
             rows.sort_by(|a, b| match (a, b) {
                 (Ok((key_a, _)), Ok((key_b, _))) => key_a.cmp(key_b),
@@ -281,13 +379,18 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
     async fn insert_schema(&mut self, schema: &Schema) -> Result<()> {
         let store = self.store.clone();
         let key = Self::schema_key(&schema.table_name);
+        let legacy_key = Self::legacy_schema_key(&schema.table_name);
         let schema_data = serde_json::to_vec(schema)
             .map_err(|e| Error::StorageMsg(format!("Failed to serialize schema: {e}")))?;
 
         tokio::task::spawn_blocking(move || {
             store
                 .insert(key, schema_data)
-                .map_err(|e| Error::StorageMsg(format!("Failed to insert schema: {e}")))
+                .map_err(|e| Error::StorageMsg(format!("Failed to insert schema: {e}")))?;
+            store.delete(&legacy_key).map_err(|e| {
+                Error::StorageMsg(format!("Failed to delete legacy schema key: {e}"))
+            })?;
+            Ok::<(), Error>(())
         })
         .await
         .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))??;
@@ -302,11 +405,16 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
     async fn delete_schema(&mut self, table_name: &str) -> Result<()> {
         let store = self.store.clone();
         let key = Self::schema_key(table_name);
+        let legacy_key = Self::legacy_schema_key(table_name);
 
         tokio::task::spawn_blocking(move || {
             store
                 .delete(&key)
-                .map_err(|e| Error::StorageMsg(format!("Failed to delete schema: {e}")))
+                .map_err(|e| Error::StorageMsg(format!("Failed to delete schema: {e}")))?;
+            store.delete(&legacy_key).map_err(|e| {
+                Error::StorageMsg(format!("Failed to delete legacy schema key: {e}"))
+            })?;
+            Ok::<(), Error>(())
         })
         .await
         .map_err(|e| Error::StorageMsg(format!("Blocking task join error: {e}")))??;
@@ -371,10 +479,17 @@ impl<const D: usize> StoreMut for ProllyStorage<D> {
         tokio::task::spawn_blocking(move || {
             for key in keys {
                 let storage_key = ProllyStorage::<D>::make_storage_key(&table_name, &key);
+                let legacy_storage_key = ProllyStorage::<D>::legacy_storage_key(&table_name, &key);
+                let legacy_schema_key = ProllyStorage::<D>::legacy_schema_key(&table_name);
 
                 store
                     .delete(&storage_key)
                     .map_err(|e| Error::StorageMsg(format!("Failed to delete row: {e}")))?;
+                if legacy_storage_key != legacy_schema_key {
+                    store.delete(&legacy_storage_key).map_err(|e| {
+                        Error::StorageMsg(format!("Failed to delete legacy row: {e}"))
+                    })?;
+                }
             }
             Ok(())
         })
@@ -492,5 +607,25 @@ mod tests {
         let mut iter = storage.scan_data("users").await.unwrap();
         let first = iter.next().await.unwrap().unwrap();
         assert_eq!(first.0, key);
+    }
+
+    #[test]
+    fn test_text_key_round_trip_preserves_key_variant() {
+        let storage_key = ProllyStorage::<32>::make_storage_key("users", &Key::Str("42".into()));
+        let parsed =
+            ProllyStorage::<32>::parse_key_from_storage_key(&storage_key, "users").unwrap();
+
+        assert_eq!(parsed, Key::Str("42".into()));
+    }
+
+    #[test]
+    fn test_non_string_key_round_trip_preserves_key_variant() {
+        for key in [Key::I64(42), Key::Bool(true), Key::None] {
+            let storage_key = ProllyStorage::<32>::make_storage_key("users", &key);
+            let parsed =
+                ProllyStorage::<32>::parse_key_from_storage_key(&storage_key, "users").unwrap();
+
+            assert_eq!(parsed, key);
+        }
     }
 }

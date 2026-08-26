@@ -234,13 +234,36 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
                     }
                 }
                 // Key deleted in source, still exists in dest
-                (Some(_base), None, Some(_dest)) => {
-                    // Source deleted it - apply deletion
-                    merge_results.push(crate::diff::MergeResult::Removed(key));
+                (Some(base), None, Some(dest)) => {
+                    if base == dest {
+                        // Destination unchanged from base - safe to apply source deletion
+                        merge_results.push(crate::diff::MergeResult::Removed(key));
+                    } else {
+                        // Destination modified while source deleted - conflict
+                        let conflict = crate::diff::MergeConflict {
+                            key: key.clone(),
+                            base_value: Some(base.clone()),
+                            source_value: None,
+                            destination_value: Some(dest.clone()),
+                        };
+                        merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                    }
                 }
                 // Key deleted in dest, still exists in source - keep deletion (no-op)
-                (Some(_base), Some(_source), None) => {
-                    continue;
+                (Some(base), Some(source), None) => {
+                    if base == source {
+                        // Source unchanged from base - keep destination deletion
+                        continue;
+                    } else {
+                        // Source modified while destination deleted - conflict
+                        let conflict = crate::diff::MergeConflict {
+                            key: key.clone(),
+                            base_value: Some(base.clone()),
+                            source_value: Some(source.clone()),
+                            destination_value: None,
+                        };
+                        merge_results.push(crate::diff::MergeResult::Conflict(conflict));
+                    }
                 }
                 // Key deleted in both - no-op
                 (Some(_base), None, None) => {
@@ -439,7 +462,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
             .or_else(|| Self::find_git_root(dataset_dir))
             .ok_or_else(|| GitKvError::GitObjectError("Could not find git root".into()))?;
 
-        let tree_id = self.metadata.stage_and_write_tree(&git_root)?;
+        let tree_id = self.metadata.stage_and_write_tree(&git_root, dataset_dir)?;
 
         // Create merge commit with two parents using gix (bypasses shell hooks)
         let now = std::time::SystemTime::now()
@@ -541,7 +564,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
     ) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Refuse to init at git root — `git add -A .` would stage everything.
+        // Refuse to init at git root: scoped staging would still target the whole repo.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot initialize git-prolly in git root directory. \
@@ -606,7 +629,7 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
     ) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Refuse to open at git root — `git add -A .` would stage everything.
+        // Refuse to open at git root: scoped staging would still target the whole repo.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot open git-prolly in git root directory. \
@@ -727,18 +750,29 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         let config_result = self.metadata.read_file_at_commit(commit_id, &config_path);
         let mapping_result = self.metadata.read_file_at_commit(commit_id, &mapping_path);
 
-        // If files are not found, this might be an initial empty commit, return empty
-        if config_result.is_err() || mapping_result.is_err() {
-            return Ok(HashMap::new());
-        }
+        let (config_data, mapping_data) = match (config_result, mapping_result) {
+            (Ok(config_data), Ok(mapping_data)) => (config_data, mapping_data),
+            (Err(_), Err(_)) => {
+                // Both files missing can be an initial empty commit.
+                return Ok(HashMap::new());
+            }
+            (Ok(_), Err(e)) => {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Historical commit {commit_id} has {config_path} but is missing {mapping_path}: {e}"
+                )));
+            }
+            (Err(e), Ok(_)) => {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Historical commit {commit_id} has {mapping_path} but is missing {config_path}: {e}"
+                )));
+            }
+        };
 
-        let config_data = config_result?;
         let config: TreeConfig<N> = serde_json::from_slice(&config_data).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to deserialize config: {e}"))
         })?;
 
         // Load the hash mappings from the tree as string format and parse
-        let mapping_data = mapping_result?;
         let mapping_str = String::from_utf8(mapping_data)
             .map_err(|e| GitKvError::GitObjectError(format!("Invalid UTF-8 in mappings: {e}")))?;
 
@@ -748,40 +782,60 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
         let mut hash_mappings = HashMap::new();
         let mut is_simple_mapping = false;
 
-        for line in mapping_str.lines() {
-            if let Some((prefix, rest)) = line.split_once(':') {
-                if prefix == "key" {
-                    // This is a simple key-value mapping from InMemory storage
-                    is_simple_mapping = true;
-                    if let Some((key_hex, value_hex)) = rest.split_once(':') {
-                        if let (Ok(key), Ok(value)) = (hex::decode(key_hex), hex::decode(value_hex))
-                        {
-                            key_values.insert(key, value);
-                        }
-                    }
-                } else {
-                    // This is a hash mapping from Git storage
-                    let hash_hex = prefix;
-                    let object_hex = rest;
+        for (line_index, line) in mapping_str.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
 
-                    if hash_hex.len() == N * 2 {
-                        let mut hash_bytes = Vec::new();
-                        for i in 0..N {
-                            if let Ok(byte) = u8::from_str_radix(&hash_hex[i * 2..i * 2 + 2], 16) {
-                                hash_bytes.push(byte);
-                            } else {
-                                break;
-                            }
-                        }
+            let line_number = line_index + 1;
+            let (prefix, rest) = line.split_once(':').ok_or_else(|| {
+                GitKvError::GitObjectError(format!("Malformed hash mapping on line {line_number}"))
+            })?;
 
-                        if hash_bytes.len() == N {
-                            if let Ok(object_id) = gix::ObjectId::from_hex(object_hex.as_bytes()) {
-                                let hash = ValueDigest::raw_hash(&hash_bytes);
-                                hash_mappings.insert(hash, object_id);
-                            }
-                        }
-                    }
+            if prefix == "key" {
+                // This is a simple key-value mapping from InMemory storage
+                is_simple_mapping = true;
+                let (key_hex, value_hex) = rest.split_once(':').ok_or_else(|| {
+                    GitKvError::GitObjectError(format!(
+                        "Malformed simple key mapping on line {line_number}"
+                    ))
+                })?;
+                let key = hex::decode(key_hex).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid simple key hex on line {line_number}: {e}"
+                    ))
+                })?;
+                let value = hex::decode(value_hex).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid simple value hex on line {line_number}: {e}"
+                    ))
+                })?;
+                key_values.insert(key, value);
+            } else {
+                // This is a hash mapping from Git storage
+                let hash_hex = prefix;
+                let object_hex = rest;
+
+                if hash_hex.len() != N * 2 {
+                    return Err(GitKvError::GitObjectError(format!(
+                        "Invalid prolly hash on line {line_number}: expected {} hex chars, got {}",
+                        N * 2,
+                        hash_hex.len()
+                    )));
                 }
+
+                let hash_bytes = hex::decode(hash_hex).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid prolly hash on line {line_number}: {e}"
+                    ))
+                })?;
+                let object_id = gix::ObjectId::from_hex(object_hex.as_bytes()).map_err(|e| {
+                    GitKvError::GitObjectError(format!(
+                        "Invalid git object id on line {line_number}: {e}"
+                    ))
+                })?;
+                let hash = ValueDigest::raw_hash(&hash_bytes);
+                hash_mappings.insert(hash, object_id);
             }
         }
 
@@ -792,6 +846,11 @@ impl<const N: usize> VersionedKvStore<N, GitNodeStorage<N>, GitMetadataBackend> 
 
         // For Git storage, reconstruct the tree from hash mappings
         if hash_mappings.is_empty() {
+            if config.root_hash.is_some() {
+                return Err(GitKvError::GitObjectError(format!(
+                    "Historical commit {commit_id} has a tree root but {mapping_path} contains no hash mappings"
+                )));
+            }
             return Ok(HashMap::new());
         }
 
@@ -876,7 +935,7 @@ impl<const N: usize> VersionedKvStore<N, InMemoryNodeStorage<N>, GitMetadataBack
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent initializing at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot initialize in-memory store in git root directory. \
@@ -971,7 +1030,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent initializing at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot initialize file store in git root directory. \
@@ -1037,7 +1096,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
         let path = path.as_ref();
         let dataset_dir = path.to_path_buf();
 
-        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent opening at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot open file store in git root directory. \
@@ -1077,7 +1136,7 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
             ));
         }
 
-        let storage = FileNodeStorage::<N>::new(file_storage_path.clone()).map_err(|e| {
+        let storage = FileNodeStorage::<N>::new(file_storage_path).map_err(|e| {
             GitKvError::GitObjectError(format!("Failed to create file storage: {e}"))
         })?;
 
@@ -1096,17 +1155,19 @@ impl<const N: usize> VersionedKvStore<N, FileNodeStorage<N>, GitMetadataBackend>
         let config: TreeConfig<N> = serde_json::from_str(&config_data)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
-        // Try to load existing tree from storage using the config's root hash
-        let tree =
-            if let Some(existing_tree) = ProllyTree::load_from_storage(storage, config.clone()) {
-                existing_tree
-            } else {
-                // Create new storage instance since the original was consumed
-                let new_storage = FileNodeStorage::<N>::new(file_storage_path).map_err(|e| {
-                    GitKvError::GitObjectError(format!("Failed to create file storage: {e}"))
-                })?;
-                ProllyTree::new(new_storage, config)
-            };
+        // Existing persistent stores must have their saved root available.
+        // Falling back to an empty tree would hide data loss and let a later
+        // commit overwrite the dataset with an empty root.
+        let root_hash = config
+            .root_hash
+            .as_ref()
+            .map(|hash| format!("{hash:x}"))
+            .unwrap_or_else(|| "<missing>".to_string());
+        let tree = ProllyTree::load_from_storage(storage, config).ok_or_else(|| {
+            GitKvError::GitObjectError(format!(
+                "Failed to load file store root node {root_hash} from storage"
+            ))
+        })?;
 
         // Get current branch
         let current_branch = git_repo
@@ -1170,7 +1231,7 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBacke
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self, GitKvError> {
         let path = path.as_ref();
 
-        // Safety check: prevent initializing at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent initializing at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot initialize RocksDB store in git root directory. \
@@ -1235,7 +1296,7 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBacke
         let path = path.as_ref();
         let dataset_dir = path.to_path_buf();
 
-        // Safety check: prevent opening at git root to avoid `git add -A .` staging all files
+        // Safety check: prevent opening at git root, where scoped staging targets all files.
         if Self::is_in_git_root(path)? {
             return Err(GitKvError::GitObjectError(
                 "Cannot open RocksDB store in git root directory. \
@@ -1292,9 +1353,19 @@ impl<const N: usize> VersionedKvStore<N, RocksDBNodeStorage<N>, GitMetadataBacke
         let config: TreeConfig<N> = serde_json::from_str(&config_data)
             .map_err(|e| GitKvError::GitObjectError(format!("Failed to parse config file: {e}")))?;
 
-        // Try to load existing tree from storage using the config's root hash
-        let tree = ProllyTree::load_from_storage(storage.clone(), config.clone())
-            .unwrap_or_else(|| ProllyTree::new(storage, config));
+        // Existing persistent stores must have their saved root available.
+        // Falling back to an empty tree would hide data loss and let a later
+        // commit overwrite the dataset with an empty root.
+        let root_hash = config
+            .root_hash
+            .as_ref()
+            .map(|hash| format!("{hash:x}"))
+            .unwrap_or_else(|| "<missing>".to_string());
+        let tree = ProllyTree::load_from_storage(storage, config).ok_or_else(|| {
+            GitKvError::GitObjectError(format!(
+                "Failed to load RocksDB store root node {root_hash} from storage"
+            ))
+        })?;
 
         // Get current branch
         let current_branch = git_repo

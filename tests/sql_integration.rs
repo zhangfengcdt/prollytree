@@ -18,7 +18,13 @@ limitations under the License.
 
 mod common;
 
-use gluesql_core::prelude::Glue;
+use futures::StreamExt;
+use gluesql_core::{
+    data::{Key, Value},
+    executor::Payload,
+    prelude::Glue,
+    store::{DataRow, Store, StoreMut},
+};
 use prollytree::sql::ProllyStorage;
 
 // ---------------------------------------------------------------------------
@@ -104,6 +110,48 @@ async fn test_sql_multiple_tables() {
     assert!(!r2.is_empty());
 }
 
+#[tokio::test]
+async fn test_sql_storage_scan_preserves_text_primary_key_order() {
+    let (_temp, dataset) = common::setup_repo_and_dataset();
+    let mut storage = ProllyStorage::<32>::init(&dataset).expect("ProllyStorage init");
+
+    storage
+        .insert_data(
+            "text_keys",
+            vec![
+                (
+                    Key::Str("2".into()),
+                    DataRow::Vec(vec![Value::Str("two".into())]),
+                ),
+                (
+                    Key::Str("10".into()),
+                    DataRow::Vec(vec![Value::Str("ten".into())]),
+                ),
+                (
+                    Key::Str("42".into()),
+                    DataRow::Vec(vec![Value::Str("forty-two".into())]),
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let mut rows = storage.scan_data("text_keys").await.unwrap();
+    let mut keys = Vec::new();
+    while let Some(row) = rows.next().await {
+        keys.push(row.unwrap().0);
+    }
+
+    assert_eq!(
+        keys,
+        [
+            Key::Str("10".into()),
+            Key::Str("2".into()),
+            Key::Str("42".into())
+        ]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Drop table
 // ---------------------------------------------------------------------------
@@ -152,8 +200,6 @@ async fn test_sql_commit_persists_across_reopen() {
 
 #[tokio::test]
 async fn test_sql_schema_persistence() {
-    use gluesql_core::store::Store;
-
     let (temp, dataset) = common::setup_repo_and_dataset();
 
     {
@@ -170,4 +216,49 @@ async fn test_sql_schema_persistence() {
         "schema_test should persist"
     );
     drop(temp);
+}
+
+#[tokio::test]
+async fn test_sql_text_primary_key_schema_sentinel_does_not_corrupt_schema() {
+    #[allow(unused_mut)]
+    let (_temp, mut glue) = setup_glue();
+
+    exec(
+        &mut glue,
+        "CREATE TABLE tricky (id TEXT PRIMARY KEY, val TEXT)",
+    )
+    .await;
+    exec(
+        &mut glue,
+        "INSERT INTO tricky VALUES ('__schema__', 'still a row')",
+    )
+    .await;
+
+    let schemas = glue.storage.fetch_all_schemas().await.unwrap();
+    assert!(
+        schemas.iter().any(|s| s.table_name == "tricky"),
+        "row key must not overwrite the table schema"
+    );
+
+    let results = glue
+        .execute("SELECT id, val FROM tricky WHERE id = '__schema__'")
+        .await
+        .unwrap();
+    match &results[0] {
+        Payload::Select { labels, rows } => {
+            assert_eq!(labels, &vec!["id".to_string(), "val".to_string()]);
+            assert_eq!(rows.len(), 1);
+            assert!(
+                matches!(&rows[0][0], Value::Str(value) if value == "__schema__"),
+                "expected id row value, got {:?}",
+                rows[0][0]
+            );
+            assert!(
+                matches!(&rows[0][1], Value::Str(value) if value == "still a row"),
+                "expected val row value, got {:?}",
+                rows[0][1]
+            );
+        }
+        payload => panic!("expected SELECT payload, got {payload:?}"),
+    }
 }
