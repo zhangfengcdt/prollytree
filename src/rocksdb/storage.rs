@@ -332,7 +332,6 @@ mod tests {
             level: 0,
             base: config.base,
             modulus: config.modulus,
-            content_hash: config.content_hash,
             min_chunk_size: config.min_chunk_size,
             max_chunk_size: config.max_chunk_size,
             pattern: config.pattern,
